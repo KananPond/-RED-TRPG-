@@ -1,0 +1,103 @@
+# Agent Harness 设计 —— 参考 deepseek-harness
+
+本项目的 Agent 核心循环（`ctrcg/harness/`）在架构理念上参考了
+[DeepSeek Harness（dsh）](https://github.com/deepseek-ai/deepseek-harness)——
+DeepSeek 开源的"一切皆插件（Everything is a Plugin）"Agent 框架。
+我们用 Python 实现了其中一个面向游戏引擎的精简变体。
+
+## 核心不变量
+
+**模型可见 ⟺ 已记录（model-visible ⟺ logged）**
+
+任何送入模型的消息，都能从 Session 事件日志逐条重放重建。
+`ctrcg/harness/events.py` 的 `Session` 把每条消息、每次工具调用/结果、
+每次 guard 干预都写成带序号的事件（可选 JSONL 持久化到 `saves/logs/`），
+`replay_messages()` 可随时重放重建完整消息序列。测试
+`test_harness.py::test_tool_call_then_final` 直接验证该不变量。
+
+## 插件分层
+
+deepseek-harness 的"API 主干"是 session → system-prompt → tools → agent → agent-loop，
+且 **模型适配器、工具注册表、agent 循环本身都是可替换插件**。对应实现：
+
+| deepseek-harness 概念 | 本项目实现 | 说明 |
+|---|---|---|
+| Session / durable session events | `harness/events.py::Session` | 事件日志，JSONL 持久化，可重放 |
+| Model adapter（可插拔） | `harness/adapter.py` | `OpenAICompatibleAdapter`（DeepSeek 等兼容端点）/ `ScriptedAdapter`（测试与离线） |
+| Tool registry（register→disposer） | `harness/registry.py::ToolRegistry` | `register()` 返回 `disposer`；JSON Schema 校验；错误结构化回填给模型自愈而非中断循环 |
+| Agent loop（循环本身是插件） | `harness/loop.py::DefaultAgentLoop` | 默认循环：观察→模型→tool_calls→guard 链执行→结果回填→下一轮；无 tool_calls 即终结 |
+| guard 插件（loop-hygiene + tool-timeout） | `harness/loop.py` | `StepBudgetGuard`（步数预算）、`ToolTimeoutGuard`（线程池超时，Windows 兼容）、`DuplicateCallGuard`（连续重复调用短路并提示换路） |
+| compaction / context 插件 | `harness/loop.py::TruncateCompactor` | 粗略 token 估算超限时：先截断单条超长消息，再丢弃最旧中间消息（保留 system 与最近若干条） |
+| Waterfall listeners MUST call next() | guard 链语义 | 每个 guard 决定"放行/短路"，短路时返回结构化错误给模型 |
+
+## 默认循环伪代码
+
+```
+run(agent, session, task):
+    session.log(user(task))                    # 记录任务
+    for step in 0..max_steps:                  # StepBudgetGuard
+        messages = [system] + session.replay() # compaction 在此介入
+        resp = adapter.chat(model, messages, tools)
+        session.log(assistant(resp))
+        if not resp.tool_calls:
+            return final(resp.content)         # 终结输出
+        for call in resp.tool_calls:
+            session.log_tool_call(call)
+            if dup_guard.short_circuit(call):  # 循环卫生
+                result = {ok: false, error: 提示换路}
+            else:
+                result = timeout_guard.dispatch(registry, call)   # 工具调用
+            session.log_tool_result(call, result)
+```
+
+## 在游戏中的两个实例
+
+- **DM Agent**（`game/agents.py` + `game/tools.py`）：工具组 =
+  `narrate / speak_as_npc / skill_check / save_roll / get_state / set_flag /
+  advance_scene / award_xp / give_loot / start_encounter`。
+  所有掷骰、数值、剧情推进都在引擎里完成，LLM 只做"决策与叙述"，
+  因此模型永远无法编造骰点结果——结果以工具返回为准回填给模型。
+- **PC Agent**（每名 AI 同伴一个）：工具组 = `say / combat_action /
+  explore_intent`。战斗回合给到 PC Agent 的上下文是遭遇快照
+  （双方 HP/AC、法术位），它必须调用 `combat_action` 完成回合；
+  LLM 不可达时编排器自动降级为启发式战斗 AI（`_scripted_pc_turn`）。
+
+每个 Agent 调用使用独立注册表（DM 与 PC 工具组不同），
+通过 `DefaultAgentLoop.run(..., registry=...)` 按次注入。
+
+## 与 deepseek-harness 的差异（有意为之）
+
+- dsh 基于 Cordis/TypeScript 的进程级插件容器；本项目是单进程 Python
+  库，用组合与按次注入表达同样的"可替换"边界。Cordis 本体的语义
+  （Context 服务容器、插件即函数、Fiber 三态 PENDING/ACTIVE/DISPOSED、
+  副作用 LIFO 回滚、依赖就绪自动激活、服务消失时依赖方连坐处置）已按
+  检索到的官方教程在 `ctrcg/campaign/cordis.py` 中对模组加载层做了忠实
+  的 Python 变体实现。
+- dsh 的 Session 有 SQLite 持久化与多 SDK 投影；本项目使用 JSONL 事件流
+  （每事件一行），足够游戏审计与重放。
+- 未实现 dsh 的 subagent/skill/web/shell 等生态插件；游戏领域工具组
+  （规则引擎 API）即本 harness 的全部插件面。
+
+## 何时用真实 LLM
+
+设置环境变量后 `main.py`（终端）或 `python main.py --web`（网页版）自动构建
+`OpenAICompatibleAdapter` 并进入 AI 模式，DM 与三名 AI 队友分别经 harness
+循环接入 DeepSeek：
+
+```
+CTRCG_LLM_BASE_URL=https://api.deepseek.com/v1
+CTRCG_LLM_API_KEY=<你的密钥>            # 只放环境变量，绝不入库
+CTRCG_LLM_MODEL=deepseek-chat
+```
+
+不配置则自动落入剧本模式（模组数据驱动 DM + 启发式队友 AI），
+两种模式共用同一规则引擎与剧情数据。`python main.py --check-llm`
+可验证端点连通性。连接本机模型（Ollama/LM Studio）需显式设置
+`CTRCG_LLM_ALLOW_PRIVATE=1`（SSRF 加固的例外开关，见 `adapter.py`）。
+
+## 参考来源
+
+- [deepseek-ai/deepseek-harness（GitHub）](https://github.com/deepseek-ai/deepseek-harness)
+- [deepseek-harness AGENTS.md（循环与 session 约定）](https://github.com/deepseek-ai/deepseek-harness/blob/master/AGENTS.md)
+- [The New Stack：DeepSeek open sources an agent harness](https://thenewstack.io/deepseek-harness-open-source-plugins/)
+- [DeepInfra Blog：DeepSeek Harness Review — Agent Loop & Plugin Architecture](https://deepinfra.com/blog/deepseek-harness-review)

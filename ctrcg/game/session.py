@@ -1,0 +1,982 @@
+"""GameSession：游戏主编排器。
+
+- AI 模式：DM Agent / PC Agent 经 harness 循环决策，引擎执行规则。
+- 剧本模式（离线）：模组数据驱动 + 启发式队友 AI，无需任何 API。
+两种模式共用同一套 5e 规则引擎与 UI。
+
+战斗采用完整 5e 动作经济：每回合一个动作 + 一个附赠动作 + 一个反应；
+玩家回合分为"动作阶段"与"附赠阶段"两层菜单。
+"""
+
+from __future__ import annotations
+
+from ..campaign.loader import Module
+from ..harness.events import Session
+from ..harness.loop import AgentResult, DefaultAgentLoop
+from ..harness.registry import ToolRegistry
+from ..rules import data as D
+from ..rules.character import (
+    Character, COND_BLESSED, COND_INVISIBLE, COND_MARKED, COND_RAGING,
+    COND_SHIELDED, COND_SLEEP, COND_PRONE, COND_UNCONSCIOUS,
+)
+from ..rules.combat import Encounter, monster_choose_action
+from . import state as G
+from .tools import GameTools
+
+SAVE_FILE = "saves/game.json"
+
+# 战斗结束后清除的临时战斗状态（中毒/恐惧等按规则延续到战斗外）
+_POST_COMBAT_CLEAR = {COND_SHIELDED, "burning", "mirror_image", COND_INVISIBLE,
+                      COND_RAGING, "ac+2", COND_SLEEP, "hunters_mark"}
+
+
+class GameOver(Exception):
+    pass
+
+
+class GameSession:
+    def __init__(self, game_state: G.GameState, ui, loop: DefaultAgentLoop | None = None,
+                 dm_agent=None, pc_agents: dict | None = None, log_dir="saves/logs",
+                 module: Module | None = None, meter=None):
+        self.state = game_state
+        self.ui = ui
+        self.loop = loop                      # None → 剧本模式
+        self.dm_agent = dm_agent
+        self.pc_agents = pc_agents or {}
+        self.meter = meter                    # TokenMeter（AI 模式记录用量）
+        self.module = module or game_state.module
+        self.state.module = self.module
+        self.tools = GameTools(game_state, ui, session=self)
+        self.registry = ToolRegistry()
+        self.tools.register_dm_tools(self.registry)
+        self.encounter: Encounter | None = None
+        self.ai_mode = loop is not None
+        self._dm_session = Session("dm", log_dir=log_dir)
+        self._pc_sessions: dict[str, Session] = {}
+        self._log_dir = log_dir
+
+    # ================================================================ 主流程
+    def run(self) -> None:
+        mode = "AI 模式（DM 与队友由 Agent 扮演）" if self.ai_mode \
+            else "剧本模式（离线 · 规则引擎结算）"
+        self.ui.raw(f"\n《{self.module.title}》 —— {self.module.en_title}")
+        self.ui.raw(f"模式：{mode}")
+        self.ui.raw(self.module.setting)
+        self.enter_scene(self.state.scene_id)
+        try:
+            while True:
+                scene = self.module.scene_by_id(self.state.scene_id)
+                if self.ai_mode:
+                    progressed = self.ai_explore_turns(scene)
+                else:
+                    progressed = self.scripted_explore_turns(scene)
+                if progressed == "quit":
+                    break
+                if progressed == "end":
+                    self._epilogue()
+                    break
+        except GameOver:
+            self.ui.raw("\n════════ 队伍全灭 ════════")
+            self.ui.raw("剑湾的风雪掩埋了这段冒险……可使用存档重新来过（菜单：读取）。")
+
+    def _epilogue(self) -> None:
+        self.ui.raw("\n" + "=" * 62)
+        for line in self.module.epilogue.split("\n"):
+            self.ui.raw(line)
+        self.ui.raw(f"\n最终队伍：\n{self.state.party_snapshot()}")
+        self.ui.raw(f"金币：{self.state.player.gold}    经验："
+                    + "、".join(f"{c.name}{c.xp}" for c in self.state.party()))
+
+    # ================================================================ 场景
+    def enter_scene(self, scene_id: str) -> None:
+        scene = self.module.scene_by_id(scene_id)
+        if scene is None:
+            raise GameOver(f"场景不存在: {scene_id}")
+        self.state.scene_id = scene_id
+        if scene_id not in self.state.visited:
+            self.state.visited.append(scene_id)
+        self.ui.scene_header(scene["act"], self.module.act_titles.get(scene["act"], ""),
+                             scene["location"])
+        for para in scene["intro"].split("\n"):
+            self.ui.raw(para)
+        # 稳定/昏迷的成员在换场时经 1d4 小时苏醒（1 HP 归队）；
+        # 死亡的成员按规则保持死亡——5e 中复活需要复生术等高环魔法（本内容范围为1-3级）
+        for c in self.state.party():
+            if "dead" in c.conditions:
+                continue
+            if c.hp_cur <= 0:
+                c.revive(1)
+                who = "你" if c is self.state.player else c.name
+                self.ui.system_line(f"休整与照料后，{who} 恢复了意识（1 HP 归队）。")
+        self._flavor_line(scene)
+        # 里程碑升级（关键节点整队升级）+ 职业特性选择
+        if scene.get("level_to"):
+            for c in self.state.party():
+                msg = c.level_up_to(scene["level_to"])
+                if msg:
+                    self.ui.system_line(msg)
+                self._resolve_level_up_choices(c)
+        self.autosave()
+
+    def _resolve_level_up_choices(self, c: Character) -> None:
+        """升级带来的职业特性选择：玩家交互选择，同伴走推荐默认。"""
+        if not c.pending_feature_choices():
+            return
+        if c is not self.state.player:
+            c.apply_default_choices()
+            return
+        for need in c.pending_feature_choices():
+            self._ask_feature_choice(c, need)
+
+    _STYLE_NAMES = {"archery": "箭术（远程攻击+2）", "defense": "防御（AC+1）",
+                    "dueling": "对决（单手近战伤害+2）", "two_weapon": "双武器格斗（副手加属性）"}
+
+    def _ask_feature_choice(self, c: Character, need: str) -> None:
+        fc = c.feature_choices
+        if need == "fighting_style":
+            keys = ["archery", "defense", "dueling", "two_weapon"]
+            i = self.ui.choose("选择战斗风格",
+                               [self._STYLE_NAMES[k] for k in keys])
+            c.fighting_style = keys[i]
+            self.ui.system_line(f"战斗风格：{self._STYLE_NAMES[c.fighting_style]}")
+        elif need == "path":
+            i = self.ui.choose("选择本源之路（野蛮人3级）",
+                               ["狂战士（狂暴期间每回合附赠动作近战，狂暴后力竭+1）",
+                                "图腾战士·熊（狂暴时几乎全部伤害抗性）"])
+            fc["path"] = "berserker" if i == 0 else "totem"
+        elif need == "archetype" and c.klass == "fighter":
+            i = self.ui.choose("选择武技流派（战士3级）",
+                               ["冠军（19-20即暴击）", "战斗大师（4颗战技骰d8）"])
+            fc["archetype"] = "champion" if i == 0 else "battlemaster"
+        elif need == "rogue_archetype":
+            i = self.ui.choose("选择盗贼流派（3级）",
+                               ["盗贼（快手：附赠动作使用物品/巧手）",
+                                "刺客（对未行动目标攻击优势，对被突袭目标必暴击）"])
+            fc["archetype"] = "thief" if i == 0 else "assassin"
+        elif need == "tradition":
+            fc["tradition"] = "open_hand"
+            self.ui.system_line("武僧流派：开掌道")
+        elif need == "prey":
+            i = self.ui.choose("选择猎人猎物（游侠3级）",
+                               ["巨兽杀手（每回合对已受伤目标+1d8）",
+                                "破阵者（对贴身不同目标额外攻击）"])
+            fc["prey"] = "colossus" if i == 0 else "horde"
+        elif need == "college":
+            i = self.ui.choose("选择诗人学院（2级）",
+                               ["知识学院（诛心之言：反应减敌1d6）",
+                                "勇者学院（叙事呈现）"])
+            fc["college"] = "lore" if i == 0 else "valor"
+        elif need == "school":
+            i = self.ui.choose("选择奥术传承（法师2级）",
+                               ["塑能（塑法：AOE中队友自动豁免成功无伤）",
+                                "防护（奥术护盾）"])
+            fc["school"] = "evocation" if i == 0 else "abjuration"
+        elif need == "origin":
+            i = self.ui.choose("选择源法血统（术士1级）",
+                               ["龙脉（无甲AC 13+敏捷，每级生命+1）",
+                                "混沌原力（叙事呈现）"])
+            fc["origin"] = "draconic" if i == 0 else "wild"
+            if fc["origin"] == "draconic":
+                c.hp_max += c.level  # 补齐每级+1
+                c.hp_cur = c.hp_max
+        elif need == "metamagic":
+            i = self.ui.choose("选择超魔×2（术士3级）",
+                               ["疾咒 + 强咒（动作法术改附赠 / 目标豁免劣势）",
+                                "疾咒 + 谨咒（AOE中队友自动豁免成功）"])
+            fc["metamagic_quickened"] = True
+            if i == 0:
+                fc["metamagic_heightened"] = True
+                fc["metamagic"] = "quickened+heightened"
+            else:
+                fc["metamagic_careful"] = True
+                fc["metamagic"] = "quickened+careful"
+        elif need == "invocations":
+            i = self.ui.choose("选择魔契恩泽×2（邪术师2级）",
+                               ["剧痛魔爆 + 魔鬼之视（魔能爆+魅力伤害 / 黑暗视觉120尺）",
+                                "剧痛魔爆 + 击退魔爆（魔能爆命中推开10尺）"])
+            fc["invocation_1"] = "agonizing"
+            fc["invocation_2"] = "devils_sight" if i == 0 else "repelling"
+        elif need == "boon":
+            i = self.ui.choose("选择魔契恩赐（邪术师3级）",
+                               ["魔剑（可用魅力进行武器攻击）", "魔典", "魔链"])
+            fc["boon"] = "blade" if i == 0 else ("tome" if i == 1 else "chain")
+        else:
+            c.apply_default_choices()
+
+    def _flavor_line(self, scene: dict) -> None:
+        """剧本模式下同伴的应景发言。"""
+        if self.ai_mode:
+            return
+        lines = {
+            "roland": "保持队形。有情况先告诉我。",
+            "veilan": "这地方的气味……可不太妙。",
+            "pip": "哇哦，你看这些石头！典型的矮人工艺！",
+        }
+        for c in self.state.companions:
+            if c.hp_cur > 0:
+                self.ui.companion_line(c.name, lines.get(
+                    "roland" if "罗兰" in c.name else
+                    "veilan" if "薇兰" in c.name else "pip", "嗯。"))
+
+    def advance_scene(self, scene_id: str) -> dict:
+        cur = self.module.scene_by_id(self.state.scene_id)
+        valid = {cur["next"]} if cur["next"] else set()
+        if scene_id != self.state.scene_id and scene_id not in valid:
+            return {"ok": False,
+                    "error": f"不能直接跳到 {scene_id}。当前可推进到：{sorted(valid) or '（已是最终场景）'}"}
+        if scene_id == self.state.scene_id:
+            return {"ok": True, "note": "已在该场景。"}
+        # 幕完成奖励
+        if cur.get("milestone"):
+            self.tools._tool_award_xp(cur["milestone"], "阶段性剧情完成")
+        self.enter_scene(scene_id)
+        if self.module.scene_by_id(scene_id)["next"] is None:
+            return {"ok": True, "note": "已进入最终场景。"}
+        return {"ok": True, "scene": scene_id}
+
+    # ================================================================ 探索：剧本模式
+    def scripted_explore_turns(self, scene: dict) -> str:
+        encounter_done = False
+        skills_done: set[int] = set()
+        while True:
+            options = [f"检定机会：{s['skill']}（{D.SKILLS[s['skill']]['name']}，DC{s['dc']}）"
+                       for i, s in enumerate(scene["skills"]) if i not in skills_done]
+            can_forward = scene["encounter"] and not encounter_done
+            base = []
+            if can_forward:
+                base.append("前进（触发剧情）")
+            elif scene["next"]:
+                base.append("前往下一场景")
+            base += ["队伍短休", "队伍长休", "查看状态", "查看背包", "保存游戏", "退出游戏"]
+            opts = options + base
+            idx = self.ui.choose(f"—— {scene['location']} —— 你要做什么？", opts)
+            if idx < len(options):
+                orig = [i for i in range(len(scene["skills"])) if i not in skills_done]
+                sk_idx = orig[idx]
+                sk = scene["skills"][sk_idx]
+                r = self.tools._tool_skill_check("队伍", sk["skill"], sk["dc"],
+                                                 context=sk["skill"])
+                self.ui.raw("  " + (sk["success"] if r.get("success") else sk["fail"]))
+                skills_done.add(sk_idx)
+                # 潜行成功 → 下一场遭遇的敌人被突袭（5e 突袭规则）
+                if sk["skill"] == "stealth" and r.get("success"):
+                    self.state.flags["party_stealth"] = self.state.scene_id
+                continue
+            choice = opts[idx]
+            if choice.startswith(("前进", "前往")):
+                if can_forward:
+                    encounter_done = True
+                    self.launch_encounter(scene["encounter"])
+                    outcome = self.run_combat()
+                    if outcome == "tpk":
+                        raise GameOver()
+                    if scene.get("outro"):
+                        self.ui.raw("")
+                        for para in scene["outro"].split("\n"):
+                            self.ui.raw(para)
+                    if scene["next"] is None:
+                        return "end"
+                    self.advance_scene(scene["next"])
+                    return "advanced"
+                self.advance_scene(scene["next"])
+                return "advanced"
+            if choice == "队伍短休":
+                self.party_short_rest()
+            elif choice == "队伍长休":
+                self.party_long_rest()
+            elif choice == "查看状态":
+                self.ui.raw(self.state.party_snapshot())
+            elif choice == "查看背包":
+                self.show_inventory()
+            elif choice == "保存游戏":
+                path = G.save_game(self.state, SAVE_FILE)
+                self.ui.system_line(f"已保存到 {path}")
+            else:
+                return "quit"
+
+    # ================================================================ 探索：AI 模式
+    def ai_explore_turns(self, scene: dict) -> str:
+        self.ui.system_line("输入行动或对白；/状态 /背包 /短休 /长休 /保存 /退出 为指令。")
+        while True:
+            text = self.ui.free_input("\n你> ")
+            if not text:
+                continue
+            if text == "/状态":
+                self.ui.raw(self.state.party_snapshot())
+                continue
+            if text == "/背包":
+                self.show_inventory()
+                continue
+            if text == "/短休":
+                self.party_short_rest()
+                continue
+            if text == "/长休":
+                self.party_long_rest()
+                continue
+            if text == "/保存":
+                path = G.save_game(self.state, SAVE_FILE)
+                self.ui.system_line(f"已保存到 {path}")
+                continue
+            if text == "/退出":
+                return "quit"
+            self.dm_turn(text)
+            # DM 本回合可能触发了战斗
+            if self.encounter is not None:
+                outcome = self.run_combat()
+                if outcome == "tpk":
+                    raise GameOver()
+                scene = self.module.scene_by_id(self.state.scene_id)
+                if scene.get("outro"):
+                    self.ui.raw("")
+                    for para in scene["outro"].split("\n"):
+                        self.ui.raw(para)
+                if scene["next"] is None:
+                    return "end"
+
+    def dm_turn(self, player_text: str) -> None:
+        scene = self.module.scene_by_id(self.state.scene_id)
+        context = [{"role": "user", "content": (
+            f"【场景】{scene['id']}：{scene['location']}\n"
+            f"【队伍】{self.state.party_snapshot()}\n"
+            f"【旗标】{self.state.flags or '无'}\n"
+            f"【玩家输入】{player_text}")}]
+        result = self.loop.run(self.dm_agent, self._dm_session,
+                               f"玩家回合，请推进剧情：{player_text}",
+                               context_messages=context, registry=self.registry)
+        self._record_usage(self.dm_agent, result)
+        if result.content and result.content.strip():
+            self.ui.dm_narration(result.content.strip())
+
+    def _record_usage(self, agent, result: AgentResult) -> None:
+        if self.meter is not None and result.usage:
+            try:
+                self.meter.record(agent.agent_id, agent.model, result.usage,
+                                  result.steps)
+            except Exception:  # noqa: BLE001 —— 用量记录不阻塞对局
+                pass
+
+    # ================================================================ 战斗
+    def launch_encounter(self, encounter_id: str) -> dict:
+        spec = self.module.encounter(encounter_id)
+        if spec is None:
+            return {"ok": False, "error": "未知遭遇 " + encounter_id}
+        enc = G.build_encounter(encounter_id, self.state)
+        # 黑暗环境中先点亮光源（火把 > 光亮术），否则承受黑暗劣势
+        if enc.dark:
+            pc = self.state.player
+            holder = next((c for c in self.state.alive_party()
+                           if c.inventory.get("torch", 0) > 0), None)
+            if holder is not None:
+                holder.inventory["torch"] -= 1
+                enc.dark = False
+                self.ui.system_line(
+                    f"{holder.name if holder is not pc else '你'}点亮一支火把，"
+                    "光晕驱散了黑暗（消耗火把×1）。")
+            else:
+                caster = next((c for c in self.state.alive_party()
+                               if "light" in c.known_spells()), None)
+                if caster is not None:
+                    enc.dark = False
+                    self.ui.system_line(f"{caster.name} 施展光亮术，光亮驱散了黑暗。")
+                else:
+                    self.ui.system_line("队伍没有光源！无黑暗视觉的成员将在黑暗中艰难作战。")
+        # 场景潜行成功 → 敌人被突袭（5e Surprise）
+        if self.state.flags.get("party_stealth") == self.state.scene_id:
+            enc.surprised = {m.name for m in enc.enemies()}
+            self.state.flags.pop("party_stealth", None)
+            self.ui.system_line("你们悄然就位——敌人措手不及，第一轮无法行动！")
+        if hasattr(self.ui, "sw_used"):
+            self.ui.sw_used = False
+        # 反应询问（护盾术/灵活闪避/狱火斥喝/反制法术）
+        enc.reaction_prompt = self._reaction_prompt
+        self.encounter = enc
+        self.tools.encounter = enc
+        self.ui.raw("")
+        for para in spec["intro"].split("\n"):
+            self.ui.raw("  " + para)
+        return {"ok": True, "encounter": encounter_id,
+                "note": "战斗即将开始，编排器接管回合流程。"}
+
+    def _reaction_prompt(self, target, ctx: dict) -> bool:
+        """玩家反应询问；同伴自动决策。"""
+        if target is self.state.player:
+            label = {"shield": "以反应施放护盾术（1环，AC+5）",
+                     "uncanny_dodge": "灵活闪避（反应：伤害减半）",
+                     "hellish_rebuke": "狱火斥喝（反应：2d10 火焰）",
+                     "counterspell": "反制法术（反应）"}.get(ctx.get("reaction"),
+                                                           ctx.get("reaction", "反应"))
+            i = self.ui.choose(f"⚠ {target.name}：{label}？",
+                               ["不使用", "使用"])
+            return i == 1
+        return None  # 同伴：交给引擎自动规则
+
+    def run_combat(self) -> str:
+        enc = self.encounter
+        lines = enc.begin(self.state.rng)
+        if hasattr(self.ui, "mode"):
+            self.ui.mode = "combat"
+        self.ui.raw("\n—— 战斗开始 ——")
+        self.ui.status_board(lines)
+        outcome = None
+        while outcome is None:
+            over = enc.is_over()
+            if over:
+                outcome = over
+                break
+            if enc.round > 50:
+                self.ui.system_line("战斗陷入漫长僵持，队伍且战且退……")
+                outcome = "retreat"
+                break
+            c, events = enc.next_turn()
+            for e in events:
+                self.ui.system_line(e)
+            if not enc.alive(c):
+                continue
+            if isinstance(c, Character):
+                if c is self.state.player:
+                    self.player_combat_turn(enc)
+                else:
+                    self.companion_turn(enc, c)
+            else:
+                self.monster_turn(enc, c)
+            outcome = enc.is_over()
+        self.ui.raw("—— 战斗结束 ——")
+        if hasattr(self.ui, "mode"):
+            self.ui.mode = "explore"
+        # 战斗结束清理：临时战斗状态消失
+        for c in self.state.party():
+            c.conditions -= _POST_COMBAT_CLEAR
+            c.concentration = None
+            c.conditions.discard(COND_MARKED)
+            c.weapon_buff = None
+            c.mirror_images = 0
+            if "dead" in c.conditions:
+                c.conditions = {"dead"}          # 规范死亡状态显示
+            elif c.hp_cur == 0 and "stable" in c.conditions:
+                c.heal(1)                        # 稳定者经短暂喘息恢复 1 HP
+        # 玩家死亡 → 本局结束（RAW：无复生魔法可依）
+        if "dead" in self.state.player.conditions or self.state.player.hp_cur <= 0:
+            self.encounter = None
+            self.tools.encounter = None
+            return "tpk"
+        self.encounter = None
+        self.tools.encounter = None
+        if outcome == "enemies":
+            return "tpk"
+        if outcome == "party":
+            self._aftermath(enc)
+        return outcome if outcome == "retreat" else "win"
+
+    def monster_turn(self, enc: Encounter, mon) -> None:
+        # 怪物附赠动作（借机潜袭等）
+        act = monster_choose_action(enc, mon)
+        if act.get("action") == "bonus_disengage":
+            enc.do_disengage_quiet(mon)
+            self.ui.system_line(f"  {mon.name} 以附赠动作灵巧撤离。")
+            act = monster_choose_action(enc, mon)
+        if act.get("action") != "attack":
+            return
+        target = enc.find(act["target"])
+        if target is None:
+            return
+        before = len(enc.log)
+        enc.attack_action(mon, target, act.get("weapon"), self.state.rng)
+        self.ui.raw("  " + "\n  ".join(enc.log[before:]))
+
+    # ---------------- 玩家回合：动作阶段 + 附赠阶段
+    def player_combat_turn(self, enc: Encounter) -> None:
+        pc = self.state.player
+        # 动作阶段（begin_turn 已由 next_turn 处理）
+        while enc.has_action(pc) and enc.is_over() is None:
+            foes = enc.active_enemies()
+            if not foes:
+                return
+            self.ui.status_board(enc.status_lines())
+            opts = self._action_options(enc, pc)
+            idx = self.ui.choose(f"—— {pc.name} 的回合 · 动作阶段 ——", opts)
+            if not self._execute_action(enc, pc, idx, opts, foes):
+                continue
+        # 附赠动作阶段
+        while enc.has_bonus(pc) and enc.is_over() is None:
+            opts = self._bonus_options(pc)
+            if not opts:
+                break
+            self.ui.status_board(enc.status_lines())
+            opts = opts + ["（结束回合）"]
+            idx = self.ui.choose(f"—— {pc.name} · 附赠动作阶段 ——", opts)
+            if idx >= len(opts) - 1:
+                break
+            if not self._execute_bonus(enc, pc, idx, opts):
+                continue
+
+    def _action_options(self, enc: Encounter, pc: Character) -> list[str]:
+        opts = ["攻击", "施法"]
+        opts += ["推撞（运动对抗，令目标倒地）", "擒抱（运动对抗，目标无法移动）",
+                 "助攻（帮助队友获得优势）", "防御", "躲藏", "撤离",
+                 "移动远离（可能引发借机攻击）",
+                 "说话", "查看状态", "（结束动作阶段）"]
+        downed = [a for a in enc.party()
+                  if isinstance(a, Character) and a.hp_cur <= 0
+                  and "dead" not in a.conditions]
+        if downed and pc.inventory.get("healing_potion", 0) > 0:
+            opts.insert(opts.index("（结束动作阶段）"), "喂药（救起倒地队友）")
+        if any(isinstance(a, Character) and a.hp_cur <= 0 and "dead" not in a.conditions
+               and "stable" not in a.conditions for a in downed):
+            opts.insert(opts.index("（结束动作阶段）"), "稳定伤势（医药 DC10）")
+        if pc.inventory.get("healing_potion", 0) > 0:
+            opts.insert(opts.index("（结束动作阶段）"), "喝治疗药水")
+        if pc.has_feature("action_surge") and not pc.action_surge_used:
+            opts.insert(0, "动作如潮（额外动作）")
+        if pc.mech().get("breath_weapon"):
+            opts.insert(0, "龙息")
+        if pc.klass == "druid" and pc.level >= 2 and pc.wild_shape_used < 2 \
+                and not pc.in_wild_shape():
+            opts.insert(0, "荒野变形")
+        if pc.klass == "paladin" and pc.lay_on_hands_left() > 0:
+            opts.insert(0, "圣疗（治疗池）")
+        return opts
+
+    def _execute_action(self, enc: Encounter, pc: Character, idx: int,
+                        opts: list[str], foes: list) -> bool:
+        choice = opts[idx]
+        before = len(enc.log)
+        def flush():
+            for line in enc.log[before:]:
+                self.ui.raw("  " + line)
+        if choice.startswith("动作如潮"):
+            r = enc.action_surge(pc)
+            if not r.get("ok"):
+                self.ui.system_line(r.get("error", "失败"))
+                return False
+            flush()
+            return True
+        if choice.startswith("龙息"):
+            ti = self.ui.choose("龙息目标", [f.name for f in foes])
+            r = enc.breath_weapon(pc, [foes[ti]], self.state.rng)
+            if not r.get("ok"):
+                self.ui.system_line(r.get("error", "失败"))
+                return False
+            flush()
+            return True
+        if choice.startswith("荒野变形"):
+            beasts = [k for k, v in D.MONSTERS.items()
+                      if v.get("beast") and v.get("cr", 9) <= (0.25 if pc.level < 4 else 0.5)]
+            fi = self.ui.choose("选择野兽形态",
+                                [f"{D.MONSTERS[b]['name']}（CR{D.MONSTERS[b]['cr']}，"
+                                 f"{D.MONSTERS[b]['hp']}，AC{D.MONSTERS[b]['ac']}）"
+                                 for b in beasts])
+            r = enc.wild_shape(pc, beasts[fi])
+            if not r.get("ok"):
+                self.ui.system_line(r.get("error", "失败"))
+                return False
+            flush()
+            return True
+        if choice.startswith("圣疗"):
+            allies = enc.active_party()
+            ti = self.ui.choose("圣疗目标", [f"{a.name}（HP {a.hp_cur}/{a.hp_max}）"
+                                             for a in allies])
+            amt = self.ui.choose("消耗治疗池", ["5 点", "10 点", "全部（可尽情回复）"])
+            amounts = [5, 10, pc.lay_on_hands_left()]
+            r = enc.lay_on_hands(pc, allies[ti], amounts[amt])
+            if not r.get("ok"):
+                self.ui.system_line(r.get("error", "失败"))
+                return False
+            flush()
+            return True
+        if choice == "攻击":
+            return self._player_attack(enc, pc, foes)
+        if choice == "施法":
+            if self._cast_menu(enc, pc):
+                flush()
+                return True
+            return False
+        if choice.startswith("推撞"):
+            ti = self.ui.choose("推撞目标", [f.name for f in foes])
+            r = enc.do_shove(pc, foes[ti])
+            flush()
+            return True
+        if choice.startswith("擒抱"):
+            ti = self.ui.choose("擒抱目标", [f.name for f in foes])
+            r = enc.do_grapple(pc, foes[ti])
+            flush()
+            return True
+        if choice.startswith("助攻"):
+            ti = self.ui.choose("为对哪名敌人的下一次攻击创造优势？", [f.name for f in foes])
+            r = enc.do_help(pc, foes[ti])
+            flush()
+            return True
+        if choice == "防御":
+            r = enc.do_dodge(pc)
+            flush()
+            return True
+        if choice == "躲藏":
+            r = enc.do_hide(pc, self.state.rng)
+            flush()
+            return True
+        if choice == "撤离":
+            r = enc.do_disengage(pc)
+            flush()
+            return True
+        if choice.startswith("移动远离"):
+            r = enc.move_away(pc)
+            flush()
+            return True
+        if choice.startswith("喝"):
+            r = enc.use_item(pc, "healing_potion")
+            if not r.get("ok"):
+                self.ui.system_line(r.get("error", "失败"))
+                return False
+            flush()
+            return True
+        if choice.startswith("喂药"):
+            downed = [a for a in enc.party()
+                      if isinstance(a, Character) and a.hp_cur <= 0
+                      and "dead" not in a.conditions]
+            ti = self.ui.choose("喂药给谁？", [a.name for a in downed])
+            r = enc.use_item(pc, "healing_potion", downed[ti])
+            if not r.get("ok"):
+                self.ui.system_line(r.get("error", "失败"))
+                return False
+            flush()
+            return True
+        if choice.startswith("稳定伤势"):
+            downed = [a for a in enc.party()
+                      if isinstance(a, Character) and a.hp_cur <= 0
+                      and "dead" not in a.conditions and "stable" not in a.conditions]
+            ti = self.ui.choose("稳定哪位队友？", [a.name for a in downed])
+            r = enc.stabilize(pc, downed[ti])
+            if not r.get("ok"):
+                self.ui.system_line(r.get("error", "失败"))
+                return False
+            flush()
+            return True
+        if choice == "说话":
+            text = self.ui.free_input("（说什么？）")
+            if text:
+                self.ui.companion_line(pc.name, text)
+            return False   # 免费动作，不消耗回合
+        if choice.startswith("查看状态"):
+            self.ui.raw(self.state.party_snapshot())
+            return False
+        return True   # 结束动作阶段
+
+    def _player_attack(self, enc: Encounter, pc: Character, foes: list) -> bool:
+        wi = self.ui.choose("选择武器", [self._weapon_label(pc, w) for w in pc.weapons])
+        weapon = pc.weapons[wi]
+        reckless = False
+        if pc.has_feature("reckless") and not D.WEAPONS[weapon].get("ranged"):
+            reckless = self.ui.choose("鲁莽攻击？（你本回合攻击有优势，敌人对你也有优势）",
+                                      ["不鲁莽", "鲁莽攻击"]) == 1
+        foes_sorted = sorted(foes, key=lambda f: f.hp_cur)
+        ti = self.ui.choose("选择目标", [f"{f.name}（HP {f.hp_cur}/{f.hp_max} AC {f.ac()}）"
+                                         for f in foes_sorted])
+        target = foes_sorted[ti]
+        smite_slot = None
+        if pc.has_feature("divine_smite") and any(v > 0 for v in pc.spell_slots().values()):
+            if self.ui.choose("命中后消耗法术位施展神佑斩？", ["不", "是（1环 2d8）"]) == 1:
+                smite_slot = 1
+        before = len(enc.log)
+        enc.attack_action(pc, target, weapon, self.state.rng,
+                          reckless=reckless, smite_slot=smite_slot)
+        for line in enc.log[before:]:
+            self.ui.raw("  " + line)
+        # 震慑拳提示：命中后可在附赠阶段使用
+        return True
+
+    def _bonus_options(self, pc: Character) -> list[str]:
+        enc = self.encounter
+        opts = []
+        if pc.klass == "fighter" and not pc.second_wind_used:
+            opts.append("回气（1d10+等级 治疗）")
+        spells = {s: D.SPELLS[s] for s in pc.known_spells()}
+        bonus_spells = [k for k, sp in spells.items()
+                        if sp.get("bonus_action") and (sp["level"] == 0 or
+                                                       pc.spell_slots().get(sp["level"], 0) > 0)]
+        for k in bonus_spells:
+            opts.append(f"施法：{D.SPELLS[k]['name']}（附赠动作）")
+        if pc.klass == "rogue" and pc.level >= 2:
+            opts += ["狡诈动作：撤离", "狡诈动作：躲藏"]
+        if pc.klass == "monk" and pc.ki_left() > 0:
+            opts.append("疾风连击（1气：附赠动作2次徒手）")
+            hit_target = enc.find(enc.last_melee_hit.get(pc.name, "")) if enc else None
+            if pc.has_feature("stunning_strike") and hit_target is not None \
+                    and enc.last_melee_hit.get(pc.name):
+                opts.append(f"震慑拳（1气：对 {hit_target.name}）")
+        light = [w for w in pc.weapons if "light" in D.WEAPONS.get(w, {}).get("props", [])]
+        if light and not pc.in_wild_shape():
+            opts.append(f"双武器副手攻击（{D.WEAPONS[light[0]]['name']}）")
+        if "misty_step" in pc.known_spells() and (pc.can_use_innate("misty_step")
+                                                  or pc.spell_slots().get(2, 0) > 0):
+            opts.append("迷踪步（附赠动作传送，摆脱纠缠）")
+        if pc.klass == "barbarian" and pc.rage_left() and COND_RAGING not in pc.conditions:
+            opts.append("狂暴")
+        if pc.in_wild_shape():
+            opts.append("解除野变（变回本体）")
+        if pc.klass == "bard":
+            opts.append("吟游诗人激励（给友方1颗激励骰）")
+        return opts
+
+    def _execute_bonus(self, enc: Encounter, pc: Character, idx: int,
+                        opts: list[str]) -> bool:
+        choice = opts[idx]
+        before = len(enc.log)
+        def flush():
+            for line in enc.log[before:]:
+                self.ui.raw("  " + line)
+        foes = enc.active_enemies()
+        allies = enc.active_party()
+        if choice.startswith("回气"):
+            r = enc.second_wind(pc, self.state.rng)
+        elif choice.startswith("施法："):
+            spell = next(k for k, v in D.SPELLS.items()
+                         if v["name"] in choice)
+            if D.SPELLS[spell]["kind"] in ("heal", "buff", "cleanse") \
+                    and D.SPELLS[spell].get("effect") != "mark+1d6":
+                ti = self.ui.choose("选择目标（队友）", [a.name for a in allies])
+                targets = [allies[ti].name]
+            else:
+                ti = self.ui.choose("选择目标（敌人）", [f.name for f in foes])
+                targets = [foes[ti].name]
+            r = enc.cast(pc, spell, targets, self.state.rng)
+        elif choice.startswith("狡诈动作：撤离"):
+            enc.use_bonus(pc)
+            enc.do_disengage_quiet(pc)
+            r = {"ok": True}
+            self.ui.system_line(f"  {pc.name} 狡诈动作：灵巧撤离。")
+            return True
+        elif choice.startswith("狡诈动作：躲藏"):
+            r = enc.do_hide_bonus(pc, self.state.rng)
+        elif choice.startswith("疾风连击"):
+            ti = self.ui.choose("疾风连击目标", [f.name for f in foes])
+            r = enc.flurry_of_blows(pc, foes[ti])
+        elif choice.startswith("震慑拳"):
+            target = enc.find(enc.last_melee_hit.get(pc.name, ""))
+            r = enc.stunning_strike(pc, target) if target else \
+                {"ok": False, "error": "本回合还没有近战命中"}
+        elif choice.startswith("双武器副手"):
+            light = next(w for w in pc.weapons
+                         if "light" in D.WEAPONS.get(w, {}).get("props", []))
+            ti = self.ui.choose("副手攻击目标", [f.name for f in foes])
+            enc.use_bonus(pc)
+            r = enc.attack(pc, foes[ti], light, self.state.rng, offhand=True)
+        elif choice.startswith("迷踪步"):
+            if pc.can_use_innate("misty_step"):
+                pc.innate_used.add("misty_step")
+            else:
+                enc._consume_slot(pc, 2)
+            enc.do_disengage_quiet(pc)
+            r = {"ok": True}
+            self.ui.system_line(f"  {pc.name} 化作薄雾短距传送（摆脱纠缠）。")
+            return True
+        elif choice == "狂暴":
+            r = enc.start_rage(pc)
+        elif choice.startswith("解除野变"):
+            r = enc.revert_shape(pc)
+        elif choice.startswith("吟游诗人激励"):
+            ti = self.ui.choose("激励目标（队友）", [a.name for a in allies])
+            r = enc.bardic_inspiration(pc, allies[ti])
+        else:
+            return True
+        if not r.get("ok"):
+            self.ui.system_line(r.get("error", "失败"))
+            return False
+        flush()
+        return True
+
+    def _cast_menu(self, enc: Encounter, pc: Character) -> bool:
+        spells = pc.known_spells()
+        slots = pc.spell_slots()
+        usable = [s for s in spells
+                  if D.SPELLS[s]["level"] == 0 or slots.get(D.SPELLS[s]["level"], 0) > 0
+                  or pc.can_use_innate(s)]
+        if not usable:
+            self.ui.system_line("没有可用的法术位。")
+            return False
+        names = [f"{D.SPELLS[s]['name']}（{'戏法' if D.SPELLS[s]['level']==0 else str(D.SPELLS[s]['level'])+'环'}，"
+                 f"{D.SPELLS[s]['kind']}）" for s in usable]
+        si = self.ui.choose("选择法术", names)
+        spell = usable[si]
+        sp = D.SPELLS[spell]
+        foes = enc.active_enemies()
+        allies = enc.active_party()
+        if sp["kind"] in ("heal", "buff", "cleanse", "cleanse_magical") \
+                and sp.get("effect") != "mark+1d6" and sp.get("effect") != "teleport":
+            ti = self.ui.choose("选择目标（队友）", [a.name for a in allies])
+            targets = [allies[ti].name]
+        elif sp["kind"] == "buff" and sp.get("effect") in ("mark+1d6", "teleport"):
+            if sp.get("effect") == "teleport":
+                targets = []
+            else:
+                ti = self.ui.choose("印记目标（敌人）", [f.name for f in foes])
+                targets = [foes[ti].name]
+        else:
+            ti = self.ui.choose("选择目标（敌人，多个用逗号分隔编号）",
+                                [f.name for f in foes])
+            targets = [foes[ti].name]
+            extra = self.ui.free_input("额外目标编号（可空）> ")
+            for part in extra.replace("，", ",").split(","):
+                if part.strip().isdigit() and 1 <= int(part) <= len(foes):
+                    targets.append(foes[int(part) - 1].name)
+        r = enc.cast(pc, spell, targets, self.state.rng)
+        if not r.get("ok"):
+            self.ui.system_line(r.get("error", "施法失败"))
+            return False
+        return True
+
+    def companion_turn(self, enc: Encounter, pc: Character) -> None:
+        acted = False
+        before = len(enc.log)
+        if self.ai_mode:
+            agent = self.pc_agents.get(pc.name)
+            if agent is not None:
+                acted = self._pc_agent_turn(enc, pc, agent)
+        if not acted:
+            self._scripted_pc_turn(enc, pc)
+        for line in enc.log[before:]:
+            self.ui.raw("  " + line)
+
+    def _pc_agent_turn(self, enc: Encounter, pc: Character, agent) -> bool:
+        reg = ToolRegistry()
+        self.tools.register_pc_tools(reg, pc)
+        session = self._pc_sessions.setdefault(
+            pc.name, Session(f"pc:{pc.name}", log_dir=self._log_dir))
+        foes = "；".join(f"{f.name} HP{f.hp_cur}/{f.hp_max} AC{f.ac()}"
+                         for f in enc.active_enemies())
+        allies = "；".join(f"{a.name} HP{a.hp_cur}/{a.hp_max}"
+                           for a in enc.active_party())
+        extra = ""
+        if pc.klass == "fighter":
+            extra = " 回气与动作如潮可用。" if not pc.second_wind_used else ""
+        task = (f"【第{enc.round}轮 · {pc.name} 的回合】\n敌人：{foes}\n队伍：{allies}\n"
+                f"你 HP {pc.hp_cur}/{pc.hp_max}，法术位 {pc.spell_slots()}，"
+                f"资源 {'；'.join(pc.resource_lines())}。{extra}"
+                f"请用 combat_action 执行你的回合（每回合一个动作+一个附赠动作）。")
+        try:
+            result: AgentResult = self.loop.run(agent, session, task, registry=reg)
+            self._record_usage(agent, result)
+        except RuntimeError as e:  # LLM 不可达 → 启发式兜底
+            self.ui.system_line(f"（Agent 调用失败，{pc.name} 依靠战斗直觉行动：{e}）")
+            return False
+        return any(t["name"] == "combat_action" for t in result.tool_trace)
+
+    def _scripted_pc_turn(self, enc: Encounter, pc: Character) -> None:
+        """启发式队友 AI（剧本模式 / LLM 兜底）：完整动作+附赠动作。"""
+        if not enc.alive(pc):
+            return
+        foes = enc.active_enemies()
+        if not foes:
+            return
+        weakest = min(foes, key=lambda f: f.hp_cur)
+        hurt_ally = min((a for a in enc.active_party() if a.hp_cur < a.hp_max),
+                        key=lambda a: a.hp_cur, default=None)
+        slots = pc.spell_slots()
+        # --- 附赠动作先行（治疗真言/印记/狂暴/回气）
+        if pc.klass == "cleric" and hurt_ally and hurt_ally.hp_cur < hurt_ally.hp_max * 0.6 \
+                and slots.get(1, 0) > 0:
+            enc.cast(pc, "healing_word", [hurt_ally.name], self.state.rng)
+            return
+        if pc.klass == "fighter" and pc.hp_cur < pc.hp_max * 0.4 and not pc.second_wind_used:
+            enc.second_wind(pc, self.state.rng)
+            # 回气是附赠动作，还可继续攻击
+        elif pc.klass == "barbarian" and pc.rage_left() and COND_RAGING not in pc.conditions:
+            enc.start_rage(pc)
+        elif pc.klass == "ranger" and slots.get(1, 0) > 0 \
+                and pc.concentration != "Hunter's Mark":
+            enc.cast(pc, "hunters_mark", [weakest.name], self.state.rng)
+            return
+        # --- 动作
+        downed = [a for a in enc.active_party()
+                  if isinstance(a, Character) and a.hp_cur <= 0
+                  and "dead" not in a.conditions and "stable" not in a.conditions]
+        if downed:
+            if pc.inventory.get("healing_potion", 0) > 0:
+                enc.use_item(pc, "healing_potion", downed[0])
+                return
+            if not (hurt_ally and hurt_ally.hp_cur <= 0):
+                enc.stabilize(pc, downed[0])
+                return
+        if pc.klass == "cleric":
+            if slots.get(1, 0) > 0 and not any(
+                    COND_BLESSED in a.conditions for a in enc.active_party()
+                    if isinstance(a, Character)):
+                allies = enc.active_party()[:3]
+                enc.cast(pc, "bless", [a.name for a in allies], self.state.rng)
+                return
+            if "sacred_flame" in pc.class_spells():
+                enc.cast(pc, "sacred_flame", [weakest.name], self.state.rng)
+                return
+            enc.attack_action(pc, weakest, pc.weapons[0], self.state.rng)
+            return
+        if pc.klass == "wizard":
+            if pc.hp_cur < pc.hp_max * 0.4 and slots.get(1, 0) > 0:
+                enc.cast(pc, "shield", [], self.state.rng)
+                return
+            if len(foes) >= 2 and slots.get(1, 0) > 0:
+                enc.cast(pc, "magic_missile", [weakest.name], self.state.rng)
+                return
+            cantrip = "fire_bolt" if "fire_bolt" in pc.class_spells() else pc.class_spells()[0]
+            enc.cast(pc, cantrip, [weakest.name], self.state.rng)
+            return
+        if pc.klass == "ranger":
+            bow = next((w for w in pc.weapons if D.WEAPONS.get(w, {}).get("ranged")),
+                       pc.weapons[0])
+            enc.attack_action(pc, weakest, bow, self.state.rng)
+            return
+        if pc.klass == "barbarian" and COND_RAGING in pc.conditions \
+                and pc.has_feature("reckless"):
+            target = min(foes, key=lambda f: f.hp_cur)
+            enc.attack_action(pc, target, pc.weapons[0], self.state.rng, reckless=True)
+            return
+        target = min(foes, key=lambda f: (f.hp_cur - f.hp_max))
+        enc.attack_action(pc, target, pc.weapons[0], self.state.rng)
+
+    def _aftermath(self, enc: Encounter) -> None:
+        xp = enc.defeated_xp()
+        if xp:
+            self.tools._tool_award_xp(xp, enc.title)
+        # 战利品
+        for eid, spec in self.module.encounters.items():
+            if spec["title"] == enc.title:
+                loot = spec.get("loot", {})
+                if loot.get("gold"):
+                    self.tools._tool_give_loot(gold=loot["gold"],
+                                               items=loot.get("items", {}))
+        self.autosave()
+
+    # ================================================================ 通用
+    def party_short_rest(self) -> None:
+        song = any(c.klass == "bard" and c.level >= 2 for c in self.state.alive_party())
+        if song:
+            self.ui.system_line("（吟游诗人的休憩之歌：每次生命骰回复额外 +1d6）")
+        for c in self.state.alive_party():
+            spend = None
+            if c is self.state.player and c.hp_die_count() > 0 and c.hp_cur < c.hp_max:
+                opts = [str(i) for i in range(0, c.hp_die_count() + 1)]
+                i = self.ui.choose(f"{c.name}：消耗几颗生命骰？（共 {c.hp_die_count()} 颗，"
+                                   "每颗回复 1d生命骰+体质）", opts)
+                spend = int(opts[i])
+            msg = c.short_rest(self.state.rng, spend_dice=spend, song_of_rest=song)
+            self.ui.system_line(f"{c.name} 短休：{msg}")
+
+    def party_long_rest(self) -> None:
+        for c in self.state.party():
+            self.ui.system_line(c.long_rest())
+        self.autosave()
+
+    def show_inventory(self) -> None:
+        pc = self.state.player
+        self.ui.raw(f"金币：{pc.gold}")
+        for item, n in pc.inventory.items():
+            name = D.ITEMS.get(item, {}).get("name", item)
+            self.ui.raw(f"  {name} ×{n}")
+
+    def autosave(self) -> None:
+        try:
+            G.save_game(self.state, SAVE_FILE)
+        except OSError:
+            pass
+
+    def _weapon_label(self, pc: Character, wkey: str) -> str:
+        w = D.WEAPONS.get(wkey, {})
+        return (f"{w.get('name', wkey)}（{w.get('dmg', '?')}"
+                f"{'，远程' if w.get('ranged') else ''}）")

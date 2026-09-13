@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DND · 星坠矿脉的阴影 · CTRCG 跑团手记</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23b08a3e' d='M12 1L2 6.5 12 23l10-16.5L12 1z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<!-- ═══════════════ 开始页：主页 / 新的冒险 / 存档 / 帮助 / 设置 ═══════════════ -->
+<div id="start-screen">
+
+  <!-- 主页 -->
+  <section id="view-home" class="start-view">
+    <div class="home-head">
+      <p class="home-kicker">CTRCG 跑团手记 · 被遗忘的大陆</p>
+      <h1 class="dnd-logo" aria-label="DND">D<span class="dnd-n">N</span>D</h1>
+      <p class="home-sub">单 人 A I 跑 团 · D&amp;D 5e</p>
+      <p class="home-rule"><span>◆</span></p>
+    </div>
+    <nav class="home-menu">
+      <button class="home-btn" data-view="new">
+        <span class="hb-icon">✶</span><b>新的冒险</b><small>选择模组 · 创建角色</small>
+      </button>
+      <button class="home-btn" data-view="saves">
+        <span class="hb-icon">❧</span><b>存档</b><small>继续上次的旅程</small>
+      </button>
+      <button class="home-btn" data-view="help">
+        <span class="hb-icon">✎</span><b>帮助</b><small>玩法 · 规则速查</small>
+      </button>
+      <button class="home-btn" data-view="settings">
+        <span class="hb-icon">⚙</span><b>设置</b><small>API 配置 · Token 用量</small>
+      </button>
+    </nav>
+    <p class="home-foot" id="home-status"></p>
+  </section>
+
+  <!-- 新的冒险 -->
+  <section id="view-new" class="start-view panel hidden">
+    <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
+      <h2 class="panel-title">新的冒险</h2><span class="panel-nav-sp"></span></div>
+
+    <div class="field">
+      <label>模组（原子化加载 · Cordis 注册表）</label>
+      <div id="module-list" class="module-list"></div>
+      <div class="row-btns">
+        <button class="btn ghost" id="btn-gen-module">✦ AI 生成模组</button>
+        <button class="btn ghost" id="btn-import-module">⇩ 导入模组</button>
+        <button class="btn ghost" id="btn-refresh-modules">↻ 刷新</button>
+      </div>
+      <div id="gen-form" class="subform hidden">
+        <p class="hint">用当前接入的 LLM 按规范生成一个全新模组（约 1~2 分钟）。规范见「帮助」。</p>
+        <input type="text" id="gen-theme" placeholder="主题，如：月夜狼人村庄的三幕恐怖故事">
+        <input type="text" id="gen-hints" placeholder="附加要求（可空）：基调、怪物、结局倾向…">
+        <div class="row-btns"><button class="btn solid" id="gen-go">开始生成</button></div>
+        <p class="hint" id="gen-msg"></p>
+      </div>
+      <div id="import-form" class="subform hidden">
+        <p class="hint">粘贴符合规范的模组 JSON（规范见「帮助」页）。</p>
+        <textarea id="import-json" rows="6" placeholder='{"id":"my_quest", ...}'></textarea>
+        <div class="row-btns"><button class="btn solid" id="import-go">校验并导入</button></div>
+        <p class="hint" id="import-msg"></p>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+    <h2 class="panel-title">创建你的角色</h2>
+    <div id="create-form"></div>
+  </section>
+
+  <!-- 存档 -->
+  <section id="view-saves" class="start-view panel hidden">
+    <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
+      <h2 class="panel-title">存档</h2><span class="panel-nav-sp"></span></div>
+    <div id="saves-body"><p class="hint">正在读取…</p></div>
+  </section>
+
+  <!-- 帮助 -->
+  <section id="view-help" class="start-view panel hidden">
+    <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
+      <h2 class="panel-title">帮助</h2><span class="panel-nav-sp"></span></div>
+    <div class="help-body">
+      <h3>玩法</h3>
+      <p>你控制自己创建的角色；DM 与其他队友由 AI Agent 扮演。探索时直接输入行动或对白
+      （AI 模式），或按菜单选择（剧本模式）；战斗按回合从底部按钮选择动作。
+      指令：<code>/状态 /背包 /短休 /长休 /保存 /退出</code>。</p>
+      <h3>规则速查（D&amp;D 5e）</h3>
+      <p>· d20 + 调整值 vs DC；优势与劣势同时存在时互相抵消。<br>
+      · 命中 AC 造成伤害，天然 20 暴击（伤害骰翻倍），天然 1 必失。<br>
+      · 0 HP 进入死亡豁免：3 次成功稳定、3 次失败身亡，伤害会自动记一次失败。<br>
+      · 专注法术受创需体质豁免；黑暗中无黑暗视觉攻击劣势（记得带火把）。<br>
+      · 里程碑升级：关键剧情后全队升级（模组内定义）。</p>
+      <h3>接入 DeepSeek / GLM / Kimi / MiniMax</h3>
+      <p>到「设置 → API 配置」选择供应商并填入密钥即可；也支持环境变量方式
+      （<code>CTRCG_LLM_API_KEY</code> 或供应商官方变量如 <code>DEEPSEEK_API_KEY</code>）。
+      所有供应商统一走 OpenAI 兼容 <code>/chat/completions</code> 协议。</p>
+      <h3>自己写模组</h3>
+      <p>每个模组是一个自包含 JSON 文件：<code>modules/&lt;id&gt;/module.json</code>，
+      放入后即可被加载。完整规范见项目内 <code>docs/MODULE_SPEC.md</code>，
+      内置模组 <code>modules/starfall/module.json</code> 就是现成模板；
+      也可在「新的冒险」页用 AI 一键生成。</p>
+    </div>
+  </section>
+
+  <!-- 设置 -->
+  <section id="view-settings" class="start-view panel hidden">
+    <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
+      <h2 class="panel-title">设置</h2><span class="panel-nav-sp"></span></div>
+
+    <div class="field">
+      <label>API 配置（OpenAI 兼容协议 · /chat/completions）</label>
+      <div id="provider-cards" class="card-row"></div>
+      <div class="settings-grid">
+        <div><label class="mini">API 地址</label><input type="text" id="set-base"></div>
+        <div><label class="mini">模型</label><input type="text" id="set-model" list="model-list">
+          <datalist id="model-list"></datalist></div>
+        <div><label class="mini">API 密钥</label><input type="password" id="set-key"
+          placeholder="仅保存在本服务内存中，不会落盘"></div>
+      </div>
+      <div class="row-btns">
+        <button class="btn solid" id="set-save">保存配置</button>
+        <button class="btn ghost" id="set-test">测试连接</button>
+      </div>
+      <p class="hint" id="set-msg"></p>
+      <p class="hint" id="set-env-hint"></p>
+    </div>
+
+    <div class="divider"></div>
+    <div class="field">
+      <label>Token 用量记录</label>
+      <div id="usage-box"><p class="hint">正在读取…</p></div>
+      <div class="row-btns">
+        <button class="btn ghost" id="usage-refresh">↻ 刷新</button>
+        <button class="btn ghost" id="usage-clear">清空记录</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ═══════════════ 对局界面 ═══════════════ -->
+<div id="app" class="hidden">
+  <header id="topbar">
+    <div class="brand">
+      <svg class="d20" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1 2.5 6.7 12 23l9.5-16.3L12 1zm0 2.3 6.9 3.9L12 19.6 5.1 7.2 12 3.3z"/><path d="M12 5.2 6.6 8.6 12 17l5.4-8.4L12 5.2z" opacity=".55"/></svg>
+      <div class="brand-text">
+        <span class="brand-title" id="brand-title">星坠矿脉的阴影</span>
+        <span class="brand-sub" id="brand-sub">Shadows over the Starfall Mine</span>
+      </div>
+    </div>
+    <div class="top-right">
+      <span class="top-crumb" id="scene-crumb"></span>
+      <span class="badge" id="mode-badge"></span>
+      <span class="gold-chip" id="gold-chip" title="队伍金币"></span>
+    </div>
+  </header>
+
+  <main id="layout">
+    <aside id="sidebar">
+      <div class="side-card" id="scene-card">
+        <p class="side-label">当前章节</p>
+        <p class="scene-act" id="scene-act"></p>
+        <p class="scene-loc" id="scene-loc"></p>
+      </div>
+      <div class="side-card">
+        <p class="side-label">冒险队伍</p>
+        <div id="party-list"></div>
+      </div>
+      <div class="side-card" id="flag-card">
+        <p class="side-label">剧情手记</p>
+        <div id="flag-list"><p class="side-empty">尚无记录</p></div>
+      </div>
+      <div class="side-actions">
+        <button class="btn ghost" id="btn-reset">放弃本局，重新开团</button>
+      </div>
+    </aside>
+
+    <section id="stage">
+      <div id="chronicle" aria-live="polite"></div>
+      <div id="bottombar">
+        <div id="choices" class="hidden"></div>
+        <form id="ask-form" class="hidden">
+          <input id="ask-box" autocomplete="off" placeholder="记述你的行动或对白…">
+          <button type="submit" class="btn solid">落笔</button>
+        </form>
+        <div id="idle-hint">等待世界回应……</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

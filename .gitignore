@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+saves/
+demo_*.txt
+webserver.log
+.env
+.mimosa/

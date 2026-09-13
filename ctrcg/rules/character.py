@@ -124,6 +124,7 @@ class Character:
     mirror_images: int = 0
     # 吟游诗人激励（受赠者持有）
     bardic_dice: int = 0
+    bardic_die: int = 0               # 激励骰面（授予者等级决定：d6/d8）
     # 吉斯洋基 星界知识
     astral_ability: str | None = None
 
@@ -146,11 +147,18 @@ class Character:
             c.abilities[k] = scores[k] + racial.get(k, 0)
         kls = D.CLASSES[klass]
         c.saves = set(kls["saves"])
-        chosen = list(skill_choices)[:kls["skill_count"] + D.RACES[race].get("skills", 0)]
-        bad = [s for s in chosen if s not in kls["skill_choices"]]
+        chosen = list(skill_choices)
+        # 职业技能只能从职业列表选；种族赠送的额外技能（人类/半精灵）可任选
+        n_class = kls["skill_count"]
+        class_pick = chosen[:n_class]
+        bad = [s for s in class_pick if s not in kls["skill_choices"]]
         if bad:
             raise ValueError(f"{kls['name']}不能选择技能: {bad}")
-        c.skills = set(chosen)
+        race_extra = chosen[n_class:n_class + D.RACES[race].get("skills", 0)]
+        bad2 = [s for s in race_extra if s not in D.SKILLS]
+        if bad2:
+            raise ValueError(f"种族技能非法: {bad2}")
+        c.skills = set(class_pick) | set(race_extra)
         for s in D.BACKGROUNDS[background]["skills"]:
             c.skills.add(s)
         for s in D.RACES[race].get("trait_skills", []):
@@ -162,8 +170,6 @@ class Character:
         c.inventory = {"healing_potion": 2, "torch": 2}
         c.gold = 15
         c.feature_choices = dict(feature_choices or {})
-        if "toughness" not in c.feature_choices and D.RACES[race].get("toughness"):
-            pass  # toughness 走种族 mech
         c.hp_max = max(1, kls["hit_die"] + c.mod("con")
                        + (1 if D.RACES[race].get("toughness") else 0)
                        + (1 if c._draconic_resilience() else 0))
@@ -440,37 +446,35 @@ class Character:
         if COND_POISONED in self.conditions:
             adv -= 1
         res = self._lucky_d20(rng, adv)
-        bless = 0
-        if COND_BLESSED in self.conditions and self.blessing_d4:
-            bless = rng.randint(1, self.blessing_d4)
-            res.total += bless
+        # 祝福术只作用于攻击检定与豁免，不加到属性检定（PHB 2014）
         bi = self.take_bardic(rng)
         ok = res.total + bi >= dc
         total = res.total + bi
         return {
             "who": self.name, "check": skill, "dc": dc, "success": ok, "total": total,
-            "detail": res.describe() + (f"（激励+{bi}）" if bi else "")
-                      + (f"（祝福+{bless}）" if bless else ""),
-            "bless": bless,
+            "detail": res.describe() + (f"（激励+{bi}）" if bi else ""),
         }
 
     def save(self, rng: random.Random, ability: str, dc: int, advantage: int = 0,
              effect: str = "") -> dict:
+        # 麻痹/震慑/昏迷：力量与敏捷豁免自动失败（PHB 状态说明）
+        if (ability in ("str", "dex")
+                and (COND_PARALYZED in self.conditions
+                     or COND_STUNNED in self.conditions
+                     or COND_UNCONSCIOUS in self.conditions)):
+            return {"who": self.name, "save": ability, "dc": dc, "success": False,
+                    "detail": "[自动失败：麻痹/昏迷]", "bless": 0}
         adv = advantage
         mech = self.mech()
         if effect and effect in mech.get("save_adv_vs", []):
             adv += 1
-        if (effect == "poison" and "poison" in mech.get("save_adv_vs", [])):
-            adv += 1
         if ability in mech.get("save_adv", []):
             adv += 1
-        if (effect == "frightened" and mech.get("save_adv_vs") == [] and False):
-            pass
+        if COND_RESTRAINED in self.conditions and ability == "dex":
+            adv -= 1                                       # 束缚：敏捷豁免劣势
         if self.klass == "barbarian" and self.level >= 2 and ability == "dex":
             adv += 1                                       # 危险感
         if self.exhaustion >= 3:
-            adv -= 1
-        if COND_POISONED in self.conditions:
             adv -= 1
         res = self._lucky_d20(rng, adv)
         bless = 0
@@ -485,19 +489,23 @@ class Character:
                 "bless": bless}
 
     def take_bardic(self, rng: random.Random) -> int:
-        """自动消耗持有的激励骰（受赠者加到本次掷骰）。"""
+        """自动消耗持有的激励骰（受赠者加到本次掷骰）。骰面由授予者等级决定。"""
         if self.bardic_dice > 0:
             self.bardic_dice -= 1
-            return rng.randint(1, 8 if self._bardic_d8() else 6)
+            die = self.bardic_die or 6
+            if self.bardic_dice == 0:
+                self.bardic_die = 0
+            return rng.randint(1, die)
         return 0
-
-    def _bardic_d8(self) -> bool:
-        # 供给者的等级决定骰面——简化为自身是诗人且 5 级时 d8
-        return self.klass == "bard" and self.level >= 5
 
     # ------------------------------------------------------------ 生命与休整
     def take_damage(self, amount: int) -> dict:
-        """受伤。处理临时生命、不屈坚韧与大伤害即死。"""
+        """受伤。处理临时生命、大伤害即死（先于不屈坚韧判定）、不屈坚韧。
+
+        PHB 大伤害规则：该次伤害将你打到 0 且溢出伤害 ≥ 生命上限 → 立即死亡
+        （"killed outright"，不屈坚韧等"降到0时改为1"的效果救不了）；
+        已在 0 HP 时再受一次 ≥ 生命上限的伤害同样立即死亡。
+        """
         if amount <= 0:
             return {"damage": 0, "hp": max(self.hp_cur, 0)}
         before = self.hp_cur
@@ -510,20 +518,21 @@ class Character:
         info = {"damage": before - self.hp_cur, "hp": max(self.hp_cur, 0),
                 "temp_absorbed": absorbed}
         if self.hp_cur <= 0:
+            overflow = -self.hp_cur                      # 打到 0 之后的剩余伤害
+            if (before <= 0 and amount >= self.hp_max) or overflow >= self.hp_max:
+                self.conditions |= {COND_DEAD}
+                self.hp_cur = 0
+                info["massive_death"] = True
+                info["down"] = True
+                return info
             if (self.mech().get("relentless_endurance")
                     and not self.relentless_used):
-                # 不屈坚韧（1/长休）：改为保留 1 HP
+                # 不屈坚韧（1/长休）：非"被当场杀死"时改为保留 1 HP
                 self.relentless_used = True
                 self.hp_cur = 1
                 info["relentless"] = True
                 info["hp"] = 1
                 info["damage"] = before - 1
-                return info
-            if amount >= before + self.hp_max:             # 大伤害即死（余伤≥生命上限）
-                self.conditions |= {COND_DEAD}
-                self.hp_cur = 0
-                info["massive_death"] = True
-                info["down"] = True
                 return info
             if COND_UNCONSCIOUS not in self.conditions:
                 self.conditions |= {COND_UNCONSCIOUS}
@@ -552,8 +561,8 @@ class Character:
         self.hp_cur = min(self.hp_max, hp)
 
     def death_save_turn(self, rng: random.Random) -> dict:
-        """回合开始时的死亡豁免。"""
-        if self.hp_cur > 0:
+        """回合开始时的死亡豁免（已稳定者不再掷骰）。"""
+        if self.hp_cur > 0 or COND_STABLE in self.conditions:
             return {}
         res = self._lucky_d20(rng, 0)
         if res.kept[0] == 20:
@@ -612,19 +621,21 @@ class Character:
                     budget -= lv
                     self.slots_used[lv] = used
         if self.klass == "druid" and self.level >= 2:
-            budget = self.level // 2
+            budget = (self.level + 1) // 2                 # 自然回复：半德鲁伊等级向上取整
             for lv in (3, 2, 1):
                 used = self.slots_used.get(lv, 0)
                 while used > 0 and budget >= lv:
                     used -= 1
                     budget -= lv
                     self.slots_used[lv] = used
+        if self.klass == "bard" and self.level >= 5:
+            self.bardic_inspiration_used = 0               # 泉涌激励：5级起短休恢复
         msg = "；".join(lines) if lines else "生命骰已用尽或无需回复。"
         return msg
 
     def long_rest(self) -> str:
         self.hp_cur = self.hp_max
-        self.hit_dice_used = self.level // 2
+        self.recover_hit_dice_long()
         self.slots_used.clear()
         self.conditions -= {COND_POISONED, COND_FRIGHTENED, COND_RAGING,
                             COND_BLINDED, COND_CHARMED}
@@ -648,7 +659,9 @@ class Character:
         return f"{self.name} 长休完毕：生命 {self.hp_max}，法术位与资源全部恢复。"
 
     def recover_hit_dice_long(self) -> None:
-        self.hit_dice_used = self.level // 2
+        """长休恢复生命骰：恢复一半（向下取整，至少 1 颗）。"""
+        recovered = max(1, self.level // 2)
+        self.hit_dice_used = max(0, self.hit_dice_used - recovered)
 
     # ------------------------------------------------------------ 升级
     def level_up_to(self, target: int) -> str:
@@ -688,6 +701,10 @@ class Character:
         """升级后待选的职业特性（由 UI 询问玩家；同伴走默认值）。"""
         out = []
         lvl, kls = self.level, self.klass
+        if lvl >= 1 and kls == "rogue" and "expertise" not in self.feature_choices:
+            out.append("expertise")
+        if lvl >= 3 and kls == "bard" and "expertise" not in self.feature_choices:
+            out.append("expertise")
         if lvl >= 2 and kls in ("paladin", "ranger") and not self.fighting_style:
             out.append("fighting_style")
         if lvl >= 3 and kls == "barbarian" and "path" not in self.feature_choices:
@@ -721,6 +738,10 @@ class Character:
         for need in self.pending_feature_choices():
             if need == "fighting_style":
                 self.fighting_style = "archery" if kls == "ranger" else "defense"
+            elif need == "expertise":
+                picks = sorted(self.skills)[:2]
+                self.expertise |= set(picks)
+                fc["expertise"] = "+".join(picks)
             elif need == "path":
                 fc["path"] = "totem"
             elif need == "archetype":

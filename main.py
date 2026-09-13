@@ -91,8 +91,19 @@ def run_web(args, cfg: LLMConfig | None) -> int:
     app = AppState()
     if args.offline:
         app.llm_cfg = None
-    server = make_server(app, port=args.port)
-    url = f"http://127.0.0.1:{args.port}"
+    # 端口被占用（如上局未关干净）时自动顺延，避免直接崩溃
+    server, port = None, args.port
+    for _ in range(10):
+        try:
+            server = make_server(app, port=port)
+            break
+        except OSError:
+            print(f"端口 {port} 被占用，尝试 {port + 1} ……")
+            port += 1
+    if server is None:
+        print(f"无法打开端口 {args.port}~{port}，请用 --port 指定其他端口。")
+        return 1
+    url = f"http://127.0.0.1:{port}"
     mode = f"AI 模式（{app.llm_cfg.provider} · {app.llm_cfg.model}）" if app.llm_cfg \
         else "剧本模式（离线）"
     print(f"\n《星坠矿脉的阴影》网页版 · {mode}")

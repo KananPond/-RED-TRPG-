@@ -212,10 +212,11 @@ class AppState:
                 module, errs, warns = self.cordis.ensure(module_id)
                 if module is None:
                     return False, "；".join(errs) or f"模组加载失败：{module_id}", {}
-                player = build_character(spec)
                 import random
                 rng = (random.Random(spec["seed"]) if spec.get("seed") is not None
                        else random.Random())
+                # 同一 rng 供属性掷骰与对局使用：同 seed 完全可复现
+                player = build_character(spec, rng=rng)
                 companions = build_companions(module, state_level=player.level)
                 state = G.GameState(player, companions, rng, module=module)
         except (ValueError, KeyError, FileNotFoundError, TypeError) as e:

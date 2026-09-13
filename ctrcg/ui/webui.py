@@ -103,7 +103,6 @@ class WebUI:
         self._emit("ask", kind=kind, prompt=prompt, options=options or [])
         ev.wait()
         with self._lock:
-            self._pending = None
             answer = pending["answer"]
             aborted = self.aborted
         if aborted or answer is None:
@@ -125,6 +124,9 @@ class WebUI:
                 if text is None or not str(text).strip():
                     return False, "回复内容不能为空"
             p["answer"] = (index, text)
+            # 立即摘下 pending 再唤醒：避免唤醒后到摘下前的空窗期内，
+            # 客户端读到已作答的旧问题而答错题（双击/轮询竞态）
+            self._pending = None
         p["event"].set()
         return True, None
 

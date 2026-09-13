@@ -16,12 +16,15 @@ from ..rules.character import Character
 from ..rules.dice import roll_scores
 from ..ui.charcreate import RECOMMENDED, assign_by_recommended
 
-STYLE_KEYS = {"archery", "defense", "dueling"}
+STYLE_KEYS = {"archery", "defense", "dueling", "two_weapon", "great_weapon"}
 _ABILITY_KEYS = ("str", "dex", "con", "int", "wis", "cha")
 
 
-def build_character(spec: dict) -> Character:
-    """校验并构建玩家角色。任何非法输入抛 ValueError。"""
+def build_character(spec: dict, rng: random.Random | None = None) -> Character:
+    """校验并构建玩家角色。任何非法输入抛 ValueError。
+
+    rng：掷骰属性（ability_mode="recommended"）使用的随机源；
+    传入已按 seed 播种的实例可保证开局完全可复现。"""
     if not isinstance(spec, dict):
         raise ValueError("请求体必须是 JSON 对象")
     name = str(spec.get("name", "")).strip()[:16] or "无名者"
@@ -35,7 +38,7 @@ def build_character(spec: dict) -> Character:
     if background not in D.BACKGROUNDS:
         raise ValueError("未知背景")
 
-    scores = _resolve_scores(spec, klass)
+    scores = _resolve_scores(spec, klass, rng)
     bonus2 = spec.get("bonus2") or None
     bonus1 = spec.get("bonus1") or None
     skill_choices = spec.get("skills")
@@ -55,7 +58,7 @@ def build_character(spec: dict) -> Character:
         raise ValueError(f"角色构建失败：{e}")
 
 
-def _resolve_scores(spec: dict, klass: str) -> dict[str, int]:
+def _resolve_scores(spec: dict, klass: str, rng: random.Random | None = None) -> dict[str, int]:
     mode = spec.get("ability_mode", "rolled")
     if mode == "rolled":
         rolled = spec.get("rolled")
@@ -74,5 +77,5 @@ def _resolve_scores(spec: dict, klass: str) -> dict[str, int]:
         return {k: int(v) for k, v in scores.items()}
     if mode == "recommended":
         # 服务端代为掷骰（4d6 去最低），按职业推荐优先级分配
-        return assign_by_recommended(roll_scores(random.Random()), klass)
+        return assign_by_recommended(roll_scores(rng or random.Random()), klass)
     raise ValueError("未知的能力分配方式")

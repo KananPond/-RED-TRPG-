@@ -22,7 +22,7 @@ from .character import (
     COND_SHIELDED, COND_SLEEP, COND_STABLE, COND_STUNNED, COND_UNCONSCIOUS,
     TIMED_CONDITIONS,
 )
-from .dice import check_roll, roll, parse_expr
+from .dice import check_roll, roll, parse_expr, DiceResult
 
 DTYPE_CN = {"fire": "火焰", "radiant": "光耀", "cold": "冷冻", "force": "力场",
             "poison": "毒素", "necrotic": "黯蚀", "bludgeoning": "钝击",
@@ -40,6 +40,14 @@ def _adv_net(has_adv: list[str], has_dis: list[str]) -> tuple[int, list[str]]:
     if has_dis:
         return -1, has_dis
     return 0, []
+
+
+def weapon_type(weapon_key: str | None) -> str:
+    """按武器键解析伤害类型（玩家武器与怪物武器两表）。"""
+    if not weapon_key:
+        return "bludgeoning"
+    w = D.WEAPONS.get(weapon_key) or D.MONSTER_WEAPONS.get(weapon_key)
+    return (w or {}).get("type", "bludgeoning")
 
 
 # ---------------------------------------------------------------- 怪物
@@ -65,6 +73,8 @@ class Monster:
         self.darkvision = m.get("darkvision", 0)
         self.traits = list(m.get("traits") or [])
         self.attacks = [dict(a) for a in m.get("attacks") or []]
+        # 数据表可给 save_prof: {ability: True} 表示该属性豁免带熟练加值
+        self.save_prof = dict(m.get("save_prof") or {})
         self.conditions: set[str] = set()
         self.death_fails = 0
         self.death_successes = 0
@@ -104,9 +114,20 @@ class Monster:
     def is_undead(self) -> bool:
         return "不死者" in "".join(self.traits)
 
+    def is_fiend(self) -> bool:
+        return self.monster_id in ("imp", "cambion") or "魔鬼" in "".join(self.traits)
+
     def is_humanoid(self) -> bool:
+        # 5e 中骷髅/丧尸的生物类型同样是 humanoid（故定身人类对它们有效）
         return self.monster_id in ("goblin", "hobgoblin", "gnoll", "duergar",
-                                   "bandit", "bandit_captain", "ash_mage")
+                                   "bandit", "bandit_captain", "ash_mage",
+                                   "skeleton", "zombie")
+
+    def save_bonus(self, ability: str) -> int:
+        b = self.mod(ability)
+        if self.save_prof.get(ability):
+            b += 2 if self.cr < 4 else 3
+        return b
 
     def to_dict(self) -> dict:
         return {"name": self.name, "hp": f"{self.hp_cur}/{self.hp_max}", "ac": self.ac()}
@@ -142,6 +163,12 @@ class Encounter:
     colossus_used: set[str] = field(default_factory=set)
     attack_debuffs: dict[str, int] = field(default_factory=dict)  # 诛心之言等
     last_melee_hit: dict[str, str] = field(default_factory=dict)  # 攻击者→最近近战命中目标
+    reckless_until: set[str] = field(default_factory=set)   # 鲁莽攻击中（至其下回合开始）
+    last_attack_round: dict[str, int] = field(default_factory=dict)  # 狂暴提前结束判定
+    last_damaged_round: dict[str, int] = field(default_factory=dict)
+    frenzy_used: set[str] = field(default_factory=set)      # 本次狂暴用过狂战士附赠攻击
+    rage_last_end: dict[str, int] = field(default_factory=dict)  # 狂暴者上次回合结束轮
+    grappler_of: dict[str, str] = field(default_factory=dict)  # 被擒抱者→擒抱者
     _turn_taken: set[str] = field(default_factory=set, repr=False)
     # ---- 反应询问钩子（session 注入：(target, ctx) -> bool；None=自动规则）
     reaction_prompt: object | None = None
@@ -225,6 +252,8 @@ class Encounter:
         self.reaction_used[c.name] = False
         self.sneak_used.discard(c.name)
         self.colossus_used.discard(c.name)
+        self.dodging.discard(c.name)          # 防御姿态只到下回合开始
+        self.reckless_until.discard(c.name)   # 鲁莽破绽只到下回合开始
         self.cast_this_turn.pop(c.name, None)
         # 回合开始效果
         t = self.timers.get(c.name, {})
@@ -237,6 +266,15 @@ class Encounter:
     def end_turn(self, c) -> list[str]:
         events: list[str] = []
         t = self.timers.get(c.name, {})
+        # 狂暴提前结束（PHB）：本回合既未攻击宿敌也未受伤 → 狂暴平息
+        if COND_RAGING in c.conditions:
+            prev_end = self.rage_last_end.get(c.name, 0)
+            attacked = self.last_attack_round.get(c.name, -1) > prev_end
+            damaged = self.last_damaged_round.get(c.name, -1) > prev_end
+            if not (attacked or damaged):
+                self._remove_condition(c, COND_RAGING)
+                events.append(f"{c.name} 的狂暴平息了（本回合既未攻击也未受伤）。")
+            self.rage_last_end[c.name] = self.round
         for key, meta in list(t.items()):
             if meta.get("save") and key in c.conditions:
                 ok = self._condition_save(c, meta["save"], meta["dc"])
@@ -290,12 +328,28 @@ class Encounter:
     def _remove_condition(self, target, key: str) -> None:
         target.conditions.discard(key)
         self.timers.get(target.name, {}).pop(key, None)
+        if key == COND_GRAPPLED:
+            self.grappler_of.pop(target.name, None)
+        if key == COND_RAGING and isinstance(target, Character):
+            self.reckless_until.discard(target.name)
+            # 狂战士：若本次狂暴中用过"狂暴附赠攻击"，狂暴结束时力竭+1级
+            if (target.name in self.frenzy_used
+                    and target.has_feature("frenzy")):
+                self.frenzy_used.discard(target.name)
+                target.exhaustion = min(6, target.exhaustion + 1)
+                self.log.append(f"{target.name} 的狂暴结束，狂战士的后遗症使其力竭+1级"
+                                f"（现为{target.exhaustion}级）。")
 
     def _condition_save(self, target, ability: str, dc: int) -> bool:
         if isinstance(target, Character):
             return target.save(self.rng, ability, dc)["success"]
+        # 麻痹/震慑/昏迷目标的力量/敏捷豁免自动失败
+        if (ability in ("str", "dex")
+                and (COND_PARALYZED in target.conditions
+                     or COND_STUNNED in target.conditions)):
+            return False
         dr = roll(self.rng, "d20")
-        return dr.kept[0] + target.mod(ability) >= dc
+        return dr.kept[0] + target.save_bonus(ability) >= dc
 
     def _burn_tick(self, c) -> str | None:
         """炽焰斩的持续燃烧：回合开始 1d6 火焰，体质豁免终止。"""
@@ -322,8 +376,11 @@ class Encounter:
         return names.get(key, key)
 
     def _hp_max(self, c) -> int:
-        if isinstance(c, Character) and c.in_wild_shape():
-            return c.wild_shape["hp_max"]
+        if isinstance(c, Character):
+            m = c.wild_shape["hp_max"] if c.in_wild_shape() else c.hp_max
+            if c.exhaustion >= 4:
+                m = max(1, m // 2)          # 力竭4级：生命上限减半
+            return m
         return c.hp_max
 
     # ---------------- 抗性 / 免疫
@@ -356,6 +413,8 @@ class Encounter:
 
     # ---------------- 伤害入口（含野变形态）
     def apply_damage(self, target, amount: int, dtype: str = "") -> dict:
+        if amount > 0:
+            self.last_damaged_round[target.name] = self.round
         if isinstance(target, Character) and target.in_wild_shape() and amount > 0:
             ws = target.wild_shape
             absorbed = min(ws["hp_cur"], amount)
@@ -411,17 +470,18 @@ class Encounter:
     # ------------------------------------------------------------ 攻击
     def attack(self, att, target, weapon_key: str | None, rng: random.Random,
                bonus_action: bool = False, offhand: bool = False,
-               reckless: bool = False) -> dict:
+               reckless: bool = False, precision_bonus: int = 0) -> dict:
         """低层单次攻击（借机攻击/反应使用；不消耗动作经济）。"""
         if isinstance(att, Monster):
-            return self._monster_attack(att, target, weapon_key, rng)
+            return self._monster_attack(att, target, weapon_key, rng,
+                                        precision_bonus=precision_bonus)
         if att.in_wild_shape():
             return self._beast_attack(att, target, weapon_key, rng)
         weapon = D.WEAPONS.get(weapon_key or (att.weapons[0] if att.weapons else None))
         if weapon is None:
             weapon = {"name": "徒手", "dmg": "1", "type": "bludgeoning", "props": [], "ranged": False}
         return self._pc_attack(att, target, weapon, rng, offhand=offhand,
-                               reckless=reckless)
+                               reckless=reckless, precision_bonus=precision_bonus)
 
     def extra_attack_count(self, att) -> int:
         if isinstance(att, Character) and att.extra_attack_level() \
@@ -432,14 +492,22 @@ class Encounter:
         return 1
 
     def attack_action(self, att, target, weapon_key: str | None, rng: random.Random,
-                      reckless: bool = False, smite_slot: int | None = None) -> dict:
-        """攻击动作：消耗动作；5 级 martial 获得额外攻击（可自动改目标）。"""
+                      reckless: bool = False, smite_slot: int | None = None,
+                      maneuver: str | None = None) -> dict:
+        """攻击动作：消耗动作；5 级 martial 获得额外攻击（可自动改目标）；
+        战斗大师可用战技（精确/推撞/恐吓，消耗战技骰）。"""
         if not self.use_action(att):
             return {"ok": False, "error": "本回合动作已用完"}
         count = self.extra_attack_count(att)
         cur = target
         results = []
         total_dmg = 0
+        precision_bonus = 0
+        if maneuver == "precision" and isinstance(att, Character) \
+                and att.superiority_dice_left() > 0:
+            precision_bonus = roll(rng, "1d8").total
+            att.superiority_used += 1
+            results.append(f"精确攻击：攻击骰 +{precision_bonus}（消耗1颗战技骰）")
         for i in range(count):
             if cur is None or not self.alive(cur):
                 if isinstance(att, Character):
@@ -449,19 +517,65 @@ class Encounter:
                     cur = min(foes, key=lambda f: f.hp_cur) if foes else None
             if cur is None:
                 break
-            r = self.attack(att, cur, weapon_key, rng, reckless=reckless)
+            r = self.attack(att, cur, weapon_key, rng, reckless=reckless,
+                            precision_bonus=precision_bonus if i == 0 else 0)
             if r.get("ok") and r.get("hit") and smite_slot and i == 0 \
                     and isinstance(att, Character):
-                sm = self.divine_smite(att, cur, smite_slot, rng)
+                sm = self.divine_smite(att, cur, smite_slot, rng,
+                                       crit=r.get("crit", False))
                 if sm.get("ok"):
                     r["detail"] += sm["detail"]
+            if r.get("ok") and r.get("hit") and maneuver in ("pushing", "menacing") \
+                    and isinstance(att, Character) and i == 0:
+                self._apply_maneuver_on_hit(att, cur, maneuver, rng, results,
+                                            wtype=weapon_type(weapon_key))
             results.append(r.get("detail", ""))
             total_dmg += r.get("damage", 0) or 0
             if isinstance(att, Monster):
                 break        # 怪物多重攻击已在内部结算
+        # 破阵者（游侠）：额外对一名贴身的不同目标攻击一次
+        if (isinstance(att, Character) and att.has_feature("horde_breaker")
+                and total_dmg > 0):
+            others = [f for f in self.active_enemies()
+                      if f is not target and f.name in self.engagement.get(att.name, set())]
+            if others:
+                r = self.attack(att, others[0], weapon_key, rng, reckless=reckless)
+                results.append(r.get("detail", ""))
+                total_dmg += r.get("damage", 0) or 0
         detail = "\n".join(x for x in results if x)
         return {"ok": True, "hit": total_dmg > 0, "damage": total_dmg,
                 "detail": detail, "attacks": len(results)}
+
+    def _apply_maneuver_on_hit(self, att: Character, target, maneuver: str,
+                               rng: random.Random, results: list,
+                               wtype: str = "bludgeoning") -> None:
+        """战斗大师战技命中效果：+1d8 伤害 + 附加效果（消耗1颗战技骰）。"""
+        if att.superiority_dice_left() <= 0:
+            return
+        att.superiority_used += 1
+        r = roll(rng, "1d8")
+        dmg, _ = self.apply_resistance(target, wtype, r.total)
+        info = self.apply_damage(target, dmg)
+        if maneuver == "pushing":
+            self.do_disengage_quiet(target)
+            results.append(f"推撞攻击：+{info.get('damage', dmg)} 点伤害，"
+                           f"{target.name} 被推开5尺（1d8={r.total}）")
+        elif maneuver == "menacing":
+            dc = 8 + att.prof_bonus() + max(att.mod("str"), att.mod("dex"))
+            if isinstance(target, Character):
+                sv = target.save(rng, "wis", dc)
+                ok, d = sv["success"], sv["detail"]
+            else:
+                s = roll(rng, "d20").kept[0] + target.save_bonus("wis")
+                ok, d = s >= dc, f"[d20: {s}]"
+            if ok:
+                results.append(f"恐吓攻击：+{info.get('damage', dmg)} 点伤害，"
+                               f"{target.name} 抵抗了恐惧（1d8={r.total}，{d}）")
+            else:
+                self.set_condition(target, COND_FRIGHTENED)
+                self.add_timer(target, COND_FRIGHTENED, 10)
+                results.append(f"恐吓攻击：+{info.get('damage', dmg)} 点伤害，"
+                               f"{target.name} 陷入恐惧！（1d8={r.total}，{d}）")
 
     # ---------------- 优势/劣势来源
     def _advantage_for(self, att, target, ranged: bool,
@@ -484,15 +598,15 @@ class Encounter:
         if isinstance(att, Character):
             if att.exhaustion >= 3:
                 has_dis.append("力竭")
-            armor = D.ARMORS.get(att.armor, D.ARMORS["none"])
-            if (armor["str_req"] and att.mod("str") * 2 + 10 < armor["str_req"]
-                    and not ranged):
-                has_dis.append("力量不足以驾驭护甲")
+            # PHB：护甲力量需求不足 → 移速-10尺（无距离模型，不带来攻击劣势）
             if not ranged and reckless and att.has_feature("reckless"):
                 has_adv.append("鲁莽攻击")
+                self.reckless_until.add(att.name)
         if self.dark and getattr(att, "darkvision", 0) == 0:
             has_dis.append("黑暗中无黑暗视觉")
         tconds = getattr(target, "conditions", set())
+        if target.name in self.reckless_until:
+            has_adv.append("目标鲁莽")
         if COND_PRONE in tconds:
             if not ranged:
                 has_adv.append("目标倒地")
@@ -511,7 +625,10 @@ class Encounter:
             has_adv.append("目标被标亮")
         if COND_INVISIBLE in tconds or COND_HIDDEN in tconds:
             has_dis.append("目标不可见")
-        if self.helped.get(target.name) not in (None, att.name):
+        # 助攻：下一次对目标的攻击具有优势（由队友结算后即消耗）
+        _helper = self.helped.get(target.name)
+        if _helper is not None and _helper != att.name:
+            self.helped.pop(target.name)
             has_adv.append("队友助攻")
         if ranged and any(self.alive(self.find(n)) for n in self.engagement.get(att.name, set())
                           if self.find(n) and self.find(n).side != att.side):
@@ -531,19 +648,34 @@ class Encounter:
         return weapon
 
     def _pc_attack(self, att: Character, target, weapon: dict, rng: random.Random,
-                   offhand: bool = False, reckless: bool = False) -> dict:
+                   offhand: bool = False, reckless: bool = False,
+                   precision_bonus: int = 0) -> dict:
         ranged = bool(weapon.get("ranged"))
-        finesse = "finesse" in weapon.get("props", []) or ranged
-        abil = "dex" if finesse else "str"
+        props = weapon.get("props", [])
+        finesse = "finesse" in props or ranged
+        is_monk_weapon = "monk" in props and att.klass == "monk"
+        # 灵巧/武僧武器：用力量或敏捷中较高者（PHB）
+        if finesse or is_monk_weapon:
+            abil = "dex" if att.mod("dex") >= att.mod("str") else "str"
+        else:
+            abil = "str"
         if att.has_feature("pact_blade") and not ranged:
             abil = "cha"
+        # 双手武器（ versatile 且无盾，或 two_handed）使用较高伤害骰
+        versatile = not ranged and "versatile" in str(props) and not att.shield
         bonus_to_hit = att.prof_bonus() + att.mod(abil) + att.magic_attack_bonus
         if att.fighting_style == "archery" and ranged:
             bonus_to_hit += 2
         debuff = self.attack_debuffs.pop(att.name, 0)   # 诛心之言等攻击减值
         adv, notes = self._advantage_for(att, target, ranged, reckless=reckless)
+        # 镜影术拦截（命中判定前；远程与近战均受保护）
+        if self._mirror_image_block(target, rng, notes):
+            detail = (f"{att.name} 以{weapon['name']}攻击 {target.name} —— "
+                      f"打中的只是镜影！（{'；'.join(notes)}）")
+            self.log.append(detail)
+            return {"ok": True, "hit": False, "crit": False, "damage": 0, "detail": detail}
         # 小型生物 + 重型武器 → 劣势
-        if att.is_small() and "heavy" in weapon.get("props", []):
+        if att.is_small() and "heavy" in props:
             adv = -1
             notes.append("小型生物使用重型武器（劣势）")
 
@@ -552,7 +684,9 @@ class Encounter:
             bless = rng.randint(1, att.blessing_d4)
         die = self._attack_d20(att, rng, adv)
         nat = die.kept[0]
-        total = nat + bonus_to_hit + bless + debuff
+        total = nat + bonus_to_hit + bless + debuff + precision_bonus
+        if precision_bonus:
+            notes.append(f"精确攻击+{precision_bonus}")
         crit_min = 19 if att.has_feature("improved_crit") else 20
         hit = nat >= crit_min or (nat != 1 and total >= target.ac())
         # 强盗头目格挡（反应 +2 AC）
@@ -564,16 +698,17 @@ class Encounter:
                 hit = False
                 notes.append("目标格挡（AC+2）")
         crit = nat >= crit_min and hit
-        # 麻痹目标 5 尺内命中即暴击
-        if hit and COND_PARALYZED in getattr(target, "conditions", set()) and not ranged:
+        # 麻痹/昏迷/沉睡目标 5 尺内命中即暴击（近战）
+        helpless = (COND_PARALYZED, COND_UNCONSCIOUS, COND_SLEEP)
+        if hit and not ranged and any(
+                c in getattr(target, "conditions", set()) for c in helpless):
             crit = True
 
-        dmg_mod = att.mod("dex" if ranged else abil)
-        if not ranged and "versatile" in str(weapon.get("props")):
-            dmg_mod = att.mod("str")
+        dmg_mod = att.mod(abil)
         if offhand and att.fighting_style != "two_weapon":
-            dmg_mod = 0                                   # 双武器附赠攻击不加属性
-        if att.fighting_style == "dueling" and not ranged and not offhand:
+            dmg_mod = 0                                   # 双武器格斗前副手不加属性
+        if (att.fighting_style == "dueling" and not ranged and not offhand
+                and "two_handed" not in props and not versatile):
             dmg_mod += 2
         dmg_mod += att.magic_damage_bonus
         if COND_RAGING in att.conditions and not ranged:
@@ -614,9 +749,21 @@ class Encounter:
 
         mult = 2 if crit else 1
         n, s, m0 = parse_expr(weapon["dmg"])
+        if versatile:
+            n, s, m0 = parse_expr(str(weapon.get("props")).split("versatile(")[1].split(")")[0])
         r = roll(rng, f"{n * mult}d{s}")
+        rolls = list(r.rolls)
         dmg = r.total + m0 + dmg_mod
-        parts = [f"{weapon['name']}{r.describe()}"]
+        if (att.fighting_style == "great_weapon" and not ranged and not offhand
+                and ("two_handed" in props or versatile)):
+            # 大武器格斗：武器伤害骰出 1/2 可重骰一次
+            rerolls = [rng.randint(1, s) if x <= 2 else x for x in rolls]
+            gained = sum(rerolls) - sum(rolls)
+            if gained:
+                dmg += gained
+                rolls = rerolls
+                notes.append(f"大武器格斗重骰（{'+'.join(map(str, rerolls))}）")
+        parts = [f"{weapon['name']}[d{s}:{'+'.join(map(str, rolls))}]"]
         for expr, label in extra_parts:
             if expr.startswith("+"):
                 expr = expr[1:]
@@ -633,11 +780,12 @@ class Encounter:
         notes.extend(res_notes)
         info = self.apply_damage(target, dmg)
         self._register_engagement(att, target, ranged)
+        self.last_attack_round[att.name] = self.round
         self._post_hit_effects(att, target, crit, info.get("damage", dmg), info, rng,
                                ranged=ranged)
         if getattr(att, "weapon_buff", None):
             att.weapon_buff = None
-        tail = f"（{target.name} HP {max(self._hp_max(target), 0)}/{self._hp_max(target)}）"
+        tail = f"（{target.name} HP {info.get('hp', max(target.hp_cur, 0))}/{self._hp_max(target)}）"
         down = target.hp_cur <= 0 or (isinstance(target, Character)
                                       and bool(target.wild_shape)
                                       and target.wild_shape["hp_cur"] <= 0)
@@ -649,21 +797,51 @@ class Encounter:
         self.log.append(detail)
         if COND_HIDDEN in att.conditions:
             att.conditions.discard(COND_HIDDEN)
+        # 隐形（法术/天生）在攻击后消散——除"随时隐形"怪物特性
+        if (COND_INVISIBLE in att.conditions
+                and not (isinstance(att, Monster)
+                         and "随时隐形" in "".join(att.traits))):
+            att.conditions.discard(COND_INVISIBLE)
+            detail_note = f"{att.name} 的隐形在攻击后消散。"
+            self.log.append(detail_note)
         if hit and not ranged:
             self.last_melee_hit[att.name] = target.name
         return {"ok": True, "hit": True, "crit": crit, "damage": info.get("damage", dmg),
-                "target_hp": max(self._hp_max(target), 0), "down": down,
+                "target_hp": info.get("hp", max(target.hp_cur, 0)), "down": down,
                 "detail": detail, "notes": notes}
 
     def _attack_d20(self, att, rng: random.Random, adv: int):
-        """攻击 d20（含半身人幸运）。"""
+        """攻击 d20：优势/劣势掷两次取高/低（怪物同样如此，5e 规则统一）；
+        角色额外享受半身人幸运。"""
         if isinstance(att, Character):
             res = check_roll(rng, 0, adv)
             if res.kept[0] == 1 and att.mech().get("lucky_reroll_1"):
                 res2 = check_roll(rng, 0, adv)
                 res = res2
             return res
+        if adv:
+            a, b = rng.randint(1, 20), rng.randint(1, 20)
+            kept = max(a, b) if adv > 0 else min(a, b)
+            return DiceResult(expr="d20", rolls=[a, b], kept=[kept], total=kept)
         return roll(rng, "d20")
+
+    def _mirror_image_block(self, target, rng: random.Random,
+                            notes: list[str]) -> bool:
+        """镜影术拦截（PHB）：3分身d20≥6/2分身≥8/1分身≥11 → 分身被击碎，攻击落空。"""
+        images = getattr(target, "mirror_images", 0)
+        if images <= 0:
+            return False
+        threshold = {3: 6, 2: 8, 1: 11}.get(images, 6)
+        r = roll(rng, "d20")
+        if r.kept[0] >= threshold:
+            target.mirror_images = images - 1
+            note = (f"镜影术：{target.name} 的一个分身被击碎"
+                    f"（{r.kept[0]}≥{threshold}，剩余 {target.mirror_images} 个）")
+            notes.append(note)
+            self.log.append(note)
+            return True
+        notes.append(f"镜影术：d20={r.kept[0]}<{threshold}，攻击落在本体")
+        return False
 
     def _register_engagement(self, att, target, ranged: bool) -> None:
         if ranged:
@@ -681,6 +859,12 @@ class Encounter:
             return {"ok": False, "error": "该形态没有攻击"}
         wname = (D.WEAPONS.get(atk["weapon"]) or D.MONSTER_WEAPONS.get(
             atk["weapon"], {"name": atk["weapon"]}))["name"]
+        mi_notes: list[str] = []
+        if self._mirror_image_block(target, rng, mi_notes):
+            detail = (f"{druid.name}（兽形）攻击 {target.name} —— 打中的只是镜影！"
+                      f"（{'；'.join(mi_notes)}）")
+            self.log.append(detail)
+            return {"ok": True, "hit": False, "damage": 0, "detail": detail}
         results, total_dmg = [], 0
         for _ in range(atk.get("multiattack", 1)):
             adv, _n = self._advantage_for(druid, target, ranged=False)
@@ -691,7 +875,9 @@ class Encounter:
             if not hit:
                 results.append(f"{wname}未命中（{total}）")
                 continue
-            crit = nat == 20
+            crit = nat == 20 or any(
+                c in getattr(target, "conditions", set())
+                for c in (COND_PARALYZED, COND_UNCONSCIOUS, COND_SLEEP))
             n, s, m0 = parse_expr(atk.get("dmg") or "1d4")
             r = roll(rng, f"{n * (2 if crit else 1)}d{s}" + (f"+{m0}" if m0 else ""))
             dmg = r.total + int((atk.get("extra", "+0") or "+0").lstrip("+") or 0)
@@ -712,7 +898,9 @@ class Encounter:
 
     # ---------------- 怪物攻击
     def _monster_attack(self, att: Monster, target, weapon_key: str | None,
-                        rng: random.Random) -> dict:
+                        rng: random.Random, single: bool = False,
+                        precision_bonus: int = 0) -> dict:
+        """怪物攻击。single=True 时只打一次（借机攻击不触发多重攻击）。"""
         atk = None
         for a in att.attacks:
             if weapon_key and weapon_key in a["weapon"]:
@@ -732,10 +920,10 @@ class Encounter:
                         "detail": detail}
             if "save_dc" in atk:
                 return self._monster_save_spell(att, target, atk, rng)
-            adv, _notes = self._advantage_for(att, target, ranged=False)
-            die = roll(rng, "d20")
+            adv, _notes = self._advantage_for(att, target, ranged=True)
+            die = self._attack_d20(att, rng, adv)
             nat = die.kept[0]
-            total = nat + atk["bonus"] + adv
+            total = nat + atk["bonus"] + precision_bonus
             hit = nat == 20 or (nat != 1 and total >= target.ac())
             if not hit:
                 detail = f"{att.name} 的法术射线飞向 {target.name}：{die.describe()}+{atk['bonus']} = {total} —— 未命中。"
@@ -758,13 +946,22 @@ class Encounter:
 
         wname = (D.WEAPONS.get(wkey) or D.MONSTER_WEAPONS.get(wkey, {"name": wkey}))["name"]
         wtype = (D.WEAPONS.get(wkey) or D.MONSTER_WEAPONS.get(wkey, {})).get("type", "")
+        # 镜影术拦截（命中判定前，整个攻击动作只检一次）
+        mi_notes: list[str] = []
+        if self._mirror_image_block(target, rng, mi_notes):
+            detail = (f"{att.name} 攻击 {target.name} —— 打中的只是镜影！"
+                      f"（{'；'.join(mi_notes)}）")
+            self.log.append(detail)
+            return {"ok": True, "hit": False, "damage": 0, "detail": detail}
+        self.last_attack_round[att.name] = self.round
         results, total_dmg = [], 0
-        for i in range(atk.get("multiattack", 1)):
+        atk_count = 1 if single else atk.get("multiattack", 1)
+        for i in range(atk_count):
             adv, _notes = self._advantage_for(att, target, ranged=(wkey == "web"))
-            die = roll(rng, "d20")
+            die = self._attack_d20(att, rng, adv)
             nat = die.kept[0]
             debuff = self.attack_debuffs.pop(att.name, 0)
-            total = nat + atk["bonus"] + adv + debuff
+            total = nat + atk["bonus"] + debuff + precision_bonus
             hit = nat == 20 or (nat != 1 and total >= target.ac())
             if not hit:
                 results.append(f"{wname}未命中（{die.describe()}+{atk['bonus']}={total}）")
@@ -788,6 +985,11 @@ class Encounter:
                             results.append("护盾术令攻击落空！")
                             continue
             crit = nat == 20
+            # 麻痹/昏迷/沉睡目标 5 尺内命中即暴击（近战）
+            if not (wkey == "web") and any(
+                    c in getattr(target, "conditions", set())
+                    for c in (COND_PARALYZED, COND_UNCONSCIOUS, COND_SLEEP)):
+                crit = True
             base = atk.get("dmg") or (D.WEAPONS.get(wkey, {}).get("dmg") or "1d4")
             if base.strip() in ("0", ""):
                 dmg = int((atk.get("extra", "+0") or "+0").lstrip("+") or 0)
@@ -838,9 +1040,18 @@ class Encounter:
                     b, _ = self.apply_resistance(target, "piercing", b)
                     i2 = self.apply_damage(target, b)
                     results.append(f"饕餮狂暴噬咬 +{i2.get('damage', b)} 点")
+        # follow 组合攻击（5e 多重攻击模式：矛+噬咬、喙+爪击等）
+        follow_key = atk.get("follow")
+        if follow_key and not single and target.hp_cur > 0:
+            f_atk = next((a for a in att.attacks if a["weapon"] == follow_key), None)
+            if f_atk is not None:
+                r2 = self._monster_attack(att, target, follow_key, rng, single=True)
+                results.append(r2.get("detail", ""))
+                total_dmg += r2.get("damage", 0) or 0
         detail = f"{att.name} 攻击 {target.name}：" + "；".join(results)
         self.log.append(detail)
-        return {"ok": True, "hit": total_dmg > 0, "damage": total_dmg,
+        any_crit = "（暴击）" in detail
+        return {"ok": True, "hit": total_dmg > 0, "damage": total_dmg, "crit": any_crit,
                 "target_hp": max(self._hp_max(target), 0), "down": target.hp_cur == 0,
                 "detail": detail}
 
@@ -889,7 +1100,7 @@ class Encounter:
             success, d = sv["success"], sv["detail"]
         else:
             dr = roll(rng, "d20")
-            success = dr.kept[0] + target.mod(atk["save"]) >= dc
+            success = dr.kept[0] + target.save_bonus(atk["save"]) >= dc
             d = dr.describe()
         dmg = roll(rng, atk["dmg"]).total
         if success:
@@ -915,6 +1126,10 @@ class Encounter:
         if COND_SLEEP in getattr(target, "conditions", set()) and target.hp_cur > 0:
             self._remove_condition(target, COND_SLEEP)
             self.log.append(f"{target.name} 疼醒过来！")
+        # 已稳定者再次受创 → 失去稳定，重新开始死亡豁免
+        if (isinstance(target, Character) and dmg > 0
+                and COND_STABLE in target.conditions):
+            target.conditions.discard(COND_STABLE)
         # 0HP 角色受创 → 死亡豁免自动失败（暴击两次）
         if (isinstance(target, Character) and COND_UNCONSCIOUS in target.conditions
                 and dmg > 0 and not info.get("relentless")):
@@ -926,7 +1141,7 @@ class Encounter:
         if (isinstance(target, Monster) and info.get("down")
                 and "不死者坚韧" in "".join(target.traits)):
             dc = 5 + dmg
-            sv = roll(rng, "d20").kept[0] + target.mod("con")
+            sv = roll(rng, "d20").kept[0] + target.save_bonus("con")
             if sv >= dc:
                 target.hp_cur = 1
                 info["down"] = False
@@ -950,7 +1165,7 @@ class Encounter:
         elif isinstance(target, Monster) and target.concentration and dmg > 0:
             dc = max(10, dmg // 2)
             dr = roll(rng, "d20")
-            if dr.kept[0] + target.mod("con") < dc:
+            if dr.kept[0] + target.save_bonus("con") < dc:
                 self.log.append(f"{target.name} 的专注被打断。")
                 target.concentration = None
 
@@ -968,7 +1183,7 @@ class Encounter:
                 sv = target.save(rng, "str", dc)
                 ok, d = sv["success"], sv["detail"]
             else:
-                s = roll(rng, "d20").kept[0] + target.mod("str")
+                s = roll(rng, "d20").kept[0] + target.save_bonus("str")
                 ok, d = s >= dc, f"[d20: {s}]"
             if not ok:
                 self.set_condition(target, COND_PRONE)
@@ -983,7 +1198,7 @@ class Encounter:
                 sv = target.save(rng, "con", 10)
                 ok, d = sv["success"], sv["detail"]
             else:
-                s = roll(rng, "d20").kept[0] + target.mod("con")
+                s = roll(rng, "d20").kept[0] + target.save_bonus("con")
                 ok, d = s >= 10, f"[d20: {s}]"
             if not ok:
                 self.set_condition(target, COND_PARALYZED)
@@ -995,7 +1210,7 @@ class Encounter:
                 sv = target.save(rng, "str", dc)
                 ok, d = sv["success"], sv["detail"]
             else:
-                s = roll(rng, "d20").kept[0] + target.mod("str")
+                s = roll(rng, "d20").kept[0] + target.save_bonus("str")
                 ok, d = s >= dc, f"[d20: {s}]"
             if not ok:
                 self.set_condition(target, COND_RESTRAINED)
@@ -1019,7 +1234,7 @@ class Encounter:
                     sv = target.save(rng, "con", dc, effect="poison")
                     ok = sv["success"]
                 else:
-                    ok = roll(rng, "d20").kept[0] + target.mod("con") >= dc
+                    ok = roll(rng, "d20").kept[0] + target.save_bonus("con") >= dc
                 if not ok:
                     pdmg = roll(rng, expr).total
                     pdmg, _ = self.apply_resistance(target, "poison", pdmg)
@@ -1103,8 +1318,8 @@ class Encounter:
         kind = ctx.get("reaction")
         if kind == "shield" and "shield" in target.known_spells():
             slots = target.spell_slots()
-            return any(v > 0 for v in slots.values()) and (
-                ctx.get("damage", 0) >= target.hp_cur)
+            dmg_est = ctx.get("damage") or target.hp_cur   # 无伤害预估时按"会倒下"处理
+            return any(v > 0 for v in slots.values()) and dmg_est >= target.hp_cur
         if kind == "uncanny_dodge":
             return ctx.get("damage", 0) >= target.hp_max * 0.3
         if kind == "hellish_rebuke":
@@ -1115,12 +1330,12 @@ class Encounter:
 
     # ---------------- 借机攻击
     def opportunity_attack(self, mover, attacker) -> dict:
-        """attacker 对正在离开的 mover 的借机攻击（反应）。"""
+        """attacker 对正在离开的 mover 的借机攻击（反应，只打一次）。"""
         if not self.has_reaction(attacker) or not self.alive(attacker):
             return {"ok": False, "error": "无可用反应"}
         self.use_reaction(attacker)
         if isinstance(attacker, Monster):
-            return self._monster_attack(attacker, mover, None, self.rng)
+            return self._monster_attack(attacker, mover, None, self.rng, single=True)
         weapon = D.WEAPONS.get(attacker.weapons[0]) if attacker.weapons else None
         if weapon is None or weapon.get("ranged"):
             weapon = {"name": "徒手", "dmg": "1", "type": "bludgeoning",
@@ -1128,7 +1343,12 @@ class Encounter:
         return self._pc_attack(attacker, mover, weapon, self.rng)
 
     def move_away(self, c) -> dict:
-        """普通移动远离：所有纠缠者的借机攻击；任一命中则移动失败。"""
+        """普通移动远离：所有纠缠者的借机攻击；任一命中则移动失败。
+        被擒抱者移速归零，必须先挣脱（PHB 状态规则）。"""
+        if COND_GRAPPLED in c.conditions:
+            detail = f"{c.name} 被擒抱着，无法移动（先用动作挣脱）。"
+            self.log.append(detail)
+            return {"ok": False, "detail": detail}
         engagors = [self.find(n) for n in self.engagement.get(c.name, set())]
         engagors = [e for e in engagors if e and self.alive(e) and e.side != c.side]
         stopped = False
@@ -1183,38 +1403,43 @@ class Encounter:
         self.log.append(detail)
         return {"ok": True, "detail": detail}
 
-    def do_shove(self, c, target) -> dict:
-        """推撞（攻击动作的一部分）：运动 vs 运动/杂技 → 倒地。"""
+    def do_shove(self, c, target, push: bool = False) -> dict:
+        """推撞（替换一次攻击）：运动 vs 运动/杂技 → 倒地 或 推开5尺。"""
         if not self.use_action(c):
             return {"ok": False, "error": "本回合动作已用完"}
-        ra = roll(self.rng, "d20").kept[0] + c.skill_mod("athletics")
+        ra = roll(self.rng, "d20").kept[0] + self._athletics(c)
         if isinstance(target, Character):
             defense_skill = "acrobatics" if "acrobatics" in target.skills else "athletics"
             rd = roll(self.rng, "d20").kept[0] + target.skill_mod(defense_skill)
         else:
-            rd = roll(self.rng, "d20").kept[0] + target.mod("str") + 2
+            rd = roll(self.rng, "d20").kept[0] + target.save_bonus("str")
         d = f"{ra} vs {rd}"
         if ra >= rd:
-            self.set_condition(target, COND_PRONE)
             self.engagement.setdefault(c.name, set()).add(target.name)
             self.engagement.setdefault(target.name, set()).add(c.name)
-            detail = f"{c.name} 推撞 {target.name} 成功（{d}）——目标倒地！"
+            if push:
+                self.do_disengage_quiet(target)
+                detail = f"{c.name} 将 {target.name} 推开5尺（{d}）——目标脱离纠缠！"
+            else:
+                self.set_condition(target, COND_PRONE)
+                detail = f"{c.name} 推撞 {target.name} 成功（{d}）——目标倒地！"
         else:
             detail = f"{c.name} 推撞 {target.name} 失败（{d}）。"
         self.log.append(detail)
         return {"ok": ra >= rd, "detail": detail}
 
     def do_grapple(self, c, target) -> dict:
-        """擒抱（攻击动作的一部分）：目标体型 ≤ 我方一级。"""
+        """擒抱（替换一次攻击）：目标体型 ≤ 我方一级。被擒抱者移速归零。"""
         if not self.use_action(c):
             return {"ok": False, "error": "本回合动作已用完"}
-        ra = roll(self.rng, "d20").kept[0] + c.skill_mod("athletics")
+        ra = roll(self.rng, "d20").kept[0] + self._athletics(c)
         if isinstance(target, Character):
             rd = roll(self.rng, "d20").kept[0] + target.skill_mod("athletics")
         else:
-            rd = roll(self.rng, "d20").kept[0] + target.mod("str") + 2
+            rd = roll(self.rng, "d20").kept[0] + target.save_bonus("str")
         if ra >= rd:
             self.set_condition(target, COND_GRAPPLED)
+            self.grappler_of[target.name] = c.name
             self.engagement.setdefault(c.name, set()).add(target.name)
             self.engagement.setdefault(target.name, set()).add(c.name)
             detail = f"{c.name} 擒抱住 {target.name}（{ra} vs {rd}）——目标移速归零。"
@@ -1222,6 +1447,32 @@ class Encounter:
             detail = f"{c.name} 擒抱 {target.name} 失败（{ra} vs {rd}）。"
         self.log.append(detail)
         return {"ok": ra >= rd, "detail": detail}
+
+    def do_escape_grapple(self, c) -> dict:
+        """挣脱擒抱（动作）：运动（或杂技）对抗擒抱者的运动。"""
+        if COND_GRAPPLED not in c.conditions:
+            return {"ok": False, "error": "没有被擒抱"}
+        grappler = self.find(self.grappler_of.get(c.name, "")) if \
+            self.grappler_of.get(c.name) else None
+        ra = roll(self.rng, "d20").kept[0] + self._athletics(c)
+        if grappler is not None:
+            rd = roll(self.rng, "d20").kept[0] + self._athletics(grappler)
+        else:
+            rd = 10 + self.rng.randint(0, 4)
+        if ra >= rd:
+            self._remove_condition(c, COND_GRAPPLED)
+            self.do_disengage_quiet(c)
+            detail = f"{c.name} 挣脱了擒抱（{ra} vs {rd}）！"
+        else:
+            detail = f"{c.name} 未能挣脱擒抱（{ra} vs {rd}）。"
+        self.log.append(detail)
+        return {"ok": ra >= rd, "detail": detail}
+
+    def _athletics(self, c) -> int:
+        """运动对抗加值：角色用运动技能，怪物没有技能系统用力量调整值。"""
+        if isinstance(c, Character):
+            return c.skill_mod("athletics")
+        return c.mod("str")
 
     # ------------------------------------------------------------ 其他动作
     def do_help(self, helper, target) -> dict:
@@ -1278,6 +1529,7 @@ class Encounter:
             if not self.use_action(c):
                 return {"ok": False, "error": "本回合动作已用完"}
             if item == "healing_potion" and target is not None and target is not c:
+                c.inventory[item] -= 1
                 r = roll(self.rng or random.Random(), "2d4+2")
                 amt = target.heal(r.total)
                 detail = (f"{c.name} 把治疗药水喂给 {target.name}{r.describe()} → "
@@ -1350,7 +1602,7 @@ class Encounter:
             sv = t.save(rng, "dex", dc) if isinstance(t, Character) else None
             if sv is None:
                 dr = roll(rng, "d20")
-                ok = dr.kept[0] + t.mod("dex") >= dc
+                ok = dr.kept[0] + t.save_bonus("dex") >= dc
                 d = dr.describe()
             else:
                 ok, d = sv["success"], sv["detail"]
@@ -1382,21 +1634,24 @@ class Encounter:
         self.log.append(detail)
         return {"ok": True, "detail": detail}
 
-    def divine_smite(self, c: Character, target, slot_level: int, rng: random.Random) -> dict:
+    def divine_smite(self, c: Character, target, slot_level: int, rng: random.Random,
+                     crit: bool = False) -> dict:
         if not c.has_feature("divine_smite"):
             return {"ok": False, "error": "圣武士 2 级才有神佑斩"}
         if not self._consume_slot(c, slot_level):
             return {"ok": False, "error": f"没有可用的 {slot_level} 环法术位"}
         dice = 2 + (slot_level - 1)
         extra = ""
-        if isinstance(target, Monster) and (target.is_undead()):
+        if isinstance(target, Monster) and (target.is_undead() or target.is_fiend()):
             dice += 1
-            extra = "（对不死者+1d8）"
+            extra = "（对不死/魔鬼+1d8）"
         dice = min(dice, 5)
-        r = roll(rng, f"{dice}d8")
+        rolled_dice = dice * (2 if crit else 1)      # 暴击伤害骰翻倍
+        r = roll(rng, f"{rolled_dice}d8")
         dmg, _res = self.apply_resistance(target, "radiant", r.total)
         info = self.apply_damage(target, dmg)
-        detail = (f"{c.name} 神佑斩！{dice}d8={r.total}{extra} → "
+        detail = (f"{c.name} 神佑斩！{rolled_dice}d8={r.total}"
+                  f"{'（暴击翻倍）' if crit else ''}{extra} → "
                   f"{info.get('damage', dmg)} 点光耀伤害（HP {info['hp']}/{self._hp_max(target)}）。")
         self.log.append(detail)
         return {"ok": True, "damage": info.get("damage", dmg), "detail": detail}
@@ -1420,6 +1675,33 @@ class Encounter:
         self.log.append(detail)
         return {"ok": True, "detail": detail, "results": lines}
 
+    def martial_bonus_attack(self, c: Character, target) -> dict:
+        """武术：攻击动作后以附赠动作打一次徒手打击（不耗气）。"""
+        if c.klass != "monk":
+            return {"ok": False, "error": "只有武僧能使用武术"}
+        if not self.use_bonus(c):
+            return {"ok": False, "error": "本回合附赠动作已用完"}
+        die = "1d6" if c.level >= 5 else "1d4"
+        weapon = {"name": "徒手", "dmg": die, "type": "bludgeoning", "props": ["monk"]}
+        r = self._pc_attack(c, target, weapon, self.rng)
+        detail = f"{c.name} 以武术打出附赠徒手打击。{r.get('detail', '')}"
+        self.log.append(detail)
+        return {"ok": True, "hit": r.get("hit", False), "detail": detail}
+
+    def frenzy_attack(self, c: Character, target, weapon_key: str | None) -> dict:
+        """狂战士：狂暴期间每回合可用附赠动作打一次近战攻击（狂暴结束后力竭+1）。"""
+        if not c.has_feature("frenzy"):
+            return {"ok": False, "error": "需要狂战士本源（3级）"}
+        if COND_RAGING not in c.conditions:
+            return {"ok": False, "error": "只有狂暴期间才能狂暴攻击"}
+        if not self.use_bonus(c):
+            return {"ok": False, "error": "本回合附赠动作已用完"}
+        self.frenzy_used.add(c.name)
+        r = self.attack(c, target, weapon_key, self.rng)
+        detail = f"{c.name} 狂暴攻击！{r.get('detail', '')}"
+        self.log.append(detail)
+        return {"ok": True, "hit": r.get("hit", False), "detail": detail}
+
     def stunning_strike(self, c: Character, target) -> dict:
         if not c.has_feature("stunning_strike"):
             return {"ok": False, "error": "武僧 5 级才有震慑拳"}
@@ -1432,7 +1714,7 @@ class Encounter:
             ok, d = sv["success"], sv["detail"]
         else:
             dr = roll(self.rng, "d20")
-            ok = dr.kept[0] + target.mod("con") >= dc
+            ok = dr.kept[0] + target.save_bonus("con") >= dc
             d = dr.describe()
         if ok:
             detail = f"{c.name} 震慑拳被 {target.name} 抵抗（{d} vs DC{dc}）。"
@@ -1454,6 +1736,7 @@ class Encounter:
         bard.bardic_inspiration_used += 1
         die = 8 if bard.level >= 5 else 6
         target.bardic_dice += 1
+        target.bardic_die = die
         detail = (f"{bard.name} 以激励鼓舞 {target.name}（1d{die}，10分钟内可加到一次掷骰；"
                   f"剩余 {bard.bardic_total() - bard.bardic_inspiration_used} 次）。")
         self.log.append(detail)
@@ -1462,11 +1745,16 @@ class Encounter:
     def cutting_words(self, bard: Character, target) -> dict:
         if not bard.has_feature("cutting_words"):
             return {"ok": False, "error": "需要知识学院（诗人3级）"}
+        if bard.bardic_inspiration_used >= bard.bardic_total():
+            return {"ok": False, "error": "激励次数已用尽（诛心之言消耗一次激励）"}
         if not self.use_reaction(bard):
             return {"ok": False, "error": "反应不可用"}
-        r = roll(self.rng, "1d6")
+        bard.bardic_inspiration_used += 1
+        die = "1d8" if bard.level >= 5 else "1d6"
+        r = roll(self.rng, die)
         self.attack_debuffs[target.name] = self.attack_debuffs.get(target.name, 0) - r.total
-        detail = f"{bard.name} 诛心之言！{target.name} 下次攻击获得 −{r.total}（1d6）减值。"
+        detail = (f"{bard.name} 诛心之言！{target.name} 下次攻击骰获得 −{r.total}"
+                  f"（{die}）减值。")
         self.log.append(detail)
         return {"ok": True, "detail": detail}
 
@@ -1702,7 +1990,7 @@ class Encounter:
                     ok, d = sv["success"], sv["detail"]
                 else:
                     dr = roll(rng, "d20")
-                    ok = dr.kept[0] + t.mod(save_key) >= dc
+                    ok = dr.kept[0] + t.save_bonus(save_key) >= dc
                     d = dr.describe()
                 if ok:
                     lines.append(f"{t.name} 豁免成功（{d}）")
@@ -1758,8 +2046,8 @@ class Encounter:
                 if nat != 20 and (nat == 1 or nat + bonus < t.ac()):
                     lines.append(f"{t.name} 闪开了射线（{die.describe()}+{bonus}）")
                     continue
-                r = roll(rng, f"{n}d{s}" + (f"+{m0}" if m0 else ""))
-                dmg = r.total * (2 if nat == 20 else 1)
+                r = roll(rng, f"{n * (2 if nat == 20 else 1)}d{s}" + (f"+{m0}" if m0 else ""))
+                dmg = r.total
                 if caster.has_feature("agonizing_blast") and sp.get("beams") == "eldritch":
                     dmg += caster.mod("cha")
                 dmg, _res = self.apply_resistance(t, sp["dtype"], dmg)
@@ -1778,7 +2066,7 @@ class Encounter:
                     ok, d = sv["success"], sv["detail"]
                 else:
                     dr = roll(rng, "d20")
-                    ok = dr.kept[0] + t.mod(save_key) >= dc
+                    ok = dr.kept[0] + t.save_bonus(save_key) >= dc
                     d = dr.describe()
                 r = roll(rng, f"{n + extra_dice}d{s}" + (f"+{m0}" if m0 else ""))
                 dmg = r.total
@@ -1810,8 +2098,8 @@ class Encounter:
                 if nat != 20 and (nat == 1 or nat + bonus < t.ac()):
                     lines.append(f"{t.name} 闪开了射线（{die.describe()}+{bonus}）")
                     continue
-                r = roll(rng, f"{n}d{s}" + (f"+{m0}" if m0 else ""))
-                dmg = r.total * (2 if nat == 20 else 1)
+                r = roll(rng, f"{n * (2 if nat == 20 else 1)}d{s}" + (f"+{m0}" if m0 else ""))
+                dmg = r.total
                 dmg, _res = self.apply_resistance(t, sp["dtype"], dmg)
                 info = self.apply_damage(t, dmg)
                 lines.append(f"射线命中 {t.name}{'（暴击）' if nat == 20 else ''}，"

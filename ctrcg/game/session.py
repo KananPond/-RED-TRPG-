@@ -16,8 +16,9 @@ from ..harness.loop import AgentResult, DefaultAgentLoop
 from ..harness.registry import ToolRegistry
 from ..rules import data as D
 from ..rules.character import (
-    Character, COND_BLESSED, COND_INVISIBLE, COND_MARKED, COND_RAGING,
-    COND_SHIELDED, COND_SLEEP, COND_PRONE, COND_UNCONSCIOUS,
+    Character, COND_BLESSED, COND_GRAPPLED, COND_INVISIBLE, COND_MARKED,
+    COND_RAGING, COND_SHIELDED, COND_SLEEP, COND_PRONE, COND_STABLE,
+    COND_UNCONSCIOUS,
 )
 from ..rules.combat import Encounter, monster_choose_action
 from . import state as G
@@ -25,9 +26,11 @@ from .tools import GameTools
 
 SAVE_FILE = "saves/game.json"
 
-# 战斗结束后清除的临时战斗状态（中毒/恐惧等按规则延续到战斗外）
+# 战斗结束后清除的临时战斗状态（中毒/恐惧等按规则延续到战斗外）；
+# 倒地/被擒抱/标亮等战斗内定位状态离场即消失（换场自然起身/脱离）
 _POST_COMBAT_CLEAR = {COND_SHIELDED, "burning", "mirror_image", COND_INVISIBLE,
-                      COND_RAGING, "ac+2", COND_SLEEP, "hunters_mark"}
+                      COND_RAGING, "ac+2", COND_SLEEP, "hunters_mark",
+                      COND_PRONE, COND_GRAPPLED, "outlined", "guided"}
 
 
 class GameOver(Exception):
@@ -129,12 +132,24 @@ class GameSession:
             self._ask_feature_choice(c, need)
 
     _STYLE_NAMES = {"archery": "箭术（远程攻击+2）", "defense": "防御（AC+1）",
-                    "dueling": "对决（单手近战伤害+2）", "two_weapon": "双武器格斗（副手加属性）"}
+                    "dueling": "对决（单手近战伤害+2）", "two_weapon": "双武器格斗（副手加属性）",
+                    "great_weapon": "大武器格斗（双手武器伤害骰1/2重骰）"}
 
     def _ask_feature_choice(self, c: Character, need: str) -> None:
         fc = c.feature_choices
-        if need == "fighting_style":
-            keys = ["archery", "defense", "dueling", "two_weapon"]
+        if need == "expertise":
+            picks = sorted(c.skills)
+            pairs = [(picks[i], picks[j]) for i in range(len(picks))
+                     for j in range(i + 1, len(picks))]
+            labels = [f"{D.SKILLS[a]['name']} + {D.SKILLS[b]['name']}" for a, b in pairs]
+            i = self.ui.choose("选择专精（2项技能熟练翻倍）", labels)
+            first, second = pairs[i]
+            c.expertise |= {first, second}
+            fc["expertise"] = f"{first}+{second}"
+            self.ui.system_line(f"专精：{D.SKILLS[first]['name']}、{D.SKILLS[second]['name']}")
+        elif need == "fighting_style":
+            keys = (["archery", "defense", "dueling", "two_weapon", "great_weapon"]
+                    if c.klass == "fighter" else ["archery", "defense", "dueling", "two_weapon"])
             i = self.ui.choose("选择战斗风格",
                                [self._STYLE_NAMES[k] for k in keys])
             c.fighting_style = keys[i]
@@ -443,6 +458,33 @@ class GameSession:
         self.ui.raw("—— 战斗结束 ——")
         if hasattr(self.ui, "mode"):
             self.ui.mode = "explore"
+        # 濒死结算（PHB 战斗外规则）：盟友可用动作做医药 DC10 稳定检定，
+        # 战斗外时间充裕可反复尝试；若无人施救，濒死者继续掷死亡豁免
+        # （RAW 每 6 秒一次）直至稳定或死亡——只有真正死亡才终结冒险。
+        for d in [c for c in self.state.party()
+                  if c.hp_cur <= 0 and "dead" not in c.conditions
+                  and COND_STABLE not in c.conditions]:
+            helpers = [h for h in self.state.party()
+                       if h is not d and h.hp_cur > 0 and "dead" not in h.conditions]
+            if helpers:
+                helper = max(helpers, key=lambda h: h.skill_mod("medicine"))
+                for _ in range(10):
+                    r = helper.check(self.state.rng, "medicine", 10)
+                    if r["success"]:
+                        d.conditions.add(COND_STABLE)
+                        self.ui.system_line(
+                            f"{helper.name} 为 {d.name} 稳定了伤势（{r['detail']}）。")
+                        break
+                else:
+                    d.conditions.add(COND_STABLE)
+                    self.ui.system_line(
+                        f"{helper.name} 反复按压止血，终于稳住了 {d.name} 的伤势。")
+            else:
+                while "dead" not in d.conditions and COND_STABLE not in d.conditions:
+                    ds = d.death_save_turn(self.state.rng)
+                    if ds:
+                        self.ui.system_line(
+                            f"☠ {ds['who']} 死亡豁免：{ds['detail']} → {ds['result']}")
         # 战斗结束清理：临时战斗状态消失
         for c in self.state.party():
             c.conditions -= _POST_COMBAT_CLEAR
@@ -452,10 +494,10 @@ class GameSession:
             c.mirror_images = 0
             if "dead" in c.conditions:
                 c.conditions = {"dead"}          # 规范死亡状态显示
-            elif c.hp_cur == 0 and "stable" in c.conditions:
+            elif c.hp_cur == 0 and COND_STABLE in c.conditions:
                 c.heal(1)                        # 稳定者经短暂喘息恢复 1 HP
         # 玩家死亡 → 本局结束（RAW：无复生魔法可依）
-        if "dead" in self.state.player.conditions or self.state.player.hp_cur <= 0:
+        if "dead" in self.state.player.conditions:
             self.encounter = None
             self.tools.encounter = None
             return "tpk"
@@ -511,10 +553,12 @@ class GameSession:
 
     def _action_options(self, enc: Encounter, pc: Character) -> list[str]:
         opts = ["攻击", "施法"]
-        opts += ["推撞（运动对抗，令目标倒地）", "擒抱（运动对抗，目标无法移动）",
+        opts += ["推撞（运动对抗：击倒或推开）", "擒抱（运动对抗，目标无法移动）",
                  "助攻（帮助队友获得优势）", "防御", "躲藏", "撤离",
                  "移动远离（可能引发借机攻击）",
                  "说话", "查看状态", "（结束动作阶段）"]
+        if COND_GRAPPLED in pc.conditions:
+            opts.insert(0, "挣脱擒抱（动作：运动对抗）")
         downed = [a for a in enc.party()
                   if isinstance(a, Character) and a.hp_cur <= 0
                   and "dead" not in a.conditions]
@@ -592,12 +636,20 @@ class GameSession:
             return False
         if choice.startswith("推撞"):
             ti = self.ui.choose("推撞目标", [f.name for f in foes])
-            r = enc.do_shove(pc, foes[ti])
+            style = self.ui.choose("推撞方式", ["击倒（目标倒地）", "推开（脱离5尺纠缠）"])
+            r = enc.do_shove(pc, foes[ti], push=(style == 1))
             flush()
             return True
         if choice.startswith("擒抱"):
             ti = self.ui.choose("擒抱目标", [f.name for f in foes])
             r = enc.do_grapple(pc, foes[ti])
+            flush()
+            return True
+        if choice.startswith("挣脱擒抱"):
+            r = enc.do_escape_grapple(pc)
+            if not r.get("ok") and "error" in r:
+                self.ui.system_line(r["error"])
+                return False
             flush()
             return True
         if choice.startswith("助攻"):
@@ -671,16 +723,27 @@ class GameSession:
         ti = self.ui.choose("选择目标", [f"{f.name}（HP {f.hp_cur}/{f.hp_max} AC {f.ac()}）"
                                          for f in foes_sorted])
         target = foes_sorted[ti]
+        # 战斗大师：选择战技（精确攻击 / 推撞攻击 / 恐吓攻击，消耗战技骰）
+        maneuver = None
+        if pc.has_feature("battlemaster") and pc.superiority_dice_left() > 0:
+            mi = self.ui.choose(f"战斗大师战技（战技骰 {pc.superiority_dice_left()}/4）",
+                                ["不用战技", "精确攻击（攻击骰+1d8）",
+                                 "推撞攻击（+1d8 伤害并推开5尺）",
+                                 "恐吓攻击（+1d8 伤害，感知豁免否则恐惧）"])
+            maneuver = (None, "precision", "pushing", "menacing")[mi]
         smite_slot = None
         if pc.has_feature("divine_smite") and any(v > 0 for v in pc.spell_slots().values()):
-            if self.ui.choose("命中后消耗法术位施展神佑斩？", ["不", "是（1环 2d8）"]) == 1:
-                smite_slot = 1
+            avail = [lv for lv in (3, 2, 1) if pc.spell_slots().get(lv, 0) > 0]
+            if avail:
+                opts = ["不施展"] + [f"{lv}环（{min(2 + lv - 1, 5)}d8）" for lv in avail]
+                si = self.ui.choose("命中后消耗法术位施展神佑斩？", opts)
+                if si > 0:
+                    smite_slot = avail[si - 1]
         before = len(enc.log)
         enc.attack_action(pc, target, weapon, self.state.rng,
-                          reckless=reckless, smite_slot=smite_slot)
+                          reckless=reckless, smite_slot=smite_slot, maneuver=maneuver)
         for line in enc.log[before:]:
             self.ui.raw("  " + line)
-        # 震慑拳提示：命中后可在附赠阶段使用
         return True
 
     def _bonus_options(self, pc: Character) -> list[str]:
@@ -702,6 +765,11 @@ class GameSession:
             if pc.has_feature("stunning_strike") and hit_target is not None \
                     and enc.last_melee_hit.get(pc.name):
                 opts.append(f"震慑拳（1气：对 {hit_target.name}）")
+        if pc.klass == "monk" and enc is not None \
+                and enc.last_attack_round.get(pc.name) == enc.round:
+            opts.append("武术：附赠徒手打击（不耗气）")
+        if pc.has_feature("frenzy") and COND_RAGING in pc.conditions:
+            opts.append("狂暴攻击（狂战士附赠动作近战，狂暴结束力竭+1）")
         light = [w for w in pc.weapons if "light" in D.WEAPONS.get(w, {}).get("props", [])]
         if light and not pc.in_wild_shape():
             opts.append(f"双武器副手攻击（{D.WEAPONS[light[0]]['name']}）")
@@ -749,6 +817,12 @@ class GameSession:
         elif choice.startswith("疾风连击"):
             ti = self.ui.choose("疾风连击目标", [f.name for f in foes])
             r = enc.flurry_of_blows(pc, foes[ti])
+        elif choice.startswith("武术：附赠徒手"):
+            ti = self.ui.choose("徒手打击目标", [f.name for f in foes])
+            r = enc.martial_bonus_attack(pc, foes[ti])
+        elif choice.startswith("狂暴攻击"):
+            ti = self.ui.choose("狂暴攻击目标", [f.name for f in foes])
+            r = enc.frenzy_attack(pc, foes[ti], pc.weapons[0] if pc.weapons else None)
         elif choice.startswith("震慑拳"):
             target = enc.find(enc.last_melee_hit.get(pc.name, ""))
             r = enc.stunning_strike(pc, target) if target else \
@@ -797,6 +871,18 @@ class GameSession:
         si = self.ui.choose("选择法术", names)
         spell = usable[si]
         sp = D.SPELLS[spell]
+        # 上环施法（PHB）：可用更高环阶法术位增强伤害/治疗/目标数
+        slot_level = None
+        if sp["level"] > 0:
+            higher = [lv for lv in (3, 2, 1)
+                      if lv >= sp["level"] and slots.get(lv, 0) > 0]
+            if len(higher) > 1:
+                ui_opts = [f"{lv}环" + ("（基础环阶）" if lv == sp["level"] else "（上环）")
+                           for lv in sorted(higher)]
+                u = self.ui.choose("用哪个环阶的法术位？", ui_opts)
+                slot_level = sorted(higher)[u]
+            elif higher:
+                slot_level = higher[0]
         foes = enc.active_enemies()
         allies = enc.active_party()
         if sp["kind"] in ("heal", "buff", "cleanse", "cleanse_magical") \
@@ -817,7 +903,7 @@ class GameSession:
             for part in extra.replace("，", ",").split(","):
                 if part.strip().isdigit() and 1 <= int(part) <= len(foes):
                     targets.append(foes[int(part) - 1].name)
-        r = enc.cast(pc, spell, targets, self.state.rng)
+        r = enc.cast(pc, spell, targets, self.state.rng, slot_level=slot_level)
         if not r.get("ok"):
             self.ui.system_line(r.get("error", "施法失败"))
             return False

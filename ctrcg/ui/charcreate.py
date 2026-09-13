@@ -11,7 +11,8 @@ from ..rules.character import Character
 from ..rules.dice import roll_scores
 
 STYLE_NAMES = {"archery": "箭术（远程攻击+2）", "defense": "防御（AC+1）",
-               "dueling": "对决（单手近战伤害+2）", "two_weapon": "双武器格斗"}
+               "dueling": "对决（单手近战伤害+2）", "two_weapon": "双武器格斗",
+               "great_weapon": "大武器格斗（双手武器伤害骰1/2重骰）"}
 
 # 按职业的推荐属性优先级（掷骰结果按此顺序从高到低分配）
 RECOMMENDED: dict[str, dict[str, int]] = {
@@ -76,16 +77,22 @@ def create_player_console(ui, rng) -> Character:
     b2 = _pick_bonus(ui, "选择 +2 的属性（BG3 种族加值）")
     b1 = _pick_bonus(ui, "选择 +1 的属性（须与 +2 不同）", exclude=b2)
 
-    # 技能
+    # 技能：职业技能从职业列表选；种族赠送技能（人类/半精灵）可任选任意技能
     kls = D.CLASSES[klass]
-    n = kls["skill_count"] + D.RACES[race].get("skills", 0)
     chosen: list[str] = []
     avail = list(kls["skill_choices"])
-    for _ in range(n):
-        j = ui.choose(f"选择技能（还剩 {n - len(chosen)} 项）",
+    for _ in range(kls["skill_count"]):
+        j = ui.choose(f"选择职业技能（还剩 {kls['skill_count'] - len(chosen)} 项）",
                       [f"{D.SKILLS[s]['name']}（{D.ABILITIES[D.SKILLS[s]['ability']]}）"
                        for s in avail if s not in chosen])
         chosen.append(avail[j])
+    race_n = D.RACES[race].get("skills", 0)
+    for _ in range(race_n):
+        pool = [s for s in D.SKILLS if s not in chosen]
+        j = ui.choose("选择种族赠送技能（任意技能）",
+                      [f"{D.SKILLS[s]['name']}（{D.ABILITIES[D.SKILLS[s]['ability']]}）"
+                       for s in pool])
+        chosen.append(pool[j])
 
     style = ""
     if klass == "fighter":

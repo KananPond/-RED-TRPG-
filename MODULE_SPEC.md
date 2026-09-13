@@ -160,6 +160,7 @@ vs AC、暴击骰翻倍、死亡/状态/抗性全套。
 | `dmg` | 伤害骰表达式（如 `"2d6"`；天生武器必填） |
 | `extra` | 附加固定伤害，如 `"+2"` |
 | `multiattack` | 每轮该击次数（如怪物的多重攻击） |
+| `follow` | 组合攻击：该击命中判定后接续一次指定武器攻击（如 SRD"矛+噬咬"、"喙+爪击"），填另一攻击的 weapon 键 |
 | `save_dc`/`save`/`spell_level` | 法术豁免攻击三件套（`spell:` 前缀）；`spell_level` 供反制法术判定 |
 | `dtype` | 法术伤害类型（`fire/cold/acid/lightning/poison/necrotic/radiant/force/psychic/thunder`） |
 | `onhit` | 命中后效果（见 6.2） |
@@ -194,7 +195,13 @@ vs AC、暴击骰翻倍、死亡/状态/抗性全套。
 | `不死者` | 免疫毒素/睡眠/麻痹之爪等 |
 | 其余文本 | 叙事呈现（DM 上下文可见） |
 
-### 6.4 抗性 / 免疫字段
+### 6.4 怪物豁免熟练（可选）
+
+字段 `"save_prof": {"con": true, "wis": true}`：声明该怪物哪些属性豁免带熟练加值
+（熟练加值按 CR 取：CR0-4 为 +2，CR5+ 为 +3）。未声明时按属性调整值豁免。
+借机攻击只结算一次攻击（不触发 `multiattack`/`follow`）。
+
+### 6.5 抗性 / 免疫字段
 
 `"fire_resist": true`、`"poison_resist": true`、`"poison_immune": true`。
 其余抗性写在 traits 中由 DM 叙事处理。

@@ -163,12 +163,12 @@ class GameTools:
         registry.register(
             "combat_action",
             "战斗中执行一个动作或附赠动作。动作类 action ∈ attack/cast/shove/grapple/"
-            "help/dodge/hide/disengage/move_away/use_item/breath_weapon/wild_shape/"
-            "revert/lay_on_hands/action_surge；附赠动作类 second_wind/rage/flurry/"
-            "stunning_strike/bardic_inspiration。attack 需 weapon+target（5级武人自动"
-            "获得额外攻击）；cast 需 spell+target（治疗真言/猎人印记等自动按附赠动作"
-            "结算）；use_item 需 item；wild_shape 需 form（wolf/giant_badger/"
-            "riding_horse/black_bear）；lay_on_hands 需 target+amount。",
+            "escape_grapple/help/dodge/hide/disengage/move_away/use_item/breath_weapon/"
+            "wild_shape/revert/lay_on_hands/action_surge；附赠动作类 second_wind/rage/"
+            "flurry/martial_bonus/frenzy_attack/stunning_strike/bardic_inspiration。"
+            "attack 需 weapon+target（5级武人自动获得额外攻击）；cast 需 spell+target"
+            "（治疗真言/猎人印记等自动按附赠动作结算）；use_item 需 item；wild_shape 需 form"
+            "（wolf/giant_badger/riding_horse/black_bear）；lay_on_hands 需 target+amount。",
             {"type": "object",
              "properties": {
                  "action": {"type": "string"},
@@ -213,6 +213,8 @@ class GameTools:
         if action == "grapple":
             t = enc.find(target)
             return enc.do_grapple(pc, t) if t else {"ok": False, "error": "找不到目标"}
+        if action == "escape_grapple":
+            return enc.do_escape_grapple(pc)
         if action == "help":
             t = enc.find(target)
             if t is None:
@@ -239,6 +241,13 @@ class GameTools:
         if action == "flurry":
             t = enc.find(target)
             return enc.flurry_of_blows(pc, t) if t else {"ok": False, "error": "找不到目标"}
+        if action == "martial_bonus":
+            t = enc.find(target)
+            return enc.martial_bonus_attack(pc, t) if t else {"ok": False, "error": "找不到目标"}
+        if action == "frenzy_attack":
+            t = enc.find(target)
+            return enc.frenzy_attack(pc, t, pc.weapons[0] if pc.weapons else None) \
+                if t else {"ok": False, "error": "找不到目标"}
         if action == "stunning_strike":
             t = enc.find(target)
             return enc.stunning_strike(pc, t) if t else {"ok": False, "error": "找不到目标"}

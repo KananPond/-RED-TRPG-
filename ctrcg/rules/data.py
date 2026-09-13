@@ -651,7 +651,7 @@ MONSTERS: dict[str, dict] = {
         "name": "大地精", "en": "Hobgoblin", "cr": 0.5, "xp": 100, "hp": "2d8+2", "ac": 18,
         "speed": 30, "abilities": {"str": 14, "dex": 12, "con": 12, "int": 10, "wis": 10, "cha": 9},
         "traits": ["军团战术（队友贴身目标时+2d6）"],
-        "attacks": [{"weapon": "longsword", "bonus": 3, "extra": "+1"}, {"weapon": "longbow", "bonus": 3, "extra": "+1"}],
+        "attacks": [{"weapon": "longsword", "bonus": 3, "extra": "+1", "multiattack": 2}, {"weapon": "longbow", "bonus": 3, "extra": "+1", "multiattack": 2}],
         "darkvision": 60,
     },
     "worg": {
@@ -665,7 +665,7 @@ MONSTERS: dict[str, dict] = {
         "name": "豺狼人", "en": "Gnoll", "cr": 0.5, "xp": 100, "hp": "5d8", "ac": 15,
         "speed": 30, "abilities": {"str": 14, "dex": 12, "con": 11, "int": 6, "wis": 10, "cha": 7},
         "traits": ["饕餮狂暴（击倒敌人后附赠动作噬咬）"],
-        "attacks": [{"weapon": "spear", "bonus": 4, "extra": "+2"}, {"weapon": "bite", "bonus": 4, "dmg": "1d4", "extra": "+2"}],
+        "attacks": [{"weapon": "spear", "bonus": 4, "extra": "+2", "follow": "bite"}, {"weapon": "bite", "bonus": 4, "dmg": "1d4", "extra": "+2"}],
         "darkvision": 60,
     },
     "duergar": {
@@ -673,13 +673,14 @@ MONSTERS: dict[str, dict] = {
         "speed": 25, "abilities": {"str": 14, "dex": 11, "con": 14, "int": 11, "wis": 10, "cha": 9},
         "traits": ["扩大术（1/天：近战伤害+1d4）", "幻术/魅惑/麻痹豁免优势", "灰矮人魔法（隐形术，1/天）"],
         "attacks": [{"weapon": "warhammer", "bonus": 4, "extra": "+2", "multiattack": 2}],
+        "save_prof": {"con": True, "wis": True},
         "darkvision": 120,
     },
     "ettercap": {
         "name": "艾特卡普", "en": "Ettercap", "cr": 2, "xp": 450, "hp": "8d8+8", "ac": 13,
         "speed": 30, "abilities": {"str": 14, "dex": 15, "con": 13, "int": 5, "wis": 10, "cha": 4},
         "traits": ["蛛网行者", "蛛网感应", "多重攻击（噬咬+爪击）"],
-        "attacks": [{"weapon": "bite", "bonus": 4, "dmg": "1d6", "extra": "+2", "onhit": "poison_1d8_dc11"},
+        "attacks": [{"weapon": "bite", "bonus": 4, "dmg": "1d6", "extra": "+2", "onhit": "poison_1d8_dc11", "follow": "claws"},
                     {"weapon": "claws", "bonus": 4, "dmg": "1d4", "extra": "+2"},
                     {"weapon": "web", "bonus": 4, "dmg": "0", "extra": "+0", "onhit": "web_dc11"}],
         "darkvision": 60,
@@ -717,8 +718,8 @@ MONSTERS: dict[str, dict] = {
         "name": "枭熊", "en": "Owlbear", "cr": 3, "xp": 700, "hp": "7d10+21", "ac": 13,
         "speed": 40, "abilities": {"str": 20, "dex": 12, "con": 17, "int": 3, "wis": 12, "cha": 7},
         "traits": ["热感嗅视", "凶猛暴怒（受创后不退反进）"],
-        "attacks": [{"weapon": "beak", "bonus": 7, "dmg": "1d10", "extra": "+5"},
-                    {"weapon": "claws", "bonus": 7, "dmg": "2d8", "extra": "+5", "multiattack": 2}],
+        "attacks": [{"weapon": "beak", "bonus": 7, "dmg": "1d10", "extra": "+5", "follow": "claws"},
+                    {"weapon": "claws", "bonus": 7, "dmg": "2d8", "extra": "+5"}],
         "darkvision": 60,
     },
     "minotaur": {
@@ -748,14 +749,16 @@ MONSTERS: dict[str, dict] = {
         "speed": 20, "abilities": {"str": 13, "dex": 6, "con": 16, "int": 3, "wis": 6, "cha": 5},
         "traits": ["不死者坚韧（被降至0HP时体质豁免DC5+伤害成功则以1HP存活）"],
         "attacks": [{"weapon": "slam", "bonus": 3, "dmg": "1d6", "extra": "+1"}],
+        "save_prof": {"wis": True},
         "darkvision": 60,
     },
     "ghoul": {
         "name": "食尸鬼", "en": "Ghoul", "cr": 1, "xp": 200, "hp": "5d8", "ac": 12,
         "speed": 30, "abilities": {"str": 13, "dex": 15, "con": 10, "int": 7, "wis": 10, "cha": 6},
         "traits": ["麻痹之爪（命中后体质豁免DC10否则麻痹；精灵免疫）", "不死者"],
-        "attacks": [{"weapon": "claws", "bonus": 2, "dmg": "2d4", "extra": "+0", "onhit": "paralyze_dc10_con"},
+        "attacks": [{"weapon": "claws", "bonus": 2, "dmg": "2d4", "extra": "+0", "onhit": "paralyze_dc10_con", "follow": "bite"},
                     {"weapon": "bite", "bonus": 2, "dmg": "2d6", "extra": "+2"}],
+        "save_prof": {"wis": True},
         "darkvision": 60,
     },
     "wight": {
@@ -773,6 +776,7 @@ MONSTERS: dict[str, dict] = {
         "darkvision": 120,
         "poison_immune": True,
         "fire_resist": True,
+        "save_prof": {"dex": True},
     },
     "cambion": {
         "name": "坎比翁", "en": "Cambion", "cr": 5, "xp": 1800, "hp": "12d8+12", "ac": 17,
@@ -783,6 +787,7 @@ MONSTERS: dict[str, dict] = {
         "darkvision": 120,
         "fire_resist": True,
         "poison_resist": True,
+        "save_prof": {"con": True, "wis": True, "cha": True},
     },
     "bandit": {
         "name": "强盗", "en": "Bandit", "cr": 0.125, "xp": 25, "hp": "2d8+2", "ac": 12,
@@ -803,6 +808,7 @@ MONSTERS: dict[str, dict] = {
         "speed": 30, "abilities": {"str": 15, "dex": 16, "con": 14, "int": 14, "wis": 11, "cha": 14},
         "traits": ["勇敢（恐惧豁免优势）", "格挡（反应：AC+2 可能令近战攻击落空）"],
         "attacks": [{"weapon": "scimitar", "bonus": 5, "extra": "+3", "multiattack": 2}, {"weapon": "dagger", "bonus": 5, "extra": "+3"}],
+        "save_prof": {"str": True, "dex": True, "wis": True},
         "darkvision": 0,
     },
     "ash_mage": {
@@ -827,8 +833,8 @@ MONSTERS: dict[str, dict] = {
         "name": "巨獾", "en": "Giant Badger", "cr": 0.25, "xp": 50, "hp": "3d8", "ac": 13,
         "speed": 30, "abilities": {"str": 13, "dex": 10, "con": 15, "int": 2, "wis": 12, "cha": 5},
         "traits": ["敏锐嗅觉", "掘地"],
-        "attacks": [{"weapon": "bite", "bonus": 3, "dmg": "1d6", "extra": "+1"},
-                    {"weapon": "claws", "bonus": 3, "dmg": "2d4", "extra": "+1", "multiattack": 2}],
+        "attacks": [{"weapon": "bite", "bonus": 3, "dmg": "1d6", "extra": "+1", "follow": "claws"},
+                    {"weapon": "claws", "bonus": 3, "dmg": "2d4", "extra": "+1"}],
         "darkvision": 30, "beast": True,
     },
     "riding_horse": {
@@ -843,7 +849,7 @@ MONSTERS: dict[str, dict] = {
         "speed": 40, "abilities": {"str": 15, "dex": 14, "con": 18, "int": 2, "wis": 11, "cha": 7},
         "traits": ["敏锐嗅觉", "攀爬游泳"],
         "attacks": [{"weapon": "claws", "bonus": 4, "dmg": "1d8", "extra": "+2"},
-                    {"weapon": "bite", "bonus": 4, "dmg": "1d6", "extra": "+2", "multiattack": 2}],
+                    {"weapon": "bite", "bonus": 4, "dmg": "1d6", "extra": "+2", "follow": "claws"}],
         "darkvision": 60, "beast": True,
     },
 }

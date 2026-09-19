@@ -68,15 +68,33 @@ class TestASI(unittest.TestCase):
         c.feature_choices["asi"] = "str+2"             # 模拟已选
         self.assertNotIn("asi", c.pending_feature_choices())
 
-    def test_companion_default_takes_primary_stat(self):
+    def test_companion_default_takes_feat(self):
+        """同伴 4 级默认取推荐专长（施法者→战争施法者），不占 ASI。"""
         c = make_pc(name="缇娅", klass="sorcerer",
                     scores={"str": 8, "dex": 14, "con": 14, "int": 10, "wis": 10,
                             "cha": 15})
-        self.assertEqual(ASI_PREFERENCE["sorcerer"], "cha")
         c.level_up_to(4)
         c.apply_default_choices()
-        self.assertEqual(c.abilities["cha"], 17)       # 15 + ASI +2（人类种族加值不在魅力）
-        self.assertEqual(c.feature_choices["asi"], "cha+2")
+        self.assertEqual(c.feature_choices["feat"], "war_caster")
+        self.assertTrue(c.has_feature("war_caster"))
+        self.assertEqual(c.abilities["cha"], 15)       # 专长替换了 ASI
+
+    def test_lucky_feat_reroll_and_reset(self):
+        """专长幸运：d20 出 1~5 自动重骰（取高者），3 次/长休。"""
+        c = make_pc()
+        c.feature_choices["feat"] = "lucky"
+        rng = random.Random(1234)
+        used = 0
+        for _ in range(60):
+            before = c.feat_lucky_used
+            res = c._lucky_d20(rng, 0)
+            if c.feat_lucky_used > before:
+                used += 1
+                self.assertEqual(res.kept[0], max(res.rolls))  # 取更优者结算
+            self.assertLessEqual(c.feat_lucky_used, 3)
+        self.assertGreater(used, 0)
+        c.long_rest()
+        self.assertEqual(c.feat_lucky_used, 0)         # 长休重置
 
     def test_player_wizard_asi_via_flow(self):
         """升到 4 级后 pending 列表包含 asi，且选择后写入 feature_choices。"""
@@ -296,6 +314,36 @@ class TestDrainAndDeathRegression(unittest.TestCase):
         self.assertEqual(c.hp_cur, before)             # 尸体不被"回满"
 
 
+class TestOutOfCombatPotion(unittest.TestCase):
+    """探索阶段喝药：引擎代掷、扣库存、长休前也能回血。"""
+
+    def test_drink_potion_out_of_combat(self):
+        from ctrcg.game import state as G
+        from ctrcg.game.session import GameSession
+        from ctrcg.ui.cli import AutoUI
+        rng = random.Random(6)
+        hero = make_pc()
+        session = GameSession(G.GameState(hero, [hero], rng), AutoUI(), loop=None)
+        hero.take_damage(8)
+        hero.inventory["potion_greater_healing"] = 1
+        hero.inventory["healing_potion"] = 2
+        before_hp, before_cnt = hero.hp_cur, 3
+        session.drink_potion_out_of_combat()
+        self.assertGreater(hero.hp_cur, before_hp)
+        self.assertEqual(sum(hero.inventory.get(k, 0) for k in
+                             ("healing_potion", "potion_greater_healing")),
+                         before_cnt - 1)
+        self.assertEqual(hero.inventory["potion_greater_healing"], 0)  # 优先喝上乘
+
+    def test_drink_without_potion(self):
+        from ctrcg.game import state as G
+        from ctrcg.game.session import GameSession
+        from ctrcg.ui.cli import AutoUI
+        session = GameSession(G.GameState(make_pc(), [], random.Random(1)),
+                              AutoUI(), loop=None)
+        session.drink_potion_out_of_combat()           # 不抛异常即可
+
+
 class TestWildShapeDisplay(unittest.TestCase):
     """野变下状态栏显示兽形 HP（修复前显示 本体cur/兽形max 的错位）。"""
 
@@ -319,6 +367,78 @@ class TestWildShapeDisplay(unittest.TestCase):
         me = next(p for p in b["party"] if p["name"] == "芬恩")
         c2, m2 = me["hp"].split("/")
         self.assertEqual(c2, m2)
+
+
+class TestFeatCombat(unittest.TestCase):
+    """专长的战斗机制：大力攻击 −5/+10、巨武器大师追击、战争施法者专注优势。"""
+
+    def test_power_attack_math(self):
+        for feat, weapon in (("great_weapon_master", "greataxe"),
+                             ("sharpshooter", "longbow")):
+            pc = make_pc(name="重锤", klass="fighter", level=4)
+            pc.weapons = [weapon]
+            pc.feature_choices["feat"] = feat
+            gob = Monster("goblin", random.Random(1))
+            base, powered = None, None
+            for flag, store in ((False, "base"), (True, "powered")):
+                rng = random.Random(77)                  # 同 seed：骰运一致
+                enc = Encounter("t")
+                enc.rng = rng
+                enc.add(pc, "party")
+                m = Monster("goblin", rng)
+                enc.add(m, "enemy")
+                enc.begin(rng)
+                enc.begin_turn(pc)
+                r = enc.attack_action(pc, m, weapon, rng, power_attack=flag)
+                if store == "base":
+                    base = r
+                else:
+                    powered = r
+            self.assertIn("大力攻击", powered["detail"])
+            self.assertNotIn("大力攻击", base["detail"])
+
+    def test_gwm_bonus_attack_on_kill(self):
+        pc = make_pc(name="重锤", klass="fighter", level=4)
+        pc.weapons = ["greataxe"]
+        pc.feature_choices["feat"] = "great_weapon_master"
+        rng = random.Random(5)
+        enc = Encounter("t")
+        enc.rng = rng
+        enc.add(pc, "party")
+        m = Monster("goblin", rng)
+        enc.add(m, "enemy")
+        m2 = Monster("goblin", rng)
+        enc.add(m2, "enemy")
+        m.hp_cur = 1                                    # 一斧头砍倒
+        m.ac_base = 5                                   # 确保命中
+        enc.begin(rng)
+        enc.begin_turn(pc)
+        r = enc.attack_action(pc, m, "greataxe", rng)
+        self.assertIn("巨武器大师", r["detail"])
+        self.assertTrue(enc.bonus_used.get(pc.name))    # 附赠动作被消耗
+
+    def test_war_caster_concentration_advantage(self):
+        rng = random.Random(9)
+        enc = Encounter("t")
+        enc.rng = rng
+        caster = make_pc(name="缇娅", klass="sorcerer", level=4)
+        caster.feature_choices["feat"] = "war_caster"
+        enc.add(caster, "party")
+        m = Monster("goblin", rng)
+        enc.add(m, "enemy")
+        enc.begin(rng)
+        enc.cast(caster, "bless", [caster.name], rng)   # 专注法术
+        self.assertIsNotNone(caster.concentration)
+        m.ac_base = 5
+        for _ in range(4):                              # 直到命中一次（打断专注）
+            enc.begin_turn(m)
+            r = enc.attack_action(m, caster, None, rng)
+            if r.get("hit"):
+                break
+        save_events = [e for e in enc.rolls
+                       if e.get("label") == "专注豁免"]
+        self.assertTrue(save_events)
+        self.assertGreaterEqual(len(save_events[-1].get("rolls") or []), 2)
 
 
 class TestDeathSaveLoopRegression(unittest.TestCase):

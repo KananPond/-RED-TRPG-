@@ -103,6 +103,7 @@ class Character:
     death_fails: int = 0
     death_successes: int = 0
     hp_drain: int = 0                # 被生命汲取削减的 HP 上限（长休恢复）
+    feat_lucky_used: int = 0         # 专长"幸运"本长休已用次数（上限 3）
     # 施法
     slots_used: dict[int, int] = field(default_factory=dict)
     concentration: str | None = None
@@ -364,6 +365,8 @@ class Character:
             out.append(f"野变 {2 - self.wild_shape_used}/2")
         if D.RACES[self.race].get("mech", {}).get("breath_weapon"):
             out.append("龙息" + ("已用（短休恢复）" if self.breath_weapon_used else "可用"))
+        if self.has_feature("feat_lucky"):
+            out.append(f"幸运 {3 - self.feat_lucky_used}/3")
         if self.exhaustion:
             out.append(f"力竭{self.exhaustion}级（{D.EXHAUSTION_LEVELS.get(self.exhaustion, '')}）")
         return out or ["（无特殊资源）"]
@@ -425,6 +428,11 @@ class Character:
             "heightened": self.klass == "sorcerer" and lvl >= 3 and fc.get("metamagic_heightened"),
             "careful": self.klass == "sorcerer" and lvl >= 3 and fc.get("metamagic_careful"),
             "dark_blessing": self.klass == "warlock" and lvl >= 1 and fc.get("patron") == "fiend",
+            # —— 4 级专长（feature_choices["feat"]）——
+            "great_weapon_master": fc.get("feat") == "great_weapon_master",
+            "sharpshooter": fc.get("feat") == "sharpshooter",
+            "war_caster": fc.get("feat") == "war_caster",
+            "feat_lucky": fc.get("feat") == "lucky",
             "agonizing_blast": self.klass == "warlock" and lvl >= 2 and fc.get("invocation_1") == "agonizing",
             "devils_sight": self.klass == "warlock" and lvl >= 2 and
                            ("invocation_1" in fc and fc.get("invocation_1") == "devils_sight"
@@ -443,12 +451,18 @@ class Character:
 
     # ------------------------------------------------------------ 检定
     def _lucky_d20(self, rng: random.Random, advantage: int) -> DiceResult:
-        """d20 + 半身人幸运（出1重骰一次）。"""
+        """d20 + 半身人幸运（出1重骰）+ 专长"幸运"（1~5 重骰，3次/长休）。"""
         res = check_roll(rng, 0, advantage)
         if res.kept[0] == 1 and self.mech().get("lucky_reroll_1"):
             res2 = check_roll(rng, 0, advantage)
             res = DiceResult(expr="d20(幸运重骰)", rolls=res.rolls + res2.rolls,
                              kept=res2.kept, modifier=0, total=res2.kept[0])
+        if res.kept[0] <= 5 and self.has_feature("feat_lucky")                 and self.feat_lucky_used < 3:
+            self.feat_lucky_used += 1
+            res2 = check_roll(rng, 0, advantage)
+            if res2.kept[0] > res.kept[0]:
+                res = DiceResult(expr="d20(幸运专长重骰)", rolls=res.rolls + res2.rolls,
+                                 kept=res2.kept, modifier=0, total=res2.kept[0])
         return res
 
     def check(self, rng: random.Random, skill: str, dc: int,
@@ -673,6 +687,7 @@ class Character:
         self.innate_used.clear()
         self.relentless_used = False
         self.temp_hp = 0
+        self.feat_lucky_used = 0
         if self.hp_drain:                # 生命汲取的削减持续到长休结束（RAW）
             self.hp_max += self.hp_drain
             self.hp_drain = 0
@@ -813,9 +828,9 @@ class Character:
             elif need == "boon":
                 fc["boon"] = "blade"
             elif need == "asi":
-                ab = ASI_PREFERENCE.get(kls, "str")
-                self.apply_asi({ab: 2})
-                fc["asi"] = f"{ab}+2"
+                feat = D.FEAT_DEFAULT.get(kls, "lucky")
+                fc["feat"] = feat
+                fc["asi"] = f"feat:{feat}"
         self.feature_choices.setdefault("patron", "fiend")
 
     # ------------------------------------------------------------ 序列化
@@ -833,6 +848,7 @@ class Character:
             "hp_cur": self.hp_cur, "hp_max": self.hp_max,
             "hit_dice_used": self.hit_dice_used,
             "hp_drain": self.hp_drain,
+            "feat_lucky_used": self.feat_lucky_used,
             "slots_used": {str(k): v for k, v in self.slots_used.items()},
             "feature_choices": dict(self.feature_choices),
             "exhaustion": self.exhaustion,
@@ -852,6 +868,7 @@ class Character:
             hp_cur=d["hp_cur"], hp_max=d["hp_max"],
             hit_dice_used=d.get("hit_dice_used", 0),
             hp_drain=d.get("hp_drain", 0),
+            feat_lucky_used=d.get("feat_lucky_used", 0),
             slots_used={int(k): v for k, v in d.get("slots_used", {}).items()},
             feature_choices=dict(d.get("feature_choices", {})),
             exhaustion=d.get("exhaustion", 0),

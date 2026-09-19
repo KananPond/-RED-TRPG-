@@ -628,6 +628,26 @@ SPELLS: dict[str, dict] = {
     "dispel_magic":  {"name": "解除魔法", "en": "Dispel Magic", "level": 3, "classes": ["bard", "cleric", "druid", "paladin", "sorcerer", "warlock", "wizard"], "kind": "cleanse_magical", "range_ft": 120},
 }
 
+# ---------------------------------------------------------------- 专长（PHB 2014，4 级可选）
+# 本内容范围（1-5 级）精选 4 项由引擎机制实现的招牌专长
+FEATS: dict[str, dict] = {
+    "great_weapon_master": {"name": "巨武器大师",
+        "desc": "重型近战武器：攻击前可选 −5 命中/+10 伤害；重击或击倒目标后，可用附赠动作追加一次近战攻击。"},
+    "sharpshooter": {"name": "神射手",
+        "desc": "远程武器：攻击前可选 −5 命中/+10 伤害（本引擎无掩体/远距分档规则）。"},
+    "war_caster": {"name": "战争施法者",
+        "desc": "维持专注的体质豁免具有优势。"},
+    "lucky": {"name": "幸运",
+        "desc": "3 次/长休：d20 出 1~5 时自动重骰一次（攻击/豁免/检定均适用；以结果更优者结算）。"},
+}
+
+# 同伴 4 级专长的推荐默认
+FEAT_DEFAULT = {
+    "ranger": "sharpshooter", "paladin": "war_caster",
+    "bard": "war_caster", "cleric": "war_caster", "druid": "war_caster",
+    "sorcerer": "war_caster", "warlock": "war_caster", "wizard": "war_caster",
+}
+
 # 戏法 5 级伤害升级（SRD cantrip progression）
 CANTRIP_SCALED_DICE = {  # 戏法key → (基础骰数, 骰面)
     "fire_bolt": (1, 10), "ray_of_frost": (1, 8), "produce_flame": (1, 8),

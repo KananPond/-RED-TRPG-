@@ -427,7 +427,7 @@ def generate_module(app: AppState, spec: dict) -> tuple[Module | None, list[str]
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
     app: AppState  # 由 make_server 注入
-    server_version = "CTRCG/1.1"
+    server_version = "CTRCG/1.2"
 
     # ------------------------------------------------------------ 工具
     def _json(self, obj, status: int = 200) -> None:

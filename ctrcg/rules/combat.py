@@ -508,7 +508,8 @@ class Encounter:
     # ------------------------------------------------------------ 攻击
     def attack(self, att, target, weapon_key: str | None, rng: random.Random,
                bonus_action: bool = False, offhand: bool = False,
-               reckless: bool = False, precision_bonus: int = 0) -> dict:
+               reckless: bool = False, precision_bonus: int = 0,
+               power_attack: bool = False) -> dict:
         """低层单次攻击（借机攻击/反应使用；不消耗动作经济）。"""
         if isinstance(att, Monster):
             return self._monster_attack(att, target, weapon_key, rng,
@@ -519,7 +520,8 @@ class Encounter:
         if weapon is None:
             weapon = {"name": "徒手", "dmg": "1", "type": "bludgeoning", "props": [], "ranged": False}
         return self._pc_attack(att, target, weapon, rng, offhand=offhand,
-                               reckless=reckless, precision_bonus=precision_bonus)
+                               reckless=reckless, precision_bonus=precision_bonus,
+                               power_attack=power_attack)
 
     def extra_attack_count(self, att) -> int:
         if isinstance(att, Character) and att.extra_attack_level() \
@@ -531,11 +533,14 @@ class Encounter:
 
     def attack_action(self, att, target, weapon_key: str | None, rng: random.Random,
                       reckless: bool = False, smite_slot: int | None = None,
-                      maneuver: str | None = None) -> dict:
+                      maneuver: str | None = None,
+                      power_attack: bool = False) -> dict:
         """攻击动作：消耗动作；5 级 martial 获得额外攻击（可自动改目标）；
-        战斗大师可用战技（精确/推撞/恐吓，消耗战技骰）。"""
+        战斗大师可用战技（精确/推撞/恐吓，消耗战技骰）；
+        巨武器大师在重击/击倒后以附赠动作追加一次攻击。"""
         if not self.use_action(att):
             return {"ok": False, "error": "本回合动作已用完"}
+        gwm_trigger = False
         count = self.extra_attack_count(att)
         cur = target
         results = []
@@ -556,7 +561,15 @@ class Encounter:
             if cur is None:
                 break
             r = self.attack(att, cur, weapon_key, rng, reckless=reckless,
-                            precision_bonus=precision_bonus if i == 0 else 0)
+                            precision_bonus=precision_bonus if i == 0 else 0,
+                            power_attack=power_attack)
+            if r.get("ok") and r.get("hit"):
+                if r.get("crit"):
+                    gwm_trigger = True
+                if cur.hp_cur <= 0 or (isinstance(cur, Character)
+                                       and cur.in_wild_shape()
+                                       and cur.wild_shape["hp_cur"] <= 0):
+                    gwm_trigger = True
             if r.get("ok") and r.get("hit") and smite_slot and i == 0 \
                     and isinstance(att, Character):
                 sm = self.divine_smite(att, cur, smite_slot, rng,
@@ -571,6 +584,19 @@ class Encounter:
             total_dmg += r.get("damage", 0) or 0
             if isinstance(att, Monster):
                 break        # 怪物多重攻击已在内部结算
+        # 巨武器大师：重型近战武器重击/击倒 → 附赠动作追加一次攻击（PHB）
+        if isinstance(att, Character) and gwm_trigger and self.has_bonus(att):
+            wdata = D.WEAPONS.get(weapon_key or "", {})
+            if not wdata.get("ranged") and "heavy" in wdata.get("props", [])                     and att.has_feature("great_weapon_master"):
+                self.use_bonus(att)
+                foes = self.active_enemies() if att.side == "party"                     else self.active_party()
+                tgt = cur if (cur is not None and self.alive(cur))                     else (min(foes, key=lambda f: f.hp_cur) if foes else None)
+                if tgt is not None:
+                    r2 = self.attack(att, tgt, weapon_key, rng,
+                                     power_attack=power_attack)
+                    results.append("巨武器大师：附赠动作追加攻击——"
+                                   + r2.get("detail", ""))
+                    total_dmg += r2.get("damage", 0) or 0
         # 破阵者（游侠）：额外对一名贴身的不同目标攻击一次
         if (isinstance(att, Character) and att.has_feature("horde_breaker")
                 and total_dmg > 0):
@@ -687,7 +713,7 @@ class Encounter:
 
     def _pc_attack(self, att: Character, target, weapon: dict, rng: random.Random,
                    offhand: bool = False, reckless: bool = False,
-                   precision_bonus: int = 0) -> dict:
+                   precision_bonus: int = 0, power_attack: bool = False) -> dict:
         ranged = bool(weapon.get("ranged"))
         props = weapon.get("props", [])
         finesse = "finesse" in props or ranged
@@ -705,7 +731,16 @@ class Encounter:
         if att.fighting_style == "archery" and ranged:
             bonus_to_hit += 2
         debuff = self.attack_debuffs.pop(att.name, 0)   # 诛心之言等攻击减值
+        # 专长大力攻击（PHB）：巨武器大师（重型近战）/ 神射手（远程）
+        power_ok = power_attack and (
+            (not ranged and "heavy" in props
+             and att.has_feature("great_weapon_master"))
+            or (ranged and att.has_feature("sharpshooter")))
+        if power_ok:
+            bonus_to_hit -= 5
         adv, notes = self._advantage_for(att, target, ranged, reckless=reckless)
+        if power_ok:
+            notes.append("大力攻击（−5 命中/+10 伤害）")
         # 镜影术拦截（命中判定前；远程与近战均受保护）
         if self._mirror_image_block(target, rng, notes):
             detail = (f"{att.name} 以{weapon['name']}攻击 {target.name} —— "
@@ -751,6 +786,8 @@ class Encounter:
                 and "two_handed" not in props and not versatile):
             dmg_mod += 2
         dmg_mod += att.magic_damage_bonus
+        if power_ok:
+            dmg_mod += 10
         if COND_RAGING in att.conditions and not ranged:
             dmg_mod += 2
 
@@ -858,6 +895,13 @@ class Encounter:
             if res.kept[0] == 1 and att.mech().get("lucky_reroll_1"):
                 res2 = check_roll(rng, 0, adv)
                 res = res2
+            if res.kept[0] <= 5 and att.has_feature("feat_lucky")                     and att.feat_lucky_used < 3:
+                att.feat_lucky_used += 1
+                res2 = check_roll(rng, 0, adv)
+                if res2.kept[0] > res.kept[0]:
+                    res = DiceResult(expr="d20(幸运专长重骰)",
+                                     rolls=res.rolls + res2.rolls, kept=res2.kept,
+                                     modifier=0, total=res2.kept[0])
             return res
         if adv:
             a, b = rng.randint(1, 20), rng.randint(1, 20)
@@ -1212,7 +1256,8 @@ class Encounter:
         # 专注打断
         if isinstance(target, Character) and target.concentration and dmg > 0:
             dc = max(10, dmg // 2)
-            sv = target.save(rng, "con", dc)
+            sv = target.save(rng, "con", dc,
+                             advantage=1 if target.has_feature("war_caster") else 0)
             self._rec_save(target, sv, dc, "专注豁免")
             if not sv["success"]:
                 self.log.append(f"{target.name} 未能维持专注，[{target.concentration}] 中断。")

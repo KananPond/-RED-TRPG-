@@ -21,6 +21,7 @@ from ..rules.character import (
     COND_UNCONSCIOUS,
 )
 from ..rules.combat import Encounter, monster_choose_action
+from ..rules.dice import roll
 from . import state as G
 from .tools import GameTools
 
@@ -143,14 +144,17 @@ class GameSession:
         fc = c.feature_choices
         if need == "asi":
             abls = list(D.ABILITIES)
-            i = self.ui.choose("属性提升（4级）：单项 +2 或两项各 +1（每项上限 20）",
-                               [f"{D.ABILITIES[a]} +2" for a in abls] + ["两项属性各 +1"])
-            if i < len(abls):
-                ab = abls[i]
-                c.apply_asi({ab: 2})
-                fc["asi"] = f"{ab}+2"
-                self.ui.system_line(f"属性提升：{D.ABILITIES[ab]} +2（现为 {c.abilities[ab]}）")
-            else:
+            feat_keys = list(D.FEATS)
+            opts = ["属性提升：单项 +2", "属性提升：两项各 +1"] +                 [f"专长：{D.FEATS[k]['name']}——{D.FEATS[k]['desc']}" for k in feat_keys]
+            i = self.ui.choose("4 级：选择属性提升（ASI）或习得一项专长", opts)
+            if i == 0:
+                j = self.ui.choose("提升哪项属性？（+2，上限 20）",
+                                   [D.ABILITIES[a] for a in abls])
+                c.apply_asi({abls[j]: 2})
+                fc["asi"] = f"{abls[j]}+2"
+                self.ui.system_line(f"属性提升：{D.ABILITIES[abls[j]]} +2"
+                                    f"（现为 {c.abilities[abls[j]]}）")
+            elif i == 1:
                 first = self.ui.choose("第一项 +1", [D.ABILITIES[a] for a in abls])
                 second = self.ui.choose("第二项 +1",
                                         [D.ABILITIES[a] for a in abls if a != abls[first]])
@@ -159,6 +163,11 @@ class GameSession:
                 fc["asi"] = "+".join(f"{a}+1" for a in pairs)
                 self.ui.system_line("属性提升：" + "、".join(
                     f"{D.ABILITIES[a]} +1（现为 {c.abilities[a]}）" for a in pairs))
+            else:
+                key = feat_keys[i - 2]
+                fc["feat"] = key
+                fc["asi"] = f"feat:{key}"
+                self.ui.system_line(f"专长习得：{D.FEATS[key]['name']}！{D.FEATS[key]['desc']}")
         elif need == "expertise":
             picks = sorted(c.skills)
             pairs = [(picks[i], picks[j]) for i in range(len(picks))
@@ -309,6 +318,8 @@ class GameSession:
             elif scene["next"]:
                 base.append("前往下一场景")
             base += ["队伍短休", "队伍长休", "查看状态", "查看背包", "保存游戏", "退出游戏"]
+            if self.best_potion(self.state.player)                     and self.state.player.hp_cur < self.state.player.hp_max:
+                base.insert(2, "喝药水（回复生命）")
             opts = options + base
             idx = self.ui.choose(f"—— {scene['location']} —— 你要做什么？", opts)
             if idx < len(options):
@@ -345,6 +356,8 @@ class GameSession:
                 self.party_short_rest()
             elif choice == "队伍长休":
                 self.party_long_rest()
+            elif choice == "喝药水（回复生命）":
+                self.drink_potion_out_of_combat()
             elif choice == "查看状态":
                 self.ui.raw(self.state.party_snapshot())
             elif choice == "查看背包":
@@ -357,7 +370,7 @@ class GameSession:
 
     # ================================================================ 探索：AI 模式
     def ai_explore_turns(self, scene: dict) -> str:
-        self.ui.system_line("输入行动或对白；/状态 /背包 /短休 /长休 /保存 /退出 为指令。")
+        self.ui.system_line("输入行动或对白；/状态 /背包 /短休 /长休 /喝药 /保存 /退出 为指令。")
         while True:
             text = self.ui.free_input("\n你> ")
             if not text:
@@ -370,6 +383,9 @@ class GameSession:
                 continue
             if text == "/短休":
                 self.party_short_rest()
+                continue
+            if text == "/喝药":
+                self.drink_potion_out_of_combat()
                 continue
             if text == "/长休":
                 self.party_long_rest()
@@ -809,6 +825,13 @@ class GameSession:
                                  "推撞攻击（+1d8 伤害并推开5尺）",
                                  "恐吓攻击（+1d8 伤害，感知豁免否则恐惧）"])
             maneuver = (None, "precision", "pushing", "menacing")[mi]
+        power = False
+        winfo = D.WEAPONS.get(weapon, {})
+        if ((not winfo.get("ranged") and "heavy" in winfo.get("props", [])
+                and pc.has_feature("great_weapon_master"))
+                or (winfo.get("ranged") and pc.has_feature("sharpshooter"))):
+            power = self.ui.choose("大力攻击？（−5 命中 / +10 伤害）",
+                                   ["不使用", "使用"]) == 1
         smite_slot = None
         if pc.has_feature("divine_smite") and any(v > 0 for v in pc.spell_slots().values()):
             avail = [lv for lv in (3, 2, 1) if pc.spell_slots().get(lv, 0) > 0]
@@ -819,7 +842,8 @@ class GameSession:
                     smite_slot = avail[si - 1]
         mark = (len(enc.log), len(enc.rolls))
         enc.attack_action(pc, target, weapon, self.state.rng,
-                          reckless=reckless, smite_slot=smite_slot, maneuver=maneuver)
+                          reckless=reckless, smite_slot=smite_slot, maneuver=maneuver,
+                          power_attack=power)
         self._flush_enc(enc, mark)
         return True
 
@@ -1214,6 +1238,20 @@ class GameSession:
         w = D.WEAPONS.get(wkey, {})
         return (f"{w.get('name', wkey)}（{w.get('dmg', '?')}"
                 f"{'，远程' if w.get('ranged') else ''}）")
+
+    def drink_potion_out_of_combat(self) -> None:
+        """探索阶段喝药（引擎代掷回复骰，药效最强者优先）。"""
+        pc = self.state.player
+        key = self.best_potion(pc)
+        if not key:
+            self.ui.system_line("背包里没有药水。")
+            return
+        expr = D.ITEMS[key].get("heal", "0")
+        r = roll(self.state.rng, expr)
+        amt = pc.heal(r.total)
+        pc.inventory[key] -= 1
+        self.ui.system_line(f"你喝下{D.ITEMS[key]['name']}{r.describe()} → "
+                            f"回复 {amt} 点（HP {pc.hp_cur}/{pc.hp_max}）。")
 
     @staticmethod
     def best_potion(pc: Character) -> str | None:

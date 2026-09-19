@@ -392,6 +392,54 @@ class TestXpLevelUpChoices(unittest.TestCase):
         self.assertTrue(any("巨武器大师" in ln for ln in c.resource_lines()))
 
 
+class TestShop(unittest.TestCase):
+    """商店：金币消费出口（购买扣款、库存入包、金币不足拦截）。"""
+
+    def _shop_ui(self, picks):
+        from ctrcg.ui.cli import ConsoleUI
+        calls = {"i": 0}
+
+        class QueueUI(ConsoleUI):
+            def choose(self, prompt, options):
+                idx = picks[min(calls["i"], len(picks) - 1)]
+                calls["i"] += 1
+                return idx
+
+        return QueueUI()
+
+    def _session(self, ui, gold=200):
+        import ctrcg.game.state as G
+        from ctrcg.game.session import GameSession
+        rng = random.Random(3)
+        hero = make_pc(name="凯尔")
+        hero.gold = gold
+        return GameSession(G.GameState(hero, [hero], rng), ui, loop=None), hero
+
+    def test_buy_and_leave(self):
+        # 货摊 4 项：买治疗药水(50) → 买火把(5) → 离开
+        session, hero = self._session(self._shop_ui([0, 3, 4]), gold=200)
+        p0 = hero.inventory.get("healing_potion", 0)
+        t0 = hero.inventory.get("torch", 0)
+        session.open_shop()
+        self.assertEqual(hero.gold, 145)
+        self.assertEqual(hero.inventory.get("healing_potion", 0), p0 + 1)
+        self.assertEqual(hero.inventory.get("torch", 0), t0 + 1)
+
+    def test_insufficient_gold_blocked(self):
+        # 金币 10：买上乘药水(150)被拒 → 继续尝试 → 离开
+        session, hero = self._session(self._shop_ui([1, 1, 4]), gold=10)
+        session.open_shop()
+        self.assertEqual(hero.gold, 10)
+        self.assertNotIn("potion_greater_healing", hero.inventory)
+
+    def test_healer_kit_bundle(self):
+        # 医疗包一整包 = 10 次用次
+        session, hero = self._session(self._shop_ui([2, 4]), gold=200)
+        session.open_shop()
+        self.assertEqual(hero.gold, 100)
+        self.assertEqual(hero.inventory.get("healer_kit"), 10)
+
+
 class TestOutOfCombatPotion(unittest.TestCase):
     """探索阶段喝药：引擎代掷、扣库存、长休前也能回血。"""
 

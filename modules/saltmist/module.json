@@ -245,7 +245,8 @@
       ],
       "encounter": null,
       "next": "wreck_beach",
-      "milestone": 0
+      "milestone": 0,
+      "shop": true
     },
     {
       "id": "wreck_beach",

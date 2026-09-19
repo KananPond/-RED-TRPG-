@@ -303,6 +303,7 @@ SCENES: list[dict] = [
             "每人25金币，替松溪镇拔掉这颗钉子。'"
         ),
         "explore": "可以在镇上打探消息：醉獾酒馆、铁匠铺、被查封的商行。",
+        "shop": True,
         "skills": [
             {"skill": "insight", "dc": 12,
              "success": "你注意到商会驻点的'会计'丝莉丝笑得太标准了——她的眼神根本没有落在人身上。",
@@ -324,6 +325,7 @@ SCENES: list[dict] = [
              "success": "波姆一咬牙画出了柳井密室的入口和守卫轮值：'这么说，我可什么都没说！'",
              "fail": "波姆缩了缩脖子：'知道的越多，死得越快……你们自己当心吧。'"},
         ],
+        "shop": True,
         "encounter": "e_street", "next": "well_hideout", "milestone": 0,
         "encounter_note": "离开酒馆时，黑鸦帮的暗哨在夜巷里动手了。",
     },

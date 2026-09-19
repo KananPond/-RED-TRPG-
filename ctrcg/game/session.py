@@ -27,6 +27,14 @@ from .tools import GameTools
 
 SAVE_FILE = "saves/game.json"
 
+# 商店价目（scene.shop = true 时可购买；金币有了消费出口）
+SHOP_GOODS = [
+    ("healing_potion", 50),
+    ("potion_greater_healing", 150),
+    ("healer_kit", 100),          # 一整包 = 10 次用次
+    ("torch", 5),
+]
+
 # 战斗结束后清除的临时战斗状态（中毒/恐惧等按规则延续到战斗外）；
 # 倒地/被擒抱/标亮等战斗内定位状态离场即消失（换场自然起身/脱离）
 _POST_COMBAT_CLEAR = {COND_SHIELDED, "burning", "mirror_image", COND_INVISIBLE,
@@ -326,6 +334,8 @@ class GameSession:
             base += ["队伍短休", "队伍长休", "查看状态", "查看背包", "保存游戏", "退出游戏"]
             if self.best_potion(self.state.player)                     and self.state.player.hp_cur < self.state.player.hp_max:
                 base.insert(2, "喝药水（回复生命）")
+            if scene.get("shop"):
+                base.insert(2, "商店（购买补给）")
             opts = options + base
             idx = self.ui.choose(f"—— {scene['location']} —— 你要做什么？", opts)
             if idx < len(options):
@@ -364,6 +374,8 @@ class GameSession:
                 self.party_long_rest()
             elif choice == "喝药水（回复生命）":
                 self.drink_potion_out_of_combat()
+            elif choice == "商店（购买补给）":
+                self.open_shop()
             elif choice == "查看状态":
                 self.ui.raw(self.state.party_snapshot())
             elif choice == "查看背包":
@@ -376,7 +388,7 @@ class GameSession:
 
     # ================================================================ 探索：AI 模式
     def ai_explore_turns(self, scene: dict) -> str:
-        self.ui.system_line("输入行动或对白；/状态 /背包 /短休 /长休 /喝药 /保存 /退出 为指令。")
+        self.ui.system_line("输入行动或对白；/状态 /背包 /短休 /长休 /喝药 /购买 /保存 /退出 为指令。")
         while True:
             text = self.ui.free_input("\n你> ")
             if not text:
@@ -392,6 +404,13 @@ class GameSession:
                 continue
             if text == "/喝药":
                 self.drink_potion_out_of_combat()
+                continue
+            if text == "/购买":
+                scene = self.module.scene_by_id(self.state.scene_id) or {}
+                if scene.get("shop"):
+                    self.open_shop()
+                else:
+                    self.ui.system_line("这里没有商队。")
                 continue
             if text == "/长休":
                 self.party_long_rest()
@@ -1244,6 +1263,26 @@ class GameSession:
         w = D.WEAPONS.get(wkey, {})
         return (f"{w.get('name', wkey)}（{w.get('dmg', '?')}"
                 f"{'，远程' if w.get('ranged') else ''}）")
+
+    def open_shop(self) -> None:
+        """商店：金币购买补给（scene.shop = true 的场景开放）。"""
+        pc = self.state.player
+        while True:
+            self.ui.raw(f"你摸了摸钱袋：{pc.gold} 金币。")
+            opts = [f"{D.ITEMS[k]['name']}——{D.ITEMS[k]['desc']}（{price} 金币）"
+                    for k, price in SHOP_GOODS] + ["（离开货摊）"]
+            i = self.ui.choose("商队货摊——要买点什么？", opts)
+            if i >= len(SHOP_GOODS):
+                return
+            key, price = SHOP_GOODS[i]
+            if pc.gold < price:
+                self.ui.system_line("金币不够，掌柜摇了摇头。")
+                continue
+            pc.gold -= price
+            pc.inventory[key] = pc.inventory.get(key, 0) +                 (10 if key == "healer_kit" else 1)
+            self.ui.system_line(f"买下{D.ITEMS[key]['name']}"
+                                f"（−{price} 金币，余 {pc.gold}）。")
+            self.autosave()
 
     def drink_potion_out_of_combat(self) -> None:
         """探索阶段喝药（引擎代掷回复骰，药效最强者优先）。"""

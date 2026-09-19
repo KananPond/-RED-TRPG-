@@ -401,7 +401,8 @@
       ],
       "encounter": null,
       "next": "inn_rumors",
-      "milestone": 0
+      "milestone": 0,
+      "shop": true
     },
     {
       "id": "inn_rumors",
@@ -420,7 +421,8 @@
       "encounter": "e_street",
       "next": "well_hideout",
       "milestone": 0,
-      "encounter_note": "离开酒馆时，黑鸦帮的暗哨在夜巷里动手了。"
+      "encounter_note": "离开酒馆时，黑鸦帮的暗哨在夜巷里动手了。",
+      "shop": true
     },
     {
       "id": "well_hideout",

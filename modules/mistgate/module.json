@@ -106,7 +106,8 @@
       "next": "stable_ambush",
       "milestone": 200,
       "outro": "夜深了，炉火塌成一堆红炭。你正要去马厩查看坐骑，忽听得外面马匹惊嘶——",
-      "encounter_note": "教学场景：让玩家熟悉检定按钮与编年史节奏。"
+      "encounter_note": "教学场景：让玩家熟悉检定按钮与编年史节奏。",
+      "shop": true
     },
     {
       "id": "stable_ambush",

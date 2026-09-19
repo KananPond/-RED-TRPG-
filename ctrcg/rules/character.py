@@ -41,6 +41,13 @@ COND_RAGING = "raging"
 COND_SLEEP = "asleep"
 COND_GUIDED = "guided"             # 引导射击：对它的下一次攻击有优势
 
+# 4 级 ASI 的同伴默认提升属性（取主攻击属性；玩家在交互菜单自选）
+ASI_PREFERENCE = {
+    "barbarian": "str", "bard": "cha", "cleric": "wis", "druid": "wis",
+    "fighter": "str", "monk": "dex", "paladin": "str", "ranger": "dex",
+    "rogue": "dex", "sorcerer": "cha", "warlock": "cha", "wizard": "int",
+}
+
 # 带时限的状态（回合结束时由战斗引擎计时）
 TIMED_CONDITIONS: dict[str, dict] = {
     COND_POISONED:   {"rounds": 10},
@@ -95,6 +102,7 @@ class Character:
     exhaustion: int = 0
     death_fails: int = 0
     death_successes: int = 0
+    hp_drain: int = 0                # 被生命汲取削减的 HP 上限（长休恢复）
     # 施法
     slots_used: dict[int, int] = field(default_factory=dict)
     concentration: str | None = None
@@ -183,7 +191,12 @@ class Character:
                 and self.feature_choices.get("origin") == "draconic")
 
     def mech(self) -> dict:
-        return D.race_mech(self.race)
+        out = D.race_mech(self.race)
+        # 持有型魔法物品的机制键（如余烬护符的火焰抗性）：背包中数量>0 即生效
+        for item, n in self.inventory.items():
+            if n and n > 0:
+                out.update(D.ITEMS.get(item, {}).get("mech", {}))
+        return out
 
     # ------------------------------------------------------------ 数值
     def mod(self, ability: str) -> int:
@@ -638,6 +651,8 @@ class Character:
         return msg
 
     def long_rest(self) -> str:
+        if "dead" in self.conditions:
+            return f"{self.name} 已死亡——长休无法让逝者归来。"
         self.hp_cur = self.hp_max
         self.recover_hit_dice_long()
         self.slots_used.clear()
@@ -658,6 +673,9 @@ class Character:
         self.innate_used.clear()
         self.relentless_used = False
         self.temp_hp = 0
+        if self.hp_drain:                # 生命汲取的削减持续到长休结束（RAW）
+            self.hp_max += self.hp_drain
+            self.hp_drain = 0
         if self.exhaustion > 0:
             self.exhaustion -= 1
         return f"{self.name} 长休完毕：生命 {self.hp_max}，法术位与资源全部恢复。"
@@ -669,7 +687,9 @@ class Character:
 
     # ------------------------------------------------------------ 升级
     def level_up_to(self, target: int) -> str:
-        """里程碑升级：直接升至目标等级并回复全满。"""
+        """里程碑升级：直接升至目标等级并回复全满。死者不升级。"""
+        if "dead" in self.conditions:
+            return ""
         msgs = []
         while self.level < target:
             self._level_up_static()
@@ -680,6 +700,8 @@ class Character:
         return "；".join(msgs)
 
     def gain_xp(self, amount: int) -> str:
+        if "dead" in self.conditions:
+            return ""
         self.xp += amount
         msgs = []
         while self.level < D.MAX_LEVEL and self.xp >= D.XP_TABLE[self.level + 1]:
@@ -701,10 +723,28 @@ class Character:
         self.level += 1
         self.slots_used.clear()
 
+    def apply_asi(self, boosts: dict[str, int]) -> str:
+        """属性提升（PHB 4 级 ASI）：单项 +2 或两项各 +1，每项上限 20。
+
+        本内容范围（1-5 级）不引入专长牌库，专长按官方可选规则暂缓。
+        """
+        vals = sorted(boosts.values(), reverse=True)
+        if vals != [2] and vals != [1, 1]:
+            raise ValueError("属性提升必须是单项 +2 或两项各 +1")
+        parts = []
+        for ab, v in boosts.items():
+            if ab not in D.ABILITIES:
+                raise ValueError(f"未知属性 {ab}")
+            self.abilities[ab] = min(20, self.abilities[ab] + v)
+            parts.append(f"{D.ABILITIES[ab]}+{v}")
+        return "，".join(parts)
+
     def pending_feature_choices(self) -> list[str]:
         """升级后待选的职业特性（由 UI 询问玩家；同伴走默认值）。"""
         out = []
         lvl, kls = self.level, self.klass
+        if lvl >= 4 and "asi" not in self.feature_choices:
+            out.append("asi")                       # PHB：4 级属性提升（或专长）
         if lvl >= 1 and kls == "rogue" and "expertise" not in self.feature_choices:
             out.append("expertise")
         if lvl >= 3 and kls == "bard" and "expertise" not in self.feature_choices:
@@ -772,6 +812,10 @@ class Character:
                 fc["invocation_2"] = "devils_sight"
             elif need == "boon":
                 fc["boon"] = "blade"
+            elif need == "asi":
+                ab = ASI_PREFERENCE.get(kls, "str")
+                self.apply_asi({ab: 2})
+                fc["asi"] = f"{ab}+2"
         self.feature_choices.setdefault("patron", "fiend")
 
     # ------------------------------------------------------------ 序列化
@@ -788,6 +832,7 @@ class Character:
             "inventory": dict(self.inventory), "gold": self.gold,
             "hp_cur": self.hp_cur, "hp_max": self.hp_max,
             "hit_dice_used": self.hit_dice_used,
+            "hp_drain": self.hp_drain,
             "slots_used": {str(k): v for k, v in self.slots_used.items()},
             "feature_choices": dict(self.feature_choices),
             "exhaustion": self.exhaustion,
@@ -806,6 +851,7 @@ class Character:
             inventory=dict(d["inventory"]), gold=d.get("gold", 0),
             hp_cur=d["hp_cur"], hp_max=d["hp_max"],
             hit_dice_used=d.get("hit_dice_used", 0),
+            hp_drain=d.get("hp_drain", 0),
             slots_used={int(k): v for k, v in d.get("slots_used", {}).items()},
             feature_choices=dict(d.get("feature_choices", {})),
             exhaustion=d.get("exhaustion", 0),

@@ -66,6 +66,10 @@ class GameSession:
         self.ui.raw(f"模式：{mode}")
         self.ui.raw(self.module.setting)
         self.enter_scene(self.state.scene_id)
+        # 开局结算：模组起始等级 > 1 或职业特性尚有待选时，玩家交互补选
+        # （同伴在建队时已应用推荐默认，此处通常只询问玩家）
+        for c in self.state.party():
+            self._resolve_level_up_choices(c)
         try:
             while True:
                 scene = self.module.scene_by_id(self.state.scene_id)
@@ -137,7 +141,25 @@ class GameSession:
 
     def _ask_feature_choice(self, c: Character, need: str) -> None:
         fc = c.feature_choices
-        if need == "expertise":
+        if need == "asi":
+            abls = list(D.ABILITIES)
+            i = self.ui.choose("属性提升（4级）：单项 +2 或两项各 +1（每项上限 20）",
+                               [f"{D.ABILITIES[a]} +2" for a in abls] + ["两项属性各 +1"])
+            if i < len(abls):
+                ab = abls[i]
+                c.apply_asi({ab: 2})
+                fc["asi"] = f"{ab}+2"
+                self.ui.system_line(f"属性提升：{D.ABILITIES[ab]} +2（现为 {c.abilities[ab]}）")
+            else:
+                first = self.ui.choose("第一项 +1", [D.ABILITIES[a] for a in abls])
+                second = self.ui.choose("第二项 +1",
+                                        [D.ABILITIES[a] for a in abls if a != abls[first]])
+                pairs = {abls[first]: 1, abls[second]: 1}
+                c.apply_asi(pairs)
+                fc["asi"] = "+".join(f"{a}+1" for a in pairs)
+                self.ui.system_line("属性提升：" + "、".join(
+                    f"{D.ABILITIES[a]} +1（现为 {c.abilities[a]}）" for a in pairs))
+        elif need == "expertise":
             picks = sorted(c.skills)
             pairs = [(picks[i], picks[j]) for i in range(len(picks))
                      for j in range(i + 1, len(picks))]
@@ -504,7 +526,10 @@ class GameSession:
                     self.ui.system_line(
                         f"{helper.name} 反复按压止血，终于稳住了 {d.name} 的伤势。")
             else:
-                while "dead" not in d.conditions and COND_STABLE not in d.conditions:
+                # RAW：自然 20 复活（1 HP、恢复意识）后不再掷死亡豁免——
+                # 循环条件须包含 hp_cur <= 0，否则复活者会永远空转
+                while "dead" not in d.conditions and COND_STABLE not in d.conditions \
+                        and d.hp_cur <= 0:
                     ds = d.death_save_turn(self.state.rng)
                     if ds:
                         self.ui.roll_event({
@@ -603,13 +628,15 @@ class GameSession:
         downed = [a for a in enc.party()
                   if isinstance(a, Character) and a.hp_cur <= 0
                   and "dead" not in a.conditions]
-        if downed and pc.inventory.get("healing_potion", 0) > 0:
+        if downed and self.best_potion(pc):
             opts.insert(opts.index("（结束动作阶段）"), "喂药（救起倒地队友）")
+        if downed and pc.inventory.get("healer_kit", 0) > 0:
+            opts.insert(opts.index("（结束动作阶段）"), "医疗包（稳定倒地队友）")
         if any(isinstance(a, Character) and a.hp_cur <= 0 and "dead" not in a.conditions
                and "stable" not in a.conditions for a in downed):
             opts.insert(opts.index("（结束动作阶段）"), "稳定伤势（医药 DC10）")
-        if pc.inventory.get("healing_potion", 0) > 0:
-            opts.insert(opts.index("（结束动作阶段）"), "喝治疗药水")
+        if self.best_potion(pc):
+            opts.insert(opts.index("（结束动作阶段）"), "喝药水")
         if pc.has_feature("action_surge") and not pc.action_surge_used:
             opts.insert(0, "动作如潮（额外动作）")
         if pc.mech().get("breath_weapon"):
@@ -714,7 +741,7 @@ class GameSession:
             flush()
             return True
         if choice.startswith("喝"):
-            r = enc.use_item(pc, "healing_potion")
+            r = enc.use_item(pc, self.best_potion(pc))
             if not r.get("ok"):
                 self.ui.system_line(r.get("error", "失败"))
                 return False
@@ -725,7 +752,18 @@ class GameSession:
                       if isinstance(a, Character) and a.hp_cur <= 0
                       and "dead" not in a.conditions]
             ti = self.ui.choose("喂药给谁？", [a.name for a in downed])
-            r = enc.use_item(pc, "healing_potion", downed[ti])
+            r = enc.use_item(pc, self.best_potion(pc), downed[ti])
+            if not r.get("ok"):
+                self.ui.system_line(r.get("error", "失败"))
+                return False
+            flush()
+            return True
+        if choice.startswith("医疗包"):
+            downed = [a for a in enc.party()
+                      if isinstance(a, Character) and a.hp_cur <= 0
+                      and "dead" not in a.conditions and "stable" not in a.conditions]
+            ti = self.ui.choose("用医疗包稳定谁？", [a.name for a in downed])
+            r = enc.use_item(pc, "healer_kit", downed[ti])
             if not r.get("ok"):
                 self.ui.system_line(r.get("error", "失败"))
                 return False
@@ -990,68 +1028,141 @@ class GameSession:
         if not foes:
             return
         weakest = min(foes, key=lambda f: f.hp_cur)
-        hurt_ally = min((a for a in enc.active_party() if a.hp_cur < a.hp_max),
+        # 救援决策要看全队伍（含倒地/稳定者）；增益与激励只给存活者
+        all_party = [a for a in enc.party() if isinstance(a, Character)]
+        allies = [a for a in all_party if enc.alive(a)]
+        hurt_ally = min((a for a in all_party if a.hp_cur < a.hp_max),
                         key=lambda a: a.hp_cur, default=None)
+        downed = [a for a in all_party
+                  if a.hp_cur <= 0 and "dead" not in a.conditions
+                  and "stable" not in a.conditions]
         slots = pc.spell_slots()
-        # --- 附赠动作先行（治疗真言/印记/狂暴/回气）
-        if pc.klass == "cleric" and hurt_ally and hurt_ally.hp_cur < hurt_ally.hp_max * 0.6 \
-                and slots.get(1, 0) > 0:
-            enc.cast(pc, "healing_word", [hurt_ally.name], self.state.rng)
-            return
-        if pc.klass == "fighter" and pc.hp_cur < pc.hp_max * 0.4 and not pc.second_wind_used:
-            enc.second_wind(pc, self.state.rng)
-            # 回气是附赠动作，还可继续攻击
-        elif pc.klass == "barbarian" and pc.rage_left() and COND_RAGING not in pc.conditions:
+        rng = self.state.rng
+        kls = pc.klass
+        has_slot = bool(slots)
+
+        # --- 附赠动作先行（治疗真言/激励/印记/回气/狂暴/噬魂咒）
+        if kls in ("cleric", "druid") and hurt_ally \
+                and hurt_ally.hp_cur < hurt_ally.hp_max * 0.6 and slots.get(1, 0) > 0:
+            enc.cast(pc, "healing_word", [hurt_ally.name], rng)
+        elif kls == "bard" and allies and enc.bardic_inspiration(
+                pc, min(allies, key=lambda a: a.hp_cur)).get("ok"):
+            pass
+        elif kls == "fighter" and pc.hp_cur < pc.hp_max * 0.4 and not pc.second_wind_used:
+            enc.second_wind(pc, rng)
+        elif kls == "barbarian" and pc.rage_left() and COND_RAGING not in pc.conditions:
             enc.start_rage(pc)
-        elif pc.klass == "ranger" and slots.get(1, 0) > 0 \
+        elif kls == "ranger" and slots.get(1, 0) > 0 \
                 and pc.concentration != "Hunter's Mark":
-            enc.cast(pc, "hunters_mark", [weakest.name], self.state.rng)
+            enc.cast(pc, "hunters_mark", [weakest.name], rng)
+        elif kls == "warlock" and has_slot and not pc.concentration:
+            enc.cast(pc, "hex", [weakest.name], rng)
+        elif kls == "paladin" and hurt_ally and hurt_ally.hp_cur < hurt_ally.hp_max * 0.4 \
+                and pc.lay_on_hands_left() >= 5:
+            enc.lay_on_hands(pc, hurt_ally, min(10, pc.lay_on_hands_left()))
+        # --- 倒地队友：喂药拉起（治疗者法术位耗尽后的兜底）
+        if downed and self.best_potion(pc):
+            enc.use_item(pc, self.best_potion(pc), downed[0])
             return
+        # --- 德鲁伊：野变（占用动作，变身当回合结束）
+        if kls == "druid" and pc.level >= 2 and pc.wild_shape_used < 2 \
+                and not pc.in_wild_shape() and pc.hp_cur >= pc.hp_max * 0.5 \
+                and len(foes) >= 1:
+            form = "black_bear" if pc.level >= 4 else "wolf"
+            if enc.wild_shape(pc, form).get("ok"):
+                return
         # --- 动作
-        downed = [a for a in enc.active_party()
-                  if isinstance(a, Character) and a.hp_cur <= 0
-                  and "dead" not in a.conditions and "stable" not in a.conditions]
-        if downed:
-            if pc.inventory.get("healing_potion", 0) > 0:
-                enc.use_item(pc, "healing_potion", downed[0])
-                return
-            if not (hurt_ally and hurt_ally.hp_cur <= 0):
-                enc.stabilize(pc, downed[0])
-                return
-        if pc.klass == "cleric":
+        if downed and not (hurt_ally and hurt_ally.hp_cur <= 0):
+            enc.stabilize(pc, downed[0])
+            return
+        if kls == "cleric":
             if slots.get(1, 0) > 0 and not any(
-                    COND_BLESSED in a.conditions for a in enc.active_party()
-                    if isinstance(a, Character)):
-                allies = enc.active_party()[:3]
-                enc.cast(pc, "bless", [a.name for a in allies], self.state.rng)
+                    COND_BLESSED in a.conditions for a in allies):
+                enc.cast(pc, "bless", [a.name for a in allies[:3]], rng)
                 return
+            # （祝福目标仅取存活者，见 allies 定义）
             if "sacred_flame" in pc.class_spells():
-                enc.cast(pc, "sacred_flame", [weakest.name], self.state.rng)
+                enc.cast(pc, "sacred_flame", [weakest.name], rng)
                 return
-            enc.attack_action(pc, weakest, pc.weapons[0], self.state.rng)
+            enc.attack_action(pc, weakest, pc.weapons[0], rng)
             return
-        if pc.klass == "wizard":
-            if pc.hp_cur < pc.hp_max * 0.4 and slots.get(1, 0) > 0:
-                enc.cast(pc, "shield", [], self.state.rng)
+        if kls == "druid":
+            if pc.in_wild_shape():
+                enc.attack_action(pc, weakest, None, rng)   # 兽形天然武器
                 return
-            if len(foes) >= 2 and slots.get(1, 0) > 0:
-                enc.cast(pc, "magic_missile", [weakest.name], self.state.rng)
+            if len(foes) >= 3 and slots.get(1, 0) > 0:
+                enc.cast(pc, "entangle", [f.name for f in foes], rng)
                 return
-            cantrip = "fire_bolt" if "fire_bolt" in pc.class_spells() else pc.class_spells()[0]
-            enc.cast(pc, cantrip, [weakest.name], self.state.rng)
+            if "thorn_whip" in pc.class_spells():
+                enc.cast(pc, "thorn_whip", [weakest.name], rng)
+                return
+            enc.attack_action(pc, weakest, pc.weapons[0], rng)
             return
-        if pc.klass == "ranger":
+        if kls == "wizard" or kls == "sorcerer":
+            if pc.hp_cur < pc.hp_max * 0.4 and (slots.get(1, 0) > 0 or has_slot):
+                enc.cast(pc, "shield", [], rng)
+                return
+            if kls == "sorcerer" and len(foes) >= 3 and slots.get(3, 0) > 0 \
+                    and "fireball" in pc.class_spells():
+                enc.cast(pc, "fireball", [f.name for f in foes], rng)
+                return
+            if len(foes) >= 2 and slots.get(2, 0) > 0 \
+                    and "scorching_ray" in pc.class_spells():
+                enc.cast(pc, "scorching_ray", [weakest.name], rng)
+                return
+            if len(foes) >= 2 and slots.get(1, 0) > 0 \
+                    and "magic_missile" in pc.class_spells():
+                enc.cast(pc, "magic_missile", [weakest.name], rng)
+                return
+            cantrips = [s for s in ("fire_bolt", "ray_of_frost", "sacred_flame")
+                        if s in pc.class_spells()]
+            enc.cast(pc, cantrips[0] if cantrips else pc.class_spells()[0],
+                     [weakest.name], rng)
+            return
+        if kls == "warlock":
+            enc.cast(pc, "eldritch_blast", [weakest.name], rng)
+            return
+        if kls == "bard":
+            if "vicious_mockery" in pc.class_spells():
+                enc.cast(pc, "vicious_mockery", [weakest.name], rng)
+                return
+            enc.attack_action(pc, weakest, pc.weapons[0], rng)
+            return
+        if kls == "paladin":
+            target = weakest
+            smite = None
+            if slots and target.hp_max >= 25:
+                smite = min(slots)          # 厚血目标：神佑斩（最低可用环阶）
+            engaged = any(enc.alive(enc.find(n))
+                          for n in enc.engagement.get(pc.name, set()))
+            weapon = pc.weapons[0]
+            if not engaged:
+                weapon = next((w for w in pc.weapons
+                               if D.WEAPONS.get(w, {}).get("ranged")), weapon)
+            enc.attack_action(pc, target, weapon, rng, smite_slot=smite)
+            return
+        if kls == "monk":
+            enc.attack_action(pc, weakest, pc.weapons[0], rng)
+            if pc.level >= 2 and pc.ki_left() > 0 and enc.alive(weakest) \
+                    and enc.has_bonus(pc):
+                enc.flurry_of_blows(pc, weakest)
+            if pc.level >= 5 and pc.ki_left() > 0 \
+                    and enc.last_melee_hit.get(pc.name) and enc.has_bonus(pc):
+                hit_target = enc.find(enc.last_melee_hit[pc.name])
+                if hit_target is not None:
+                    enc.stunning_strike(pc, hit_target)
+            return
+        if kls == "ranger":
             bow = next((w for w in pc.weapons if D.WEAPONS.get(w, {}).get("ranged")),
                        pc.weapons[0])
-            enc.attack_action(pc, weakest, bow, self.state.rng)
+            enc.attack_action(pc, weakest, bow, rng)
             return
-        if pc.klass == "barbarian" and COND_RAGING in pc.conditions \
+        if kls == "barbarian" and COND_RAGING in pc.conditions \
                 and pc.has_feature("reckless"):
-            target = min(foes, key=lambda f: f.hp_cur)
-            enc.attack_action(pc, target, pc.weapons[0], self.state.rng, reckless=True)
+            enc.attack_action(pc, weakest, pc.weapons[0], rng, reckless=True)
             return
         target = min(foes, key=lambda f: (f.hp_cur - f.hp_max))
-        enc.attack_action(pc, target, pc.weapons[0], self.state.rng)
+        enc.attack_action(pc, target, pc.weapons[0], rng)
 
     def _aftermath(self, enc: Encounter) -> None:
         xp = enc.defeated_xp()
@@ -1103,3 +1214,14 @@ class GameSession:
         w = D.WEAPONS.get(wkey, {})
         return (f"{w.get('name', wkey)}（{w.get('dmg', '?')}"
                 f"{'，远程' if w.get('ranged') else ''}）")
+
+    @staticmethod
+    def best_potion(pc: Character) -> str | None:
+        """背包里药效最强的药水 key（无则 None）。医疗包的用次=持有数量。"""
+        strength = {"potion_greater_healing": 2, "healing_potion": 1}
+        avail = [(k, v) for k, v in pc.inventory.items()
+                 if v > 0 and D.ITEMS.get(k, {}).get("heal")]
+        if not avail:
+            return None
+        avail.sort(key=lambda kv: -strength.get(kv[0], 0))
+        return avail[0][0]

@@ -218,6 +218,8 @@ class AppState:
                        else random.Random())
                 # 同一 rng 供属性掷骰与对局使用：同 seed 完全可复现
                 player = build_character(spec, rng=rng)
+                if module.party_level_start > player.level:
+                    player.level_up_to(module.party_level_start)
                 companions = build_companions(module, state_level=player.level)
                 state = G.GameState(player, companions, rng, module=module)
         except (ValueError, KeyError, FileNotFoundError, TypeError) as e:
@@ -425,7 +427,7 @@ def generate_module(app: AppState, spec: dict) -> tuple[Module | None, list[str]
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
     app: AppState  # 由 make_server 注入
-    server_version = "CTRCG/1.0"
+    server_version = "CTRCG/1.1"
 
     # ------------------------------------------------------------ 工具
     def _json(self, obj, status: int = 200) -> None:

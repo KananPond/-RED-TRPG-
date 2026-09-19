@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ctrcg"
-version = "1.0.0"
+version = "1.1.0"
 description = "CTRCG —— 单人 AI 跑团：完整 D&D 5e 规则引擎 + AI DM/队友（被遗忘的大陆）"
 readme = "README.md"
 license = { file = "LICENSE" }

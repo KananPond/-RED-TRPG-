@@ -149,11 +149,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.demo:
         ui = AutoUI()
+        start = module.party_level_start
         player = Character.create(
             name="凯尔", race="human", klass="fighter", background="soldier",
             scores={"str": 15, "dex": 13, "con": 14, "int": 10, "wis": 12, "cha": 8},
-            skill_choices=["athletics", "intimidation"], fighting_style="defense")
-        state = G.GameState(player, build_companions(module, rng), rng, module=module)
+            skill_choices=["athletics", "intimidation"], fighting_style="defense",
+            level=start)
+        state = G.GameState(player, build_companions(module, rng, start), rng,
+                            module=module)
         session = GameSession(state, ui, loop=None, module=module)
         session.run()
         return 0
@@ -174,6 +177,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if state is None:
         player = create_player_console(ui, rng)
+        if module.party_level_start > player.level:
+            player.level_up_to(module.party_level_start)
+            ui.system_line(f"《{module.title}》以 {module.party_level_start} 级开局。")
         state = G.GameState(player, build_companions(module, rng, player.level),
                             rng, module=module)
         ui.system_line(f"同伴入队：{'、'.join(c.name for c in state.companions)}")

@@ -415,6 +415,12 @@ class Encounter:
             return m
         return c.hp_max
 
+    def _hp_cur(self, c) -> int:
+        """显示用当前 HP：兽形下显示兽形 HP（本体 HP 不动）。"""
+        if isinstance(c, Character) and c.in_wild_shape():
+            return max(int(c.wild_shape.get("hp_cur", 0)), 0)
+        return max(c.hp_cur, 0)
+
     # ---------------- 抗性 / 免疫
     def apply_resistance(self, target, dtype: str, dmg: int) -> tuple[int, list[str]]:
         notes: list[str] = []
@@ -1268,11 +1274,15 @@ class Encounter:
                 self.add_timer(target, COND_RESTRAINED, 10, save="str", dc=dc)
                 self.log.append(f"{target.name} 被蛛网黏住，陷入束缚！（{d}）")
         elif onhit == "drain":
-            # 尸妖生命汲取：目标生命上限被削减，尸妖回复等量生命
+            # 尸妖生命汲取：目标生命上限被削减（长休恢复），尸妖回复等量生命
             if isinstance(target, Character):
-                target.hp_max = max(1, target.hp_max - dmg)
+                drained = min(dmg, max(0, target.hp_max - 1))
+                target.hp_max -= drained
+                target.hp_drain += drained
+                if target.hp_cur > target.hp_max:
+                    target.hp_cur = target.hp_max
                 healed = att.heal(dmg)
-                self.log.append(f"生命汲取！{target.name} 生命上限 −{dmg}，"
+                self.log.append(f"生命汲取！{target.name} 生命上限 −{drained}，"
                                 f"尸妖回复 {healed} 点。")
         else:
             m = re.fullmatch(r"poison_(\d+d\d+)_dc(\d+)", onhit)
@@ -1575,28 +1585,47 @@ class Encounter:
         return {"ok": r["success"], "detail": detail}
 
     def use_item(self, c, item: str, target=None) -> dict:
-        """使用物品（动作）。healing_potion 可喂给倒地队友（直接拉起并回复）。"""
-        if isinstance(c, Character) and c.inventory.get(item, 0) > 0:
+        """使用物品（动作）。带 heal 表达式的药水可喂给倒地队友（直接拉起并回复）；
+        医疗包（stabilize）以动作稳定倒地队友，无需检定（PHB）。"""
+        if not (isinstance(c, Character) and c.inventory.get(item, 0) > 0):
+            return {"ok": False, "error": "没有该物品"}
+        spec = D.ITEMS.get(item, {})
+        heal_expr = spec.get("heal")
+        if spec.get("stabilize"):
+            if not isinstance(target, Character):
+                return {"ok": False, "error": "医疗包需要指定目标"}
+            if "dead" in target.conditions or COND_STABLE in target.conditions \
+                    or target.hp_cur > 0:
+                return {"ok": False, "error": "目标无需稳定"}
             if not self.use_action(c):
                 return {"ok": False, "error": "本回合动作已用完"}
-            if item == "healing_potion" and target is not None and target is not c:
-                c.inventory[item] -= 1
-                r = roll(self.rng or random.Random(), "2d4+2")
-                amt = target.heal(r.total)
-                detail = (f"{c.name} 把治疗药水喂给 {target.name}{r.describe()} → "
-                          f"回复 {amt} 点并恢复意识（HP {target.hp_cur}/{target.hp_max}）。")
-                self.log.append(detail)
-                return {"ok": True, "detail": detail, "healed": amt}
-            if item == "healing_potion":
-                c.inventory[item] -= 1
-                r = roll(self.rng or random.Random(), "2d4+2")
-                amt = c.heal(r.total)
-                detail = f"{c.name} 喝下治疗药水{r.describe()} → 回复 {amt} 点（HP {c.hp_cur}/{c.hp_max}）。"
-            else:
-                detail = f"{c.name} 使用了 {D.ITEMS.get(item, {}).get('name', item)}。"
+            c.inventory[item] -= 1
+            target.conditions.add(COND_STABLE)
+            detail = (f"{c.name} 用医疗包为 {target.name} 包扎止血，伤势稳定"
+                      f"（剩余用次 {c.inventory[item]}）。")
             self.log.append(detail)
             return {"ok": True, "detail": detail}
-        return {"ok": False, "error": "没有该物品"}
+        if not heal_expr:
+            if not self.use_action(c):
+                return {"ok": False, "error": "本回合动作已用完"}
+            detail = f"{c.name} 使用了 {spec.get('name', item)}。"
+            self.log.append(detail)
+            return {"ok": True, "detail": detail}
+        if not self.use_action(c):
+            return {"ok": False, "error": "本回合动作已用完"}
+        r = roll(self.rng or random.Random(), heal_expr)
+        name = spec.get("name", item)
+        if target is not None and target is not c:
+            c.inventory[item] -= 1
+            amt = target.heal(r.total)
+            detail = (f"{c.name} 把{name}喂给 {target.name}{r.describe()} → "
+                      f"回复 {amt} 点并恢复意识（HP {target.hp_cur}/{target.hp_max}）。")
+        else:
+            c.inventory[item] -= 1
+            amt = c.heal(r.total)
+            detail = f"{c.name} 喝下{name}{r.describe()} → 回复 {amt} 点（HP {c.hp_cur}/{c.hp_max}）。"
+        self.log.append(detail)
+        return {"ok": True, "detail": detail, "healed": amt}
 
     def second_wind(self, c: Character, rng: random.Random) -> dict:
         if not self.alive(c):
@@ -2188,16 +2217,15 @@ class Encounter:
                 tag = "（已被击败）" if isinstance(c, Monster) else "（昏迷 0HP）"
             if "dead" in getattr(c, "conditions", set()):
                 tag = "（死亡）"
-            hp_now = self._hp_max(c)
-            lines.append(f"{mark} {c.name}: HP {c.hp_cur}/{hp_now}, AC {c.ac()}"
-                         + (f" [{conds}]" if conds else "") + tag)
+            lines.append(f"{mark} {c.name}: HP {self._hp_cur(c)}/{self._hp_max(c)},"
+                         f" AC {c.ac()}" + (f" [{conds}]" if conds else "") + tag)
         return lines
 
     def brief(self) -> dict:
         return {
             "round": max(self.round, 1),
             "current": self.current().name if self.started and self.order else None,
-            "party": [{"name": c.name, "hp": f"{c.hp_cur}/{self._hp_max(c)}",
+            "party": [{"name": c.name, "hp": f"{self._hp_cur(c)}/{self._hp_max(c)}",
                        "ac": c.ac()} for c in self.party()],
             "enemies": [c.to_dict() for c in self.enemies()],
             "recent_log": self.log[-6:],

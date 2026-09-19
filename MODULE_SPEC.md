@@ -1,13 +1,16 @@
 # CTRCG 剧本（模组）开发规范
 
-版本：2.0（完整 5e 规则引擎）　适用引擎：`ctrcg` ≥ 0.4
+版本：2.1（完整 5e 规则引擎）　适用引擎：`ctrcg` ≥ 1.1
 
 一个**剧本（模组）**是一个自包含的 JSON 文件：`modules/<模组id>/module.json`。
 引擎按"被遗忘的大陆 · D&D 5e（SRD 5.1）"规则运行剧本；所有骰点由规则引擎
 完成，LLM 只做决策与叙述，**不生成任何数值结果**。
 
-- 内置剧本：`modules/starfall`（星坠矿脉的阴影）、`modules/saltmist`（盐雾灯塔的低语）。
-- 两者即为规范模板：不确定怎么写时，直接对照内置剧本抄结构。
+- 内置剧本：`modules/starfall`（星坠矿脉的阴影）、`modules/saltmist`
+  （盐雾灯塔的低语）、`modules/mistgate`（新手教学）、`modules/embergate`
+  （《余烬之门》，3→5 级终章战役）。
+- 不确定怎么写时，直接对照内置剧本抄结构：1-3 级节奏参考 starfall，
+  3-5 级节奏（含 CR2-5 怪物与里程碑升级点）参考 embergate。
 - 运行时产生的 `generated-*` / `imported-*` 目录同样遵循本规范。
 
 ## 1. 快速开始
@@ -108,6 +111,9 @@ python main.py --module my_module --demo --seed 7   # 终端自动验证全流�
 
 **升级节奏建议**：狼穴/第一幕后 `level_to: 2`，第二幕后 `level_to: 3`
 （与官方入门模组一致）；1-3 级内容请用 CR 1/8~3 的怪物。
+**3→5 级战役**：`party_level_start: 3`（引擎会按此等级创建整队），在第二幕
+入场景点 `level_to: 4`、终幕前 `level_to: 5`；CR 2~5 的怪物（红帽子/米诺陶/
+钻地魔虫/坎比翁等）均可使用；4 级里程碑会自动触发属性提升（ASI）交互。
 
 ## 5. 遭遇（encounters）
 
@@ -123,8 +129,11 @@ python main.py --module my_module --demo --seed 7   # 终端自动验证全流�
 
 - 怪物 id 来自内置表（§7 生物表）或本剧本 `custom_monsters`。
 - 同类多只需数量，引擎自动编号（哥布林1、哥布林2…）。
-- `loot.items` 的 key 必须是 `D.ITEMS` 中的物品
-  （`healing_potion`/`torch`/`rope`/`gold`）。
+- `loot.items` 的 key 必须是 `D.ITEMS` 中的物品：
+  `healing_potion`（2d4+2）/ `potion_greater_healing`（4d4+4）/
+  `healer_kit`（医疗包，数量=用次，动作稳定倒地者）/ `torch` / `rope` /
+  `star_forge_blade` / `ember_ward_charm`（持有即火焰抗性）。
+  药水类物品在战斗菜单中按"背包中药效最强者"自动选用，可饮用也可喂给倒地队友。
 
 ## 6. 自定义怪物（custom_monsters）
 

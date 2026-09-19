@@ -564,12 +564,16 @@ ARMORS: dict[str, dict] = {
     "scale_mail":  {"name": "鳞甲", "ac": 14, "dex_cap": 2, "str_req": 0, "stealth_dis": True},
 }
 
+# 物品引擎字段：heal=饮用回复表达式；stabilize+uses=医疗包稳定；mech=持有即生效的机制键
 ITEMS: dict[str, dict] = {
-    "healing_potion": {"name": "治疗药水", "desc": "回复 2d4+2 生命值。"},
+    "healing_potion": {"name": "治疗药水", "desc": "回复 2d4+2 生命值。", "heal": "2d4+2"},
+    "potion_greater_healing": {"name": "上乘治疗药水", "desc": "回复 4d4+4 生命值。", "heal": "4d4+4"},
+    "healer_kit": {"name": "医疗包", "desc": "10 次使用：以动作稳定倒地队友（无需检定）。", "stabilize": True},
     "torch":          {"name": "火把", "desc": "照明 60 尺，燃烧 1 小时。"},
     "rope":           {"name": "麻绳", "desc": "50 尺。"},
     "gold":           {"name": "金币", "desc": "通用货币。"},
     "star_forge_blade": {"name": "星炉长剑(+1)", "desc": "星炉锻造的魔法长剑，攻击与伤害+1。", "magic": {"attack_bonus": 1}},
+    "ember_ward_charm": {"name": "余烬护符", "desc": "灰烬锻纹护符：持有者获得火焰伤害抗性。", "mech": {"fire_resist": True}},
 }
 
 # ---------------------------------------------------------------- 法术

@@ -314,6 +314,84 @@ class TestDrainAndDeathRegression(unittest.TestCase):
         self.assertEqual(c.hp_cur, before)             # 尸体不被"回满"
 
 
+class TestMagicItemAttunement(unittest.TestCase):
+    """魔法物品拾取即同调（修复前星炉长剑(+1)是死物品）。"""
+
+    def _session(self):
+        from ctrcg.game import state as G
+        from ctrcg.game.session import GameSession
+        from ctrcg.ui.cli import AutoUI
+        rng = random.Random(2)
+        hero = make_pc(name="凯尔")
+        session = GameSession(G.GameState(hero, [hero], rng), AutoUI(), loop=None)
+        return session, hero
+
+    def test_star_forge_blade_attunes_once(self):
+        session, hero = self._session()
+        session.tools._tool_give_loot(gold=0, items={"star_forge_blade": 1})
+        self.assertEqual(hero.magic_attack_bonus, 1)
+        self.assertEqual(hero.magic_damage_bonus, 1)
+        # 重复拾取（存档往返/重复战利品）不叠加
+        session.tools._tool_give_loot(gold=0, items={"star_forge_blade": 1})
+        self.assertEqual(hero.magic_attack_bonus, 1)
+        self.assertEqual(hero.magic_damage_bonus, 1)
+
+    def test_plain_items_do_not_attune(self):
+        session, hero = self._session()
+        session.tools._tool_give_loot(gold=5, items={"healing_potion": 2})
+        self.assertEqual(hero.magic_attack_bonus, 0)
+
+
+class TestXpLevelUpChoices(unittest.TestCase):
+    """经验升级（非里程碑）也会结算职业特性选择（此前被静默跳过）。"""
+
+    def test_award_xp_resolves_asi_for_player_and_defaults_for_companions(self):
+        from ctrcg.game import state as G
+        from ctrcg.game.session import GameSession
+        from ctrcg.ui.cli import AutoUI
+        rng = random.Random(4)
+        hero = make_pc(name="凯尔", level=3)
+        comp = make_pc(name="芬恩", klass="druid",
+                       scores={"str": 8, "dex": 13, "con": 14, "int": 10, "wis": 15,
+                               "cha": 10}, level=3)
+        session = GameSession(G.GameState(hero, [comp], rng), AutoUI(), loop=None)
+        session.tools._tool_award_xp(20000, "测试")
+        self.assertEqual(hero.level, 5)
+        self.assertEqual(comp.level, 5)
+        # 玩家：选择已结算（AutoUI 会因选项描述含"攻击"选中巨武器大师专长）
+        self.assertTrue(hero.feature_choices.get("asi"))
+        self.assertTrue(hero.feature_choices.get("feat")
+                        or hero.abilities["str"] == 19)
+        # 同伴：推荐默认（德鲁伊 → 战争施法者）
+        self.assertEqual(comp.feature_choices.get("feat"), "war_caster")
+
+    def test_award_xp_player_can_pick_plain_asi(self):
+        """玩家选择"属性提升：单项 +2"分支正常结算。"""
+        from ctrcg.game import state as G
+        from ctrcg.game.session import GameSession
+        from ctrcg.ui.cli import AutoUI
+
+        class PickFirst(AutoUI):
+            def choose(self, prompt, options):
+                if "属性提升" in str(prompt) or "4 级" in str(prompt):
+                    return 0
+                if "提升哪项属性" in str(prompt):
+                    return 0                      # 力量
+                return super().choose(prompt, options)
+
+        rng = random.Random(4)
+        hero = make_pc(name="凯尔", level=3)
+        session = GameSession(G.GameState(hero, [hero], rng), PickFirst(), loop=None)
+        session.tools._tool_award_xp(20000, "测试")
+        self.assertEqual(hero.feature_choices.get("asi"), "str+2")
+        self.assertEqual(hero.abilities["str"], 19)
+
+    def test_feat_shown_in_resource_lines(self):
+        c = make_pc()
+        c.feature_choices["feat"] = "great_weapon_master"
+        self.assertTrue(any("巨武器大师" in ln for ln in c.resource_lines()))
+
+
 class TestOutOfCombatPotion(unittest.TestCase):
     """探索阶段喝药：引擎代掷、扣库存、长休前也能回血。"""
 

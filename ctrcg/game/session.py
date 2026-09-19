@@ -69,8 +69,7 @@ class GameSession:
         self.enter_scene(self.state.scene_id)
         # 开局结算：模组起始等级 > 1 或职业特性尚有待选时，玩家交互补选
         # （同伴在建队时已应用推荐默认，此处通常只询问玩家）
-        for c in self.state.party():
-            self._resolve_level_up_choices(c)
+        self.resolve_pending_choices()
         try:
             while True:
                 scene = self.module.scene_by_id(self.state.scene_id)
@@ -125,6 +124,13 @@ class GameSession:
                     self.ui.system_line(msg)
                 self._resolve_level_up_choices(c)
         self.autosave()
+
+    def resolve_pending_choices(self) -> None:
+        """结算全队待选的职业特性（玩家交互、同伴默认）。
+
+        场景 level_to 升级、开局结算与经验升级（award_xp 工具）共用。"""
+        for c in self.state.party():
+            self._resolve_level_up_choices(c)
 
     def _resolve_level_up_choices(self, c: Character) -> None:
         """升级带来的职业特性选择：玩家交互选择，同伴走推荐默认。"""

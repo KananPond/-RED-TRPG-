@@ -293,7 +293,8 @@
       "loot": {
         "gold": 200,
         "items": {
-          "healing_potion": 2
+          "healing_potion": 2,
+          "star_forge_blade": 1
         }
       }
     }

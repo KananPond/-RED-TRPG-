@@ -209,7 +209,7 @@ ENCOUNTERS: dict[str, dict] = {
             "一把食尸鬼的利爪从阴影里探了出来。"
         ),
         "monsters": [("ash_mage", 1), ("imp", 1), ("ghoul", 1)],
-        "loot": {"gold": 200, "items": {"healing_potion": 2}},
+        "loot": {"gold": 200, "items": {"healing_potion": 2, "star_forge_blade": 1}},
     },
 }
 

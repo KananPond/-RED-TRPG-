@@ -134,17 +134,30 @@ class GameTools:
                 msgs.append(m)
         self.ui.system_line(f"✦ 经验 +{share}/人{'（' + reason + '）' if reason else ''}"
                             + ("；".join(msgs) if msgs else ""))
+        # 经验升级可能带来职业特性选择（ASI/专长/子职业等）——即时结算
+        if self.harness_session is not None:
+            self.harness_session.resolve_pending_choices()
         return {"ok": True, "each": share, "levelups": msgs}
 
     def _tool_give_loot(self, gold=0, items=None) -> dict:
         items = items or {}
         self.state.player.gold += int(gold)
-        got = []
+        got, attuned = [], []
         for item, n in items.items():
             if item in D.ITEMS:
-                self.state.player.inventory[item] = self.state.player.inventory.get(item, 0) + int(n)
+                first = self.state.player.inventory.get(item, 0) == 0
+                self.state.player.inventory[item] =                     self.state.player.inventory.get(item, 0) + int(n)
                 got.append(f"{D.ITEMS[item]['name']}×{n}")
-        self.ui.system_line(f"✦ 获得 {int(gold)} 金币" + ("、" + "、".join(got) if got else ""))
+                # 魔法武器拾取即同调（引擎简化：唯一魔法装备无需装备动作）
+                magic = D.ITEMS[item].get("magic") or {}
+                if magic and first and n > 0:
+                    self.state.player.magic_attack_bonus += int(magic.get("attack_bonus", 0))
+                    self.state.player.magic_damage_bonus += int(magic.get("damage_bonus", 0))
+                    attuned.append(D.ITEMS[item]["name"])
+        msg = f"✦ 获得 {int(gold)} 金币" + ("、" + "、".join(got) if got else "")
+        if attuned:
+            msg += f"（{('、'.join(attuned))} 已同调生效）"
+        self.ui.system_line(msg)
         return {"ok": True}
 
     def _tool_start_encounter(self, encounter_id: str) -> dict:

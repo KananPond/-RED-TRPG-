@@ -365,6 +365,8 @@ class Character:
             out.append(f"野变 {2 - self.wild_shape_used}/2")
         if D.RACES[self.race].get("mech", {}).get("breath_weapon"):
             out.append("龙息" + ("已用（短休恢复）" if self.breath_weapon_used else "可用"))
+        if self.feature_choices.get("feat"):
+            out.append(f"专长：{D.FEATS[self.feature_choices['feat']]['name']}")
         if self.has_feature("feat_lucky"):
             out.append(f"幸运 {3 - self.feat_lucky_used}/3")
         if self.exhaustion:

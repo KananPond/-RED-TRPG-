@@ -572,7 +572,7 @@ ITEMS: dict[str, dict] = {
     "torch":          {"name": "火把", "desc": "照明 60 尺，燃烧 1 小时。"},
     "rope":           {"name": "麻绳", "desc": "50 尺。"},
     "gold":           {"name": "金币", "desc": "通用货币。"},
-    "star_forge_blade": {"name": "星炉长剑(+1)", "desc": "星炉锻造的魔法长剑，攻击与伤害+1。", "magic": {"attack_bonus": 1}},
+    "star_forge_blade": {"name": "星炉长剑(+1)", "desc": "星炉锻造的魔法长剑，攻击与伤害+1。", "magic": {"attack_bonus": 1, "damage_bonus": 1}},
     "ember_ward_charm": {"name": "余烬护符", "desc": "灰烬锻纹护符：持有者获得火焰伤害抗性。", "mech": {"fire_resist": True}},
 }
 

@@ -5,3 +5,4 @@ demo_*.txt
 webserver.log
 .env
 .mimosa/
+dist/

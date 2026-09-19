@@ -327,19 +327,41 @@ class TestClassResources(unittest.TestCase):
 
 
 class TestBothBuiltinModules(unittest.TestCase):
-    """两个预置剧本：校验、队友加载、首场遭遇可运行。"""
+    """三个预置剧本：校验、队友加载、首场遭遇可运行。"""
 
     def test_modules_validate_with_companions(self):
         reg = Cordis("modules")
-        ids = [e["id"] for e in reg.scan()]
-        self.assertIn("starfall", ids)
-        self.assertIn("saltmist", ids)
-        for mid in ("starfall", "saltmist"):
+        src = {e["id"]: e["source"] for e in reg.scan()}
+        for mid in ("starfall", "saltmist", "mistgate"):
+            self.assertIn(mid, src, f"{mid} 应随发行版附带")
+            self.assertEqual(src[mid], "builtin", f"{mid} 应归类为内置模组")
+        for mid in ("starfall", "saltmist", "mistgate"):
             mod, errs, warns = reg.ensure(mid)
             self.assertIsNone(mod is None and errs or None, f"{mid}: {errs}")
+            self.assertEqual(warns, [], f"{mid} 不应有校验警告：{warns}")
             self.assertEqual(len(mod.companions), 3, f"{mid} 应自带三名队友")
-            self.assertGreaterEqual(len(mod.scenes), 7)
-            self.assertGreaterEqual(len(mod.encounters), 5)
+            self.assertGreaterEqual(len(mod.scenes), 4)
+            self.assertGreaterEqual(len(mod.encounters), 3)
+
+    def test_builtin_modules_not_deletable(self):
+        reg = Cordis("modules")
+        ok, err = reg.delete("mistgate")
+        self.assertFalse(ok)
+        self.assertIn("内置", err)
+
+    def test_mistgate_tutorial_encounters_run(self):
+        """教学模组三场遭遇均可战斗结算（含突袭联动场景）。"""
+        reg = Cordis("modules")
+        mod, errs, _w = reg.ensure("mistgate")
+        self.assertIsNotNone(mod, str(errs))
+        seeds = {"e_rats": 11, "e_cellar": 22, "e_bridge": 33}
+        for eid, seed in seeds.items():
+            rng = random.Random(seed)
+            enc = G.build_encounter(eid, G.GameState(
+                make_pc("教学员"), [], rng, module=mod))
+            enc.begin_turn(enc.party()[0])
+            r = enc.attack_action(enc.party()[0], enc.enemies()[0], "longsword", rng)
+            self.assertTrue(r["ok"], eid)
 
     def test_saltmist_custom_monsters_fight(self):
         reg = Cordis("modules")

@@ -32,6 +32,9 @@ from .loader import Module
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,48}$")
 
+# 内置模组 id（随发行版附带，禁止经 UI 删除）
+BUILTIN_IDS = {"starfall", "saltmist", "mistgate"}
+
 PENDING = "pending"      # 已挂载，等待依赖服务
 ACTIVE = "active"        # 副作用运行中
 DISPOSED = "disposed"    # 清理栈已回滚完毕
@@ -121,7 +124,7 @@ class Cordis:
             manifest = d / "module.json"
             if not manifest.exists():
                 continue
-            source = "builtin" if d.name == "starfall" else \
+            source = "builtin" if d.name in BUILTIN_IDS else \
                 ("generated" if d.name.startswith("generated-") else "imported")
             found.append({"id": d.name, "dir": str(d), "source": source,
                           "mtime": manifest.stat().st_mtime})
@@ -134,7 +137,7 @@ class Cordis:
         manifest = self.root / module_id / "module.json"
         if not manifest.exists():
             return None, [f"模组不存在：{module_id}"], []
-        source = "builtin" if module_id == "starfall" else \
+        source = "builtin" if module_id in BUILTIN_IDS else \
             ("generated" if module_id.startswith("generated-") else "imported")
         mod, errors, warnings = Module.from_file(manifest)
         if mod is None:
@@ -230,6 +233,8 @@ class Cordis:
         return True, None
 
     def delete(self, module_id: str) -> tuple[bool, str | None]:
+        if module_id in BUILTIN_IDS:
+            return False, "内置模组不可删除"
         ok, err = self.unload(module_id)
         if err:
             return ok, err

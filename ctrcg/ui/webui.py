@@ -24,9 +24,14 @@ class WebUI:
         self._lock = threading.Lock()
         self._pending: dict | None = None      # 等待浏览器应答的请求
         self.aborted = False
+        self._dice: dict[str, int] = {"rolls": 0, "nat20": 0, "nat1": 0,
+                                      "passed": 0, "failed": 0}
 
     # ------------------------------------------------------------ 事件总线
     def _emit(self, t: str, **payload) -> dict:
+        if t in ("dice", "roll"):
+            self._count_dice(payload.get("d20"),
+                             payload.get("success", payload.get("hit")))
         ev = {"id": next(self._seq), "t": t, **payload}
         with self._lock:
             self.history.append(ev)
@@ -61,10 +66,45 @@ class WebUI:
 
     def check_line(self, result: dict, context: str = "") -> dict:
         self._emit("dice", who=result.get("who", ""),
-                   label=result.get("check") or result.get("save") or "",
+                   label=self._label_cn(result.get("check") or result.get("save") or ""),
                    dc=result.get("dc"), detail=result.get("detail", ""),
-                   success=bool(result.get("success")), context=context or None)
+                   success=bool(result.get("success")),
+                   d20=result.get("d20"), rolls=list(result.get("rolls") or []),
+                   adv=result.get("adv", 0), total=result.get("total"),
+                   context=context or None)
         return result
+
+    @staticmethod
+    def _label_cn(label: str) -> str:
+        """检定/豁免标签转中文（骰子动画标题用）。"""
+        from ..rules import data as D
+        if label in D.SKILLS:
+            return D.SKILLS[label]["name"]
+        if label in D.ABILITIES:
+            return D.ABILITIES[label]["name"] + "豁免"
+        return label
+
+    def roll_event(self, ev: dict) -> None:
+        """战斗中的攻击/豁免骰子事件（供前端播放掷骰动画）。"""
+        self._emit("roll", **ev)
+
+    def dice_stats(self) -> dict:
+        """本局骰子统计（终局卡用）。"""
+        with self._lock:
+            return dict(self._dice)
+
+    def _count_dice(self, d20, success) -> None:
+        if not isinstance(d20, int):
+            return
+        self._dice["rolls"] += 1
+        if d20 == 20:
+            self._dice["nat20"] += 1
+        elif d20 == 1:
+            self._dice["nat1"] += 1
+        if success:
+            self._dice["passed"] += 1
+        else:
+            self._dice["failed"] += 1
 
     def save_line(self, result: dict) -> dict:
         return self.check_line(result)

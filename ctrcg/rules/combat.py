@@ -168,6 +168,8 @@ class Encounter:
     last_damaged_round: dict[str, int] = field(default_factory=dict)
     frenzy_used: set[str] = field(default_factory=set)      # 本次狂暴用过狂战士附赠攻击
     rage_last_end: dict[str, int] = field(default_factory=dict)  # 狂暴者上次回合结束轮
+    # ---- 骰子事件流（供 UI 播放掷骰动画；与 log 平行，按序消费）
+    rolls: list[dict] = field(default_factory=list)
     grappler_of: dict[str, str] = field(default_factory=dict)  # 被擒抱者→擒抱者
     _turn_taken: set[str] = field(default_factory=set, repr=False)
     # ---- 反应询问钩子（session 注入：(target, ctx) -> bool；None=自动规则）
@@ -342,14 +344,44 @@ class Encounter:
 
     def _condition_save(self, target, ability: str, dc: int) -> bool:
         if isinstance(target, Character):
-            return target.save(self.rng, ability, dc)["success"]
+            sv = target.save(self.rng, ability, dc)
+            self._rec_save(target, sv, dc, "豁免", minor=True)
+            return sv["success"]
         # 麻痹/震慑/昏迷目标的力量/敏捷豁免自动失败
         if (ability in ("str", "dex")
                 and (COND_PARALYZED in target.conditions
                      or COND_STUNNED in target.conditions)):
             return False
         dr = roll(self.rng, "d20")
-        return dr.kept[0] + target.save_bonus(ability) >= dc
+        ok = dr.kept[0] + target.save_bonus(ability) >= dc
+        self._rec_save(target, dr.kept[0], dc, "豁免", minor=True, success=ok)
+        return ok
+
+    def _rec_attack(self, att, die, adv: int, total: int, target, hit: bool,
+                    crit: bool, label: str = "") -> None:
+        """记录一次攻击 d20（供 UI 播放掷骰动画）。"""
+        self.rolls.append({"who": att.name, "kind": "attack", "label": label,
+                           "d20": die.kept[0], "rolls": list(die.rolls), "adv": adv,
+                           "total": total, "ac": target.ac(),
+                           "hit": bool(hit), "crit": bool(crit)})
+
+    def _rec_save(self, target, result, dc: int, label: str = "豁免",
+                  minor: bool = False, success: bool | None = None) -> None:
+        """记录一次豁免骰。result 可为 Character.save() 的 dict（含结构化骰子）
+        或怪物裸骰的 kept 值。"""
+        if isinstance(result, dict):
+            self.rolls.append({"who": target.name, "kind": "save", "label": label,
+                               "d20": result.get("d20"),
+                               "rolls": list(result.get("rolls") or []),
+                               "adv": result.get("adv", 0), "dc": dc,
+                               "success": bool(result.get("success")), "minor": minor})
+        else:
+            self.rolls.append({"who": target.name, "kind": "save", "label": label,
+                               "d20": int(result), "rolls": [int(result)], "adv": 0,
+                               "dc": dc,
+                               "success": bool(result if success is not None
+                                               else int(result) >= dc),
+                               "minor": minor})
 
     def _burn_tick(self, c) -> str | None:
         """炽焰斩的持续燃烧：回合开始 1d6 火焰，体质豁免终止。"""
@@ -698,6 +730,8 @@ class Encounter:
                 hit = False
                 notes.append("目标格挡（AC+2）")
         crit = nat >= crit_min and hit
+        self._rec_attack(att, die, adv, total, target, hit, crit,
+                         label=f"{weapon['name']}攻击")
         # 麻痹/昏迷/沉睡目标 5 尺内命中即暴击（近战）
         helpless = (COND_PARALYZED, COND_UNCONSCIOUS, COND_SLEEP)
         if hit and not ranged and any(
@@ -872,6 +906,11 @@ class Encounter:
             nat = die.kept[0]
             total = nat + atk["bonus"]
             hit = nat == 20 or (nat != 1 and total >= target.ac())
+            self._rec_attack(druid, die, adv, total, target, hit,
+                             nat == 20 or any(
+                                 c in getattr(target, "conditions", set())
+                                 for c in (COND_PARALYZED, COND_UNCONSCIOUS, COND_SLEEP)),
+                             label=f"{wname}（兽形）")
             if not hit:
                 results.append(f"{wname}未命中（{total}）")
                 continue
@@ -925,6 +964,8 @@ class Encounter:
             nat = die.kept[0]
             total = nat + atk["bonus"] + precision_bonus
             hit = nat == 20 or (nat != 1 and total >= target.ac())
+            self._rec_attack(att, die, adv, total, target, hit, nat == 20,
+                             label="法术射线")
             if not hit:
                 detail = f"{att.name} 的法术射线飞向 {target.name}：{die.describe()}+{atk['bonus']} = {total} —— 未命中。"
                 self.log.append(detail)
@@ -963,6 +1004,8 @@ class Encounter:
             debuff = self.attack_debuffs.pop(att.name, 0)
             total = nat + atk["bonus"] + debuff + precision_bonus
             hit = nat == 20 or (nat != 1 and total >= target.ac())
+            self._rec_attack(att, die, adv, total, target, hit, nat == 20,
+                             label=wname)
             if not hit:
                 results.append(f"{wname}未命中（{die.describe()}+{atk['bonus']}={total}）")
                 continue
@@ -982,6 +1025,9 @@ class Encounter:
                         self.add_timer(target, COND_SHIELDED, 1)
                         self.log.append(f"{target.name} 以反应施放护盾术！AC+5。")
                         if nat != 20 and total < target.ac():
+                            if self.rolls and self.rolls[-1]["who"] == att.name:
+                                self.rolls[-1]["hit"] = False
+                                self.rolls[-1]["note"] = "护盾术"
                             results.append("护盾术令攻击落空！")
                             continue
             crit = nat == 20
@@ -1097,10 +1143,12 @@ class Encounter:
         dc = atk["save_dc"]
         if isinstance(target, Character):
             sv = target.save(rng, atk["save"], dc)
+            self._rec_save(target, sv, dc, "豁免")
             success, d = sv["success"], sv["detail"]
         else:
             dr = roll(rng, "d20")
             success = dr.kept[0] + target.save_bonus(atk["save"]) >= dc
+            self._rec_save(target, dr.kept[0], dc, "豁免", success=success)
             d = dr.describe()
         dmg = roll(rng, atk["dmg"]).total
         if success:
@@ -1159,13 +1207,16 @@ class Encounter:
         if isinstance(target, Character) and target.concentration and dmg > 0:
             dc = max(10, dmg // 2)
             sv = target.save(rng, "con", dc)
+            self._rec_save(target, sv, dc, "专注豁免")
             if not sv["success"]:
                 self.log.append(f"{target.name} 未能维持专注，[{target.concentration}] 中断。")
                 self._break_concentration(target)
         elif isinstance(target, Monster) and target.concentration and dmg > 0:
             dc = max(10, dmg // 2)
             dr = roll(rng, "d20")
-            if dr.kept[0] + target.save_bonus("con") < dc:
+            ok = dr.kept[0] + target.save_bonus("con") >= dc
+            self._rec_save(target, dr.kept[0], dc, "专注豁免", success=ok)
+            if not ok:
                 self.log.append(f"{target.name} 的专注被打断。")
                 target.concentration = None
 
@@ -1603,8 +1654,10 @@ class Encounter:
             if sv is None:
                 dr = roll(rng, "d20")
                 ok = dr.kept[0] + t.save_bonus("dex") >= dc
+                self._rec_save(t, dr.kept[0], dc, "龙息豁免", success=ok)
                 d = dr.describe()
             else:
+                self._rec_save(t, sv, dc, "龙息豁免")
                 ok, d = sv["success"], sv["detail"]
             n, s, _m = parse_expr(dice)
             dmg = roll(rng, f"{n}d{s}").total
@@ -1711,10 +1764,12 @@ class Encounter:
         dc = 8 + c.prof_bonus() + c.mod("wis")
         if isinstance(target, Character):
             sv = target.save(self.rng, "con", dc)
+            self._rec_save(target, sv, dc, "震慑拳豁免")
             ok, d = sv["success"], sv["detail"]
         else:
             dr = roll(self.rng, "d20")
             ok = dr.kept[0] + target.save_bonus("con") >= dc
+            self._rec_save(target, dr.kept[0], dc, "震慑拳豁免", success=ok)
             d = dr.describe()
         if ok:
             detail = f"{c.name} 震慑拳被 {target.name} 抵抗（{d} vs DC{dc}）。"
@@ -1987,10 +2042,12 @@ class Encounter:
             for t in targets:
                 if isinstance(t, Character):
                     sv = t.save(rng, save_key, dc)
+                    self._rec_save(t, sv, dc, f"{sp['name']}豁免")
                     ok, d = sv["success"], sv["detail"]
                 else:
                     dr = roll(rng, "d20")
                     ok = dr.kept[0] + t.save_bonus(save_key) >= dc
+                    self._rec_save(t, dr.kept[0], dc, f"{sp['name']}豁免", success=ok)
                     d = dr.describe()
                 if ok:
                     lines.append(f"{t.name} 豁免成功（{d}）")
@@ -2043,6 +2100,9 @@ class Encounter:
                 die = self._attack_d20(caster, rng, adv)
                 bonus = caster.prof_bonus() + caster.mod(caster.cast_ability())
                 nat = die.kept[0]
+                self._rec_attack(caster, die, adv, nat + bonus, t,
+                                 nat == 20 or (nat != 1 and nat + bonus >= t.ac()),
+                                 nat == 20, label=f"{sp['name']}射线")
                 if nat != 20 and (nat == 1 or nat + bonus < t.ac()):
                     lines.append(f"{t.name} 闪开了射线（{die.describe()}+{bonus}）")
                     continue
@@ -2063,10 +2123,12 @@ class Encounter:
             if save_key:
                 if isinstance(t, Character):
                     sv = t.save(rng, save_key, dc)
+                    self._rec_save(t, sv, dc, f"{sp['name']}豁免")
                     ok, d = sv["success"], sv["detail"]
                 else:
                     dr = roll(rng, "d20")
                     ok = dr.kept[0] + t.save_bonus(save_key) >= dc
+                    self._rec_save(t, dr.kept[0], dc, f"{sp['name']}豁免", success=ok)
                     d = dr.describe()
                 r = roll(rng, f"{n + extra_dice}d{s}" + (f"+{m0}" if m0 else ""))
                 dmg = r.total
@@ -2095,6 +2157,9 @@ class Encounter:
                 die = self._attack_d20(caster, rng, adv)
                 bonus = caster.prof_bonus() + caster.mod(caster.cast_ability())
                 nat = die.kept[0]
+                self._rec_attack(caster, die, adv, nat + bonus, t,
+                                 nat == 20 or (nat != 1 and nat + bonus >= t.ac()),
+                                 nat == 20, label=f"{sp['name']}射线")
                 if nat != 20 and (nat == 1 or nat + bonus < t.ac()):
                     lines.append(f"{t.name} 闪开了射线（{die.describe()}+{bonus}）")
                     continue

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctrcg"
+version = "1.0.0"
+description = "CTRCG —— 单人 AI 跑团：完整 D&D 5e 规则引擎 + AI DM/队友（被遗忘的大陆）"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "KananPond" }]
+requires-python = ">=3.10"
+dependencies = []
+keywords = ["dnd", "ttrpg", "ai", "singleplayer", "chinese"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Games/Entertainment :: Role-Playing",
+]
+
+[tool.setuptools]
+packages = ["ctrcg", "ctrcg.rules", "ctrcg.campaign", "ctrcg.harness",
+            "ctrcg.game", "ctrcg.ui", "ctrcg.web"]
+
+[project.urls]
+Homepage = "https://github.com/KananPond/CTRCG"

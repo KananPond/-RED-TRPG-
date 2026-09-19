@@ -452,6 +452,7 @@ class Character:
         total = res.total + bi
         return {
             "who": self.name, "check": skill, "dc": dc, "success": ok, "total": total,
+            "d20": res.kept[0], "rolls": list(res.rolls), "adv": adv,
             "detail": res.describe() + (f"（激励+{bi}）" if bi else ""),
         }
 
@@ -463,6 +464,7 @@ class Character:
                      or COND_STUNNED in self.conditions
                      or COND_UNCONSCIOUS in self.conditions)):
             return {"who": self.name, "save": ability, "dc": dc, "success": False,
+                    "d20": None, "rolls": [], "adv": advantage,
                     "detail": "[自动失败：麻痹/昏迷]", "bless": 0}
         adv = advantage
         mech = self.mech()
@@ -484,6 +486,7 @@ class Character:
         bi = self.take_bardic(rng)
         return {"who": self.name, "save": ability, "dc": dc,
                 "success": res.total + bi >= dc,
+                "d20": res.kept[0], "rolls": list(res.rolls), "adv": adv,
                 "detail": res.describe() + (f"（激励+{bi}）" if bi else "")
                           + (f"（祝福+{bless}）" if bless else ""),
                 "bless": bless}
@@ -565,10 +568,11 @@ class Character:
         if self.hp_cur > 0 or COND_STABLE in self.conditions:
             return {}
         res = self._lucky_d20(rng, 0)
+        base = {"who": self.name, "d20": res.kept[0], "rolls": list(res.rolls)}
         if res.kept[0] == 20:
             self.hp_cur = 1
             self.conditions -= {COND_UNCONSCIOUS}
-            return {"who": self.name, "result": "revived", "detail": res.describe()}
+            return {**base, "result": "revived", "detail": res.describe()}
         if res.kept[0] == 1:
             self.death_fails += 2
         elif res.total >= 10:
@@ -578,11 +582,11 @@ class Character:
         if self.death_fails >= 3:
             self.conditions |= {COND_DEAD}
             self.conditions -= {COND_STABLE, COND_UNCONSCIOUS}
-            return {"who": self.name, "result": "died", "detail": res.describe()}
+            return {**base, "result": "died", "detail": res.describe()}
         if self.death_successes >= 3:
             self.conditions |= {COND_STABLE}
-            return {"who": self.name, "result": "stable", "detail": res.describe()}
-        return {"who": self.name, "result": "pending", "detail": res.describe()}
+            return {**base, "result": "stable", "detail": res.describe()}
+        return {**base, "result": "pending", "detail": res.describe()}
 
     def short_rest(self, rng: random.Random, spend_dice: int | None = None,
                    song_of_rest: bool = False) -> str:

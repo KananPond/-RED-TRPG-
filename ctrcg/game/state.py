@@ -48,6 +48,22 @@ class GameState:
                          f" 状态[{conds}] {res}")
         return "\n".join(lines)
 
+    def epilogue_snapshot(self) -> dict:
+        """终局卡数据：队伍结局、金币、旗标、足迹。"""
+        return {
+            "module_title": self.module.title,
+            "scene_id": self.scene_id,
+            "visited": len(self.visited),
+            "scenes_total": len(self.module.scenes),
+            "gold": getattr(self.player, "gold", 0),
+            "flags": dict(self.flags),
+            "party": [{"name": c.name, "klass": M.D_NAME.get(c.klass, c.klass),
+                       "level": c.level, "hp": c.hp_cur, "hp_max": c.hp_max,
+                       "dead": "dead" in c.conditions,
+                       "down": c.hp_cur <= 0 and "dead" not in c.conditions}
+                      for c in self.party()],
+        }
+
 
 class EncounterBuildError(Exception):
     pass

@@ -2,8 +2,9 @@
 "use strict";
 
 const $ = (s) => document.querySelector(s);
-const S = { lastId: 0, es: null, meta: null, started: false, ask: null,
-            module: "starfall", provider: "deepseek" };
+const S = { lastId: 0, es: null, meta: null, started: false, ask: null, live: false,
+            module: "starfall", provider: "deepseek",
+            levels: null, gold: null };
 const ABILITY_CN = { str: "力量", dex: "敏捷", con: "体质", int: "智力", wis: "感知", cha: "魅力" };
 const SOURCE_CN = { builtin: "内置", generated: "AI 生成", imported: "导入" };
 
@@ -24,7 +25,7 @@ function showView(name) {
     });
   }
   if (name === "saves") renderSaves();
-  if (name === "settings") { renderSettings(); renderUsage(); }
+  if (name === "settings") { renderSettings(); renderUsage(); renderSoundSettings(); }
 }
 document.querySelectorAll(".home-btn").forEach(b =>
   b.addEventListener("click", () => showView(b.dataset.view)));
@@ -248,6 +249,20 @@ $("#usage-clear").addEventListener("click", async () => {
   renderUsage();
 });
 
+/* ═══════════ 设置页：音效 ═══════════ */
+function renderSoundSettings() {
+  const on = $("#snd-on"), vol = $("#snd-vol");
+  if (!on) return;
+  on.checked = AudioFX.enabled;
+  vol.value = Math.round(AudioFX.volume * 100);
+  on.onchange = () => AudioFX.setEnabled(on.checked);
+  vol.oninput = () => AudioFX.setVolume(vol.value / 100);
+  $("#snd-test").onclick = () => {
+    AudioFX.setEnabled(true);
+    AudioFX.dice(); setTimeout(() => AudioFX.diceLand({ nat20: true }), 700);
+  };
+}
+
 /* ═══════════ 编年史渲染 ═══════════ */
 function chron() { return $("#chronicle"); }
 function addItem(cls) {
@@ -417,28 +432,60 @@ $("#ask-form").addEventListener("submit", (e) => {
 function connectSSE() {
   if (S.es) return;
   S.es = new EventSource("/api/stream");
-  S.es.addEventListener("ready", () => { refreshState(); });
+  S.es.addEventListener("ready", () => {
+    S.live = true;          // 历史重放结束，之后的特效才做动画/音效
+    refreshState();
+  });
   S.es.onmessage = (m) => {
     try { route(JSON.parse(m.data)); } catch (err) { console.warn(err); }
   };
   S.es.onerror = () => { /* EventSource 自动重连 */ };
 }
 function route(ev) {
-  if (ev.id && ev.id <= S.lastId) return;
+  // 服务端开新对局（含他处开团）：页面自动跟随进入对局视图
+  if (!S.started && (ev.t === "prose" || ev.t === "scene")) enterGame();
+  // 服务端对局更替后事件 id 从 1 重新计数：识别为新流，清空旧编年史
+  if (ev.id && S.lastId > 0 && ev.id <= S.lastId) {
+    if (ev.id !== 1 && ev.id !== S.lastId) return;   // 旧流的重复投递
+    if (ev.id === 1) resetForNewStream();
+  }
   if (ev.id) S.lastId = ev.id;
   switch (ev.t) {
-    case "scene": addScene(ev); setScene(ev); break;
+    case "scene": addScene(ev); setScene(ev); if (S.live) AudioFX.page(); break;
     case "narration": addNarration(ev); break;
     case "prose": addProse(ev); break;
     case "npc": addSpeech("npc", ev); break;
     case "companion": addSpeech("ally", ev); break;
-    case "dice": addDice(ev); break;
+    case "dice":
+      addDice(ev);
+      if (S.live) DiceFX.play({ kind: ev.label && deathLike(ev.label) ? "death" : "check",
+                                who: ev.who, label: ev.label, dc: ev.dc,
+                                d20: ev.d20, rolls: ev.rolls, adv: ev.adv,
+                                total: ev.total, success: ev.success });
+      break;
+    case "roll":
+      if (S.live) DiceFX.play(ev);
+      break;
     case "system": addSystem(ev); break;
     case "board": addBoard(ev); break;
     case "ask": showAsk(ev); break;
     case "choice_made": markRemoteChoice(ev); break;
     case "game_over": onGameOver(ev); break;
   }
+}
+function resetForNewStream() {
+  chron().innerHTML = "";
+  S.lastId = 0;
+  S.live = false;          // 重放完成（ready 事件）后才恢复特效
+  S.levels = null;
+  S.gold = null;
+  $("#ending").classList.add("hidden");
+  $("#flourish").classList.add("hidden");
+  // 若页面仍停在开始页（他处开团/外部驱动），自动跟随进入对局
+  if (!S.started) enterGame();
+}
+function deathLike(label) {
+  return String(label || "").includes("死亡豁免");
 }
 function markRemoteChoice(ev) {
   cancelHide();
@@ -454,6 +501,12 @@ function onGameOver(ev) {
   $("#ask-form").classList.add("hidden");
   $("#choices").classList.add("hidden");
   $("#idle-hint").style.display = "";
+  if (ev.reason === "ended" && ev.epilogue) {
+    if (S.live) Flourish.ending(ev);
+    else addSystem({ text: "—— 本次冒险落下帷幕。 ——" });
+    refreshState();
+    return;
+  }
   const text = ev.reason === "ended" ? "—— 本次冒险落下帷幕。 ——"
     : ev.reason === "reset" ? "—— 对局已重置。 ——"
     : "发生异常：" + (ev.error || "未知错误");
@@ -467,10 +520,28 @@ async function refreshState() {
   if (!r.ok) return;
   const st = r.body;
   if (!st.started) return;
+  // 服务端对局更替（代际变化）：重连事件流，跟随新对局
+  if (S.gen !== undefined && st.generation !== undefined && st.generation !== S.gen) {
+    S.gen = st.generation;
+    if (S.es) { S.es.close(); S.es = null; }
+    S.lastId = 0;
+    S.live = false;
+    resetForNewStream();
+    connectSSE();
+  }
+  if (st.generation !== undefined) S.gen = st.generation;
+  // 模式徽标（AI 接入与否）
+  const badge = $("#mode-badge");
+  badge.textContent = st.llm_active ? `AI 模式 · ${st.model || ""}` : "剧本模式";
+  badge.classList.toggle("ai", !!st.llm_active);
   setScene({ act: st.act, title: st.act_title, location: st.location });
   $("#gold-chip").textContent = st.gold + " 金币";
+  // 金币变动音（仅 live 推进时）
+  if (S.live && S.gold !== null && st.gold > S.gold) AudioFX.coin();
+  S.gold = st.gold;
   if (st.module_title) {
     $("#brand-title").textContent = st.module_title;
+    document.title = st.module_title + " · CTRCG 跑团手记";
   }
   $("#flag-list").innerHTML = "";
   const keys = Object.entries(st.flags || {});
@@ -481,17 +552,26 @@ async function refreshState() {
     p.textContent = `· ${k}：${v}`;
     $("#flag-list").appendChild(p);
   });
+  // 队伍升级检测（对比上次快照）
+  const nowLevels = {};
+  st.party.forEach(pc => { nowLevels[pc.name] = pc.level; });
+  if (S.live && S.levels) {
+    const ups = st.party.filter(pc => S.levels[pc.name]
+                                      && pc.level > S.levels[pc.name]).map(pc => pc.name);
+    if (ups.length) Flourish.levelUp(ups);
+  }
+  S.levels = nowLevels;
   const list = $("#party-list");
   list.innerHTML = "";
   st.party.forEach(pc => {
     const d = document.createElement("div");
-    d.className = "pc";
+    d.className = "pc" + (pc.hp <= 0 ? " pc-down" : "");
     const pct = Math.max(0, (pc.hp / pc.hp_max) * 100);
     const color = pct > 55 ? "#77874f" : pct > 25 ? "#b08a3e" : "#a04840";
     const slots = Object.entries(pc.slots || {}).filter(([, n]) => n > 0)
       .map(([lv, n]) => lv + "环×" + n).join(" ") || "";
     d.innerHTML = `
-      <div class="medal">${pc.name[0]}</div>
+      <div class="medal">${AvatarFX.avatar(pc.race, pc.klass_key || pc.klass, pc.name)}</div>
       <div>
         <div class="pc-name"><span>${pc.name}</span><span class="pc-klass">${pc.level}级${pc.klass}${pc.is_player ? " · 你" : ""}</span></div>
         <div class="pc-line2">
@@ -741,12 +821,14 @@ function enterGame() {
   $("#app").classList.remove("hidden");
   connectSSE();
   refreshState();
+  setTimeout(() => Tour.show(), 900);
 }
 
 $("#btn-reset").addEventListener("click", async () => {
   await jfetch("/api/reset", { method: "POST", body: "{}",
     headers: { "Content-Type": "application/json" } });
   S.es && S.es.close(); S.es = null; S.lastId = 0; S.started = false;
+  S.live = false; S.levels = null; S.gold = null;
   location.reload();
 });
 

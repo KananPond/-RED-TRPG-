@@ -48,6 +48,17 @@ class ConsoleUI:
     def save_line(self, result: dict) -> dict:
         return self.check_line(result)
 
+    def roll_event(self, ev: dict) -> None:
+        """战斗骰子事件：终端下并入日志行（WebUI 会播放动画）。"""
+        kind = ev.get("kind", "roll")
+        d = ev.get("d20")
+        if d is None:
+            return
+        tag = {"attack": "攻击", "save": "豁免", "death": "死亡豁免",
+               "check": "检定"}.get(kind, "")
+        self._out(f"  🎲 {ev.get('who', '')} {ev.get('label', '') or tag}"
+                  f"：d20={d}（共 {ev.get('total', '?')}）")
+
     def system_line(self, text: str) -> dict:
         self._out(f"\n✦ {text}")
         return {"ok": True}

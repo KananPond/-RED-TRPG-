@@ -107,6 +107,7 @@ class AppState:
         self._runtime_key: str | None = None       # 仅内存，不落盘
         self._persisted: dict = self._load_llm_settings()
         self.lock = threading.Lock()
+        self.generation = 0                        # 对局代际：每次 start +1
         self.llm_cfg = self._resolve_llm_config()
 
     # ------------------------------------------------------------ LLM 配置
@@ -225,12 +226,16 @@ class AppState:
         ui = WebUI()
         session = build_session(state, ui, self.llm_cfg, module=module,
                                 meter=self.meter)
+        with self.lock:
+            self.generation += 1
         self.ui, self.session = ui, session
 
         def run():
             try:
                 session.run()
-                ui._emit("game_over", reason="ended")
+                ui._emit("game_over", reason="ended",
+                         epilogue=session.state.epilogue_snapshot(),
+                         dice_stats=ui.dice_stats())
             except AbortGame:
                 pass
             except Exception as e:  # noqa: BLE001 —— 错误必须反馈到前端
@@ -244,6 +249,7 @@ class AppState:
         with self.lock:
             ui, session = self.ui, self.session
             self.session = None
+            self.ui = None            # 置空：新连接不再回放已结束对局的历史
         if session is not None and ui is not None:
             ui.abort()
 
@@ -254,7 +260,8 @@ class AppState:
         base = {"started": False, "llm_active": cfg is not None,
                 "model": cfg.model if cfg else "",
                 "provider": cfg.provider if cfg else "",
-                "save_exists": save_exists, "running": False}
+                "save_exists": save_exists, "running": False,
+                "generation": self.generation}
         if self.session is None:
             return base
         st = self.session.state
@@ -274,6 +281,8 @@ class AppState:
             "party": [{
                 "name": c.name,
                 "klass": M.D_NAME.get(c.klass, c.klass),
+                "klass_key": c.klass,
+                "race": c.race,
                 "level": c.level, "hp": c.hp_cur, "hp_max": c.hp_max,
                 "ac": c.ac(),
                 "conditions": sorted(_cn(c.conditions)),
@@ -416,7 +425,7 @@ def generate_module(app: AppState, spec: dict) -> tuple[Module | None, list[str]
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
     app: AppState  # 由 make_server 注入
-    server_version = "CTRCG/0.3"
+    server_version = "CTRCG/1.0"
 
     # ------------------------------------------------------------ 工具
     def _json(self, obj, status: int = 200) -> None:
@@ -518,6 +527,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             return
         q = self.app.ui.subscribe()
+        gen = self.app.generation
         try:
             history = list(self.app.ui.history)
             for ev in history:
@@ -525,12 +535,18 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(b"event: ready\ndata: {}\n\n")
             self.wfile.flush()
             last_id = history[-1]["id"] if history else 0
+            idle_checks = 0
             while True:
+                if self.app.generation != gen or self.app.ui is not ui:
+                    # 对局已更替/重置：断开旧流，浏览器 EventSource 会自动重连
+                    break
                 try:
-                    ev = q.get(timeout=15)
+                    ev = q.get(timeout=3)
                 except queue.Empty:
-                    self.wfile.write(b": ping\n\n")
-                    self.wfile.flush()
+                    idle_checks += 1
+                    if idle_checks % 5 == 0:          # 约每 15 秒一次保活 ping
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
                     continue
                 if ev.get("id", 0) <= last_id:
                     continue

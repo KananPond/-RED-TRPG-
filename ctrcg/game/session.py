@@ -219,19 +219,43 @@ class GameSession:
             c.apply_default_choices()
 
     def _flavor_line(self, scene: dict) -> None:
-        """剧本模式下同伴的应景发言。"""
+        """剧本模式下同伴的应景发言。
+
+        默认三人组用专属台词；其余同伴按职业取应景台词池，
+        以（场景 id × 同伴名）散列选句，避免整队复读同一句。"""
         if self.ai_mode:
             return
-        lines = {
+        named = {
             "roland": "保持队形。有情况先告诉我。",
             "veilan": "这地方的气味……可不太妙。",
             "pip": "哇哦，你看这些石头！典型的矮人工艺！",
         }
-        for c in self.state.companions:
-            if c.hp_cur > 0:
-                self.ui.companion_line(c.name, lines.get(
-                    "roland" if "罗兰" in c.name else
-                    "veilan" if "薇兰" in c.name else "pip", "嗯。"))
+        generic = {
+            "barbarian": ["哼，这地方闻起来有血味。我喜欢。", "要打起来就交给我。", "别拦着我上前。"],
+            "bard": ["这地方能写进歌里——大概吧。", "要我唱一段壮壮胆吗？", "注意听，风里有故事。"],
+            "cleric": ["愿晨光护佑此行。", "若有伤者，交给我。", "这里……有些不安的气息。"],
+            "druid": ["草木在低声说话……它们不太高兴。", " 自然在这里被扭曲了。", "轻些走，别惊扰它们。"],
+            "fighter": ["保持队形，稳住。", "我在前面开路。", "注意两翼，这里适合设伏。"],
+            "monk": ["心如止水，步履如风。", "我先行探路。", "这里的气……不顺。"],
+            "paladin": ["以誓言之名，此处不容邪祟。", "跟紧我。", "若有人受伤，到我身后来。"],
+            "ranger": ["这里的痕迹……不对劲。", "我听得到——有东西在动。", "留神脚下，有陷阱的迹象。"],
+            "rogue": ["让我先看看有什么值钱的……和要命的。", "影子里有动静。", "嘘——你们听。"],
+            "sorcerer": ["空气里魔力在发烫。", "直觉告诉我：小心。", "这地方……让我不舒服。"],
+            "warlock": ["我的主低语着警告……", "黑暗里有眼睛在看。", "契约指引我前行。"],
+            "wizard": ["典型的奥术痕迹，有意思。", "让我记录一下这里。", "理论上有危险，实践上……也有。"],
+        }
+        for i, c in enumerate(self.state.companions):
+            if c.hp_cur <= 0:
+                continue
+            key = ("roland" if "罗兰" in c.name else
+                   "veilan" if "薇兰" in c.name else
+                   "pip" if "皮普" in c.name else None)
+            if key:
+                self.ui.companion_line(c.name, named[key])
+                continue
+            pool = generic.get(c.klass, generic["fighter"])
+            h = sum((scene.get("id", "") + c.name).encode("utf-8"))
+            self.ui.companion_line(c.name, pool[h % len(pool)])
 
     def advance_scene(self, scene_id: str) -> dict:
         cur = self.module.scene_by_id(self.state.scene_id)
@@ -483,6 +507,15 @@ class GameSession:
                 while "dead" not in d.conditions and COND_STABLE not in d.conditions:
                     ds = d.death_save_turn(self.state.rng)
                     if ds:
+                        self.ui.roll_event({
+                            "who": ds["who"], "kind": "death", "label": "死亡豁免",
+                            "d20": ds.get("d20"), "rolls": list(ds.get("rolls") or []),
+                            "adv": 0, "dc": 10, "total": ds.get("d20"),
+                            "success": ds["result"] in ("revived", "stable")
+                                       or (ds.get("d20") or 0) >= 10,
+                            "note": {"revived": "奇迹生还！", "stable": "伤势稳定",
+                                     "died": "回天乏术……", "pending": ""}[ds["result"]],
+                        })
                         self.ui.system_line(
                             f"☠ {ds['who']} 死亡豁免：{ds['detail']} → {ds['result']}")
         # 战斗结束清理：临时战斗状态消失
@@ -521,11 +554,19 @@ class GameSession:
         target = enc.find(act["target"])
         if target is None:
             return
-        before = len(enc.log)
+        mark = (len(enc.log), len(enc.rolls))
         enc.attack_action(mon, target, act.get("weapon"), self.state.rng)
-        self.ui.raw("  " + "\n  ".join(enc.log[before:]))
+        self._flush_enc(enc, mark)
 
     # ---------------- 玩家回合：动作阶段 + 附赠阶段
+    def _flush_enc(self, enc: Encounter, mark: tuple[int, int]) -> None:
+        """把自 mark 以来累积的骰子事件与战斗日志按序推给 UI。"""
+        b_log, b_rolls = mark
+        for ev in enc.rolls[b_rolls:]:
+            self.ui.roll_event(ev)
+        for line in enc.log[b_log:]:
+            self.ui.raw("  " + line)
+
     def player_combat_turn(self, enc: Encounter) -> None:
         pc = self.state.player
         # 动作阶段（begin_turn 已由 next_turn 处理）
@@ -583,10 +624,9 @@ class GameSession:
     def _execute_action(self, enc: Encounter, pc: Character, idx: int,
                         opts: list[str], foes: list) -> bool:
         choice = opts[idx]
-        before = len(enc.log)
+        mark = (len(enc.log), len(enc.rolls))
         def flush():
-            for line in enc.log[before:]:
-                self.ui.raw("  " + line)
+            self._flush_enc(enc, mark)
         if choice.startswith("动作如潮"):
             r = enc.action_surge(pc)
             if not r.get("ok"):
@@ -739,11 +779,10 @@ class GameSession:
                 si = self.ui.choose("命中后消耗法术位施展神佑斩？", opts)
                 if si > 0:
                     smite_slot = avail[si - 1]
-        before = len(enc.log)
+        mark = (len(enc.log), len(enc.rolls))
         enc.attack_action(pc, target, weapon, self.state.rng,
                           reckless=reckless, smite_slot=smite_slot, maneuver=maneuver)
-        for line in enc.log[before:]:
-            self.ui.raw("  " + line)
+        self._flush_enc(enc, mark)
         return True
 
     def _bonus_options(self, pc: Character) -> list[str]:
@@ -787,10 +826,9 @@ class GameSession:
     def _execute_bonus(self, enc: Encounter, pc: Character, idx: int,
                         opts: list[str]) -> bool:
         choice = opts[idx]
-        before = len(enc.log)
+        mark = (len(enc.log), len(enc.rolls))
         def flush():
-            for line in enc.log[before:]:
-                self.ui.raw("  " + line)
+            self._flush_enc(enc, mark)
         foes = enc.active_enemies()
         allies = enc.active_party()
         if choice.startswith("回气"):
@@ -911,15 +949,14 @@ class GameSession:
 
     def companion_turn(self, enc: Encounter, pc: Character) -> None:
         acted = False
-        before = len(enc.log)
+        mark = (len(enc.log), len(enc.rolls))
         if self.ai_mode:
             agent = self.pc_agents.get(pc.name)
             if agent is not None:
                 acted = self._pc_agent_turn(enc, pc, agent)
         if not acted:
             self._scripted_pc_turn(enc, pc)
-        for line in enc.log[before:]:
-            self.ui.raw("  " + line)
+        self._flush_enc(enc, mark)
 
     def _pc_agent_turn(self, enc: Encounter, pc: Character, agent) -> bool:
         reg = ToolRegistry()

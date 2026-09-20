@@ -33,8 +33,9 @@ class ConsoleUI:
         self._out(f"  ❖ {npc}：「{text}」")
         return {"ok": True}
 
-    def companion_line(self, name: str, text: str) -> dict:
-        self._out(f"  ◈ {name}：「{text}」")
+    def companion_line(self, name: str, text: str, interrupt: bool = False) -> dict:
+        mark = "（抢话）" if interrupt else ""
+        self._out(f"  ◈ {name}{mark}：「{text}」")
         return {"ok": True}
 
     def check_line(self, result: dict, context: str = "") -> dict:

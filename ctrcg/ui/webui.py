@@ -60,8 +60,8 @@ class WebUI:
         self._emit("npc", who=npc, text=text)
         return {"ok": True}
 
-    def companion_line(self, name: str, text: str) -> dict:
-        self._emit("companion", who=name, text=text)
+    def companion_line(self, name: str, text: str, interrupt: bool = False) -> dict:
+        self._emit("companion", who=name, text=text, interrupt=bool(interrupt))
         return {"ok": True}
 
     def check_line(self, result: dict, context: str = "") -> dict:

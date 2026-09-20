@@ -152,11 +152,14 @@ class DefaultAgentLoop:
 
     def run(self, agent: Agent, session: Session, task: str,
             context_messages: list[dict] | None = None,
-            registry: ToolRegistry | None = None) -> AgentResult:
+            registry: ToolRegistry | None = None,
+            guard_dup: DuplicateCallGuard | None = None) -> AgentResult:
         """context_messages：调用方注入的场景上下文（作为 user 消息）。
-        registry：可按次覆盖（DM/PC 使用不同工具组）。"""
+        registry：可按次覆盖（DM/PC 使用不同工具组）。
+        guard_dup：可按次覆盖（并行运行同一 loop 时各自独立计数）。"""
         registry = registry or self.registry
-        self.guard_dup.reset()
+        dup = guard_dup or self.guard_dup
+        dup.reset()
         session.log_message(user(task))
         if context_messages:
             for m in context_messages:
@@ -181,7 +184,7 @@ class DefaultAgentLoop:
                 return self._finish(agent, session, resp.content or "", step, trace, usage_total)
             for call in resp.tool_calls:
                 session.log_tool_call(call)
-                blocked = self.guard_dup.inspect(call, session)
+                blocked = dup.inspect(call, session)
                 result = blocked if blocked else self.guard_timeout.dispatch(
                     registry, call, session)
                 session.log_tool_result(call.id, call.name, result)

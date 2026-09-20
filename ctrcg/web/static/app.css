@@ -274,6 +274,12 @@ input:focus, select:focus { outline: 2px solid var(--gold); outline-offset: -1px
 .speech .sp-name { font-size: 12.5px; letter-spacing: .18em; color: #c3ae7c; margin-bottom: 3px; }
 .speech .sp-text { font-family: var(--kai); font-size: 16.5px; line-height: 1.9; color: #ded1aa; }
 .speech.dm .sp-name { color: var(--gold-bright); }
+.speech .sp-name .interrupt {
+  display: inline-block; margin-left: 8px; padding: 1px 7px 2px;
+  font-size: 10.5px; letter-spacing: .1em; vertical-align: 1px;
+  color: #ffb37a; border: 1px solid rgba(255, 163, 102, .45);
+  border-radius: 3px; background: rgba(255, 163, 102, .08);
+}
 .speech.dm .sp-text { color: #e8dcba; }
 
 .dice {

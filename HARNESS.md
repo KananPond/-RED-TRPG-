@@ -65,6 +65,35 @@ run(agent, session, task):
 每个 Agent 调用使用独立注册表（DM 与 PC 工具组不同），
 通过 `DefaultAgentLoop.run(..., registry=...)` 按次注入。
 
+## 桌边社交层（game/social.py，v1.5.0）
+
+探索期的玩家输入由 `TableSocial.beat()` 编排成一整个社交节拍，
+让 PC 智能体像真实桌边的玩家一样行动：
+
+1. **抢话窗口**：玩家输入后、DM 回应前，每名存活同伴并行获得一次
+   "说或不说"的决策（工具 `say`/`hold`；`say(interrupt=true)` 表示
+   抢过话头）。抢话者先出口，每波至多 2 人开口（`MAX_WAVE_SPEAKERS`）。
+2. **DM 回应**：插话摘要经 `GameSession._digest_table()` 进入 DM 上下文
+   （`【桌上插话】`）并清账——保持"模型可见 ⟺ 已记录"不变量。
+3. **自由反应**：DM 说完后再来一波反应（`say` 可带立场
+   `agree/object/question`）。
+4. **辩论轮**（`run_debate`）：存在 object 立场且桌上有对立面时，
+   反对者、被点名者与本次开口者进入至多 `DEBATE_MAX_ROUNDS` 轮辩论；
+   每轮每人一次 `say`/`hold`（并行、各自 fresh `DuplicateCallGuard`），
+   hold / agree / 无回应即退出，少于 2 人仍在争则收束。
+5. **DM 即席回应**：桌上有新话后 `dm_turn(lead="桌上的同伴们刚交谈过")`
+   一次；辩论发生过则再留一个"最后一句话"反应波（max_speakers=1）。
+
+实现要点：
+- 社交运行走**专用 DefaultAgentLoop**（`StepBudgetGuard(max_steps=4)`、
+  独立 `ToolTimeoutGuard` 线程池），复用同一 adapter；共享 loop 的
+  `guard_dup` 有状态，故 `run()` 支持按次注入 fresh guard（v1.5.0）。
+- 同伴的桌面发言与战斗行动**共用同一 Session**（`pc_session()`）——
+  人设记忆跨阶段延续。
+- DM 回合内若 `start_encounter` 拉开了战斗，节拍立即中止交还战斗编排。
+- LLM 不可达/超时：单次社交运行静默失败（返回空），绝不阻塞对局；
+  剧本模式（loop=None）不构建社交层。
+
 ## 与 deepseek-harness 的差异（有意为之）
 
 - dsh 基于 Cordis/TypeScript 的进程级插件容器；本项目是单进程 Python

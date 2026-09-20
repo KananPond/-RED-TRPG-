@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from ..campaign.loader import Module
 from ..harness.events import Session
-from ..harness.loop import AgentResult, DefaultAgentLoop
+from ..harness.loop import (
+    AgentResult, DefaultAgentLoop, DuplicateCallGuard, StepBudgetGuard,
+    ToolTimeoutGuard,
+)
 from ..harness.registry import ToolRegistry
 from ..rules import data as D
 from ..rules.character import (
@@ -23,6 +26,7 @@ from ..rules.character import (
 from ..rules.combat import Encounter, monster_choose_action
 from ..rules.dice import roll
 from . import state as G
+from .social import TableSocial
 from .tools import GameTools
 
 SAVE_FILE = "saves/game.json"
@@ -66,6 +70,23 @@ class GameSession:
         self._dm_session = Session("dm", log_dir=log_dir)
         self._pc_sessions: dict[str, Session] = {}
         self._log_dir = log_dir
+        self.table_log: list[dict] = []       # 桌面插话（DM 消化进上下文后清账）
+        # 桌边社交层（抢话/反应/辩论）：专用小步数循环，工具调用线程池独立，
+        # 避免与 DM 战斗工具调用争抢同一 guard 线程池
+        self.social: TableSocial | None = None
+        if self.ai_mode:
+            social_loop = DefaultAgentLoop(
+                registry=None, adapter=loop.adapter,
+                guard_step=StepBudgetGuard(max_steps=4),
+                guard_timeout=ToolTimeoutGuard(),
+                guard_dup=DuplicateCallGuard(),
+                compactor=loop.compactor)
+            self.social = TableSocial(self, social_loop)
+
+    def pc_session(self, name: str) -> Session:
+        """同伴的持久会话（战斗与桌面社交共用一份记忆）。"""
+        return self._pc_sessions.setdefault(
+            name, Session(f"pc:{name}", log_dir=self._log_dir))
 
     # ================================================================ 主流程
     def run(self) -> None:
@@ -421,7 +442,10 @@ class GameSession:
                 continue
             if text == "/退出":
                 return "quit"
-            self.dm_turn(text)
+            if self.social is not None:
+                self.social.beat(text)    # 抢话/反应/辩论 + DM 回合
+            else:
+                self.dm_turn(text)
             # DM 本回合可能触发了战斗
             if self.encounter is not None:
                 outcome = self.run_combat()
@@ -435,19 +459,39 @@ class GameSession:
                 if scene["next"] is None:
                     return "end"
 
-    def dm_turn(self, player_text: str) -> None:
+    def dm_turn(self, player_text: str, lead: str = "玩家回合，请推进剧情",
+                input_label: str = "玩家输入") -> str | None:
+        """跑一次 DM Agent。桌面上同伴的插话（table_log）先消化进其上下文。
+
+        lead：任务前缀（桌面回应轮用别的措辞）；返回最终叙述（无则 None）。"""
         scene = self.module.scene_by_id(self.state.scene_id)
+        table = self._digest_table()
         context = [{"role": "user", "content": (
             f"【场景】{scene['id']}：{scene['location']}\n"
             f"【队伍】{self.state.party_snapshot()}\n"
             f"【旗标】{self.state.flags or '无'}\n"
-            f"【玩家输入】{player_text}")}]
+            + (f"【桌上插话】\n{table}\n" if table else "")
+            + f"【{input_label}】{player_text}")}]
         result = self.loop.run(self.dm_agent, self._dm_session,
-                               f"玩家回合，请推进剧情：{player_text}",
+                               f"{lead}：{player_text}",
                                context_messages=context, registry=self.registry)
         self._record_usage(self.dm_agent, result)
         if result.content and result.content.strip():
             self.ui.dm_narration(result.content.strip())
+            return result.content.strip()
+        return None
+
+    def _digest_table(self) -> str:
+        """把桌上插话折成 DM 可读的摘要并清账（模型可见 ⟺ 已记录）。"""
+        if not self.table_log:
+            return ""
+        lines = []
+        for l in self.table_log:
+            mark = "（抢话）" if l.get("interrupt") else ""
+            to = f"（对{l['to']}）" if l.get("to") else ""
+            lines.append(f"{l['who']}{mark}{to}：「{l['text']}」")
+        self.table_log.clear()
+        return "\n".join(lines)
 
     def _record_usage(self, agent, result: AgentResult) -> None:
         if self.meter is not None and result.usage:
@@ -1048,8 +1092,7 @@ class GameSession:
     def _pc_agent_turn(self, enc: Encounter, pc: Character, agent) -> bool:
         reg = ToolRegistry()
         self.tools.register_pc_tools(reg, pc)
-        session = self._pc_sessions.setdefault(
-            pc.name, Session(f"pc:{pc.name}", log_dir=self._log_dir))
+        session = self.pc_session(pc.name)
         foes = "；".join(f"{f.name} HP{f.hp_cur}/{f.hp_max} AC{f.ac()}"
                          for f in enc.active_enemies())
         allies = "；".join(f"{a.name} HP{a.hp_cur}/{a.hp_max}"
@@ -1060,7 +1103,8 @@ class GameSession:
         task = (f"【第{enc.round}轮 · {pc.name} 的回合】\n敌人：{foes}\n队伍：{allies}\n"
                 f"你 HP {pc.hp_cur}/{pc.hp_max}，法术位 {pc.spell_slots()}，"
                 f"资源 {'；'.join(pc.resource_lines())}。{extra}"
-                f"请用 combat_action 执行你的回合（每回合一个动作+一个附赠动作）。")
+                f"想喊话就先 say 一句简短的战吼/提醒/嘲讽（可选），"
+                f"再用 combat_action 执行你的回合（每回合一个动作+一个附赠动作）。")
         try:
             result: AgentResult = self.loop.run(agent, session, task, registry=reg)
             self._record_usage(agent, result)

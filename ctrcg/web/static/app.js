@@ -317,6 +317,12 @@ function addSpeech(kind, ev) {
   const name = document.createElement("p");
   name.className = "sp-name";
   name.textContent = kind === "npc" ? ev.who : ev.who + " · 队友";
+  if (ev.interrupt) {
+    const badge = document.createElement("span");
+    badge.className = "interrupt";
+    badge.textContent = "抢话";
+    name.append(badge);
+  }
   const text = document.createElement("p");
   text.className = "sp-text";
   text.textContent = ev.text;

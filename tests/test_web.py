@@ -92,6 +92,26 @@ class TestWebUI(unittest.TestCase):
         t.join(timeout=2)
         self.assertTrue(result.get("aborted"))
 
+    def test_ask_roll_blocks_until_resolved(self):
+        ui = WebUI()
+        result = {}
+
+        def ask():
+            result["ok"] = ui.ask_roll("轮到你掷骰 —— 察觉检定（DC 12）")
+        t = threading.Thread(target=ask, daemon=True)
+        t.start()
+        time.sleep(0.05)
+        self.assertEqual(ui.pending_view()["kind"], "roll")
+        ok, err = ui.resolve(index=0)
+        self.assertTrue(ok, err)
+        t.join(timeout=2)
+        self.assertTrue(result.get("ok"))
+        self.assertIsNone(ui.pending_view())
+        # 掷骰与确认都会广播给所有标签页
+        kinds = [e["t"] for e in ui.history]
+        self.assertIn("ask", kinds)
+        self.assertIn("choice_made", kinds)
+
     def test_free_input_returns_text(self):
         ui = WebUI()
         result = {}
@@ -323,6 +343,11 @@ class TestWebServer(unittest.TestCase):
         self.assertIn("升到 3 级", joined)
         # SSE 广播有订阅事件（选择请求发出过）
         self.assertTrue(any(e["t"] == "ask" for e in self.app.ui.history))
+        # 玩家检定必须经掷骰按钮（ask kind=roll），且检定卡带调整值明细
+        self.assertTrue(any(e["t"] == "ask" and e.get("kind") == "roll"
+                            for e in self.app.ui.history))
+        self.assertTrue(any(e["t"] == "dice" and e.get("mods")
+                            for e in self.app.ui.history))
 
     # ------------------------------------------------------------ 助手
     def _start_game(self):
@@ -342,6 +367,8 @@ class TestWebServer(unittest.TestCase):
         if pending["kind"] == "choose":
             idx = bot.choose(pending["prompt"], pending["options"])
             status, body = http_post(self.port, "/api/answer", {"index": idx})
+        elif pending["kind"] == "roll":
+            status, body = http_post(self.port, "/api/answer", {"index": 0})
         else:
             status, body = http_post(self.port, "/api/answer", {"text": "继续前进，留意四周。"})
         self.assertEqual(status, 200, body)
@@ -360,6 +387,10 @@ class _Bot:
         if "队伍长休" in options and self.rested_at != prompt:
             self.rested_at = prompt
             return next(i for i, o in enumerate(options) if "队伍长休" in o)
+        # 先做完本场景的检定机会（触发掷骰按钮流程），再推进剧情
+        for i, o in enumerate(options):
+            if "检定机会" in o:
+                return i
         _, st = http_get(self.port, "/api/state")
         me = next((p for p in st["party"] if p.get("is_player")), None)
         hurt = bool(me and me["hp"] < me["hp_max"] * 0.5)

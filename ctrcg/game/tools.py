@@ -37,14 +37,16 @@ class GameTools:
             lambda npc, text: self.ui.npc_line(npc, text))
         registry.register(
             "skill_check",
-            "让某位角色进行技能检定（引擎掷骰）。who 为角色全名或'队伍'。",
+            "让某位角色进行技能检定（引擎掷骰）。who 为角色全名或'队伍'；"
+            "轮到玩家本人时会先等其点击掷骰按钮再结算。",
             {"type": "object",
              "properties": {"who": {"type": "string"}, "skill": {"type": "string"},
                             "dc": {"type": "number"}, "context": {"type": "string"}},
              "required": ["who", "skill", "dc"]},
             self._tool_skill_check)
         registry.register(
-            "save_roll", "让某位角色进行属性豁免（引擎掷骰）。",
+            "save_roll",
+            "让某位角色进行属性豁免（引擎掷骰）；玩家本人的豁免会等其点击掷骰按钮。",
             {"type": "object",
              "properties": {"who": {"type": "string"}, "ability": {"type": "string"},
                             "dc": {"type": "number"}},
@@ -85,12 +87,21 @@ class GameTools:
              "required": ["encounter_id"]},
             self._tool_start_encounter)
 
+    def _ask_player_roll(self, member: Character, prompt: str) -> None:
+        """轮到玩家本人掷骰时，先弹出掷骰按钮等待点击（桌面掷自己的骰子）。
+
+        同伴与终端 UI（无 ask_roll）自动落骰，不打断节奏。"""
+        if member is self.state.player and hasattr(self.ui, "ask_roll"):
+            self.ui.ask_roll(prompt)
+
     def _tool_skill_check(self, who: str, skill: str, dc, context: str = "") -> dict:
         if skill not in D.SKILLS:
             return {"ok": False, "error": f"未知技能 {skill}"}
         member = self.state.find_member(who) if who else None
         if member is None:
             member = self.state.player  # '队伍'默认由玩家执行
+        self._ask_player_roll(
+            member, f"轮到你掷骰 —— {D.SKILLS[skill]['name']}检定（DC {int(dc)}）")
         r = member.check(self.state.rng, skill, int(dc))
         self.ui.check_line(r, context)
         return {**r, "member": member.name}
@@ -99,6 +110,8 @@ class GameTools:
         if ability not in D.ABILITIES:
             return {"ok": False, "error": f"未知属性 {ability}"}
         member = self.state.find_member(who) or self.state.player
+        self._ask_player_roll(
+            member, f"轮到你掷骰 —— {D.ABILITIES[ability]}豁免（DC {int(dc)}）")
         r = member.save(self.state.rng, ability, int(dc))
         self.ui.save_line(r)
         return r

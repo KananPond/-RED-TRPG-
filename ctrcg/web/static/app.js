@@ -329,15 +329,52 @@ function addSpeech(kind, ev) {
   box.append(name, text);
   d.append(medal, box);
 }
+function diceFaces(ev) {
+  /* 骰面徽章：优势/劣势标出保留骰与弃骰；幸运重骰时最后一颗生效 */
+  const rolls = Array.isArray(ev.rolls) ? ev.rolls : [];
+  return rolls.map((v, i) => {
+    const kept = (ev.adv === 1 || ev.adv === -1) && rolls.length === 2
+      ? v === ev.d20
+      : i === rolls.length - 1;
+    return `<b class="face${kept ? "" : " drop"}">${v}</b>`;
+  }).join("");
+}
+
 function addDice(ev) {
   const d = addItem("dice " + (ev.success ? "ok" : "fail"));
-  d.innerHTML = `
+  const mods = Array.isArray(ev.mods) ? ev.mods : [];
+  const verdict = `<span class="d-verdict">${ev.success ? "成功" : "失败"}</span>`;
+  const head = `
     <svg class="d20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1 2.5 6.7 12 23l9.5-16.3L12 1z"/></svg>
-    <span class="d-who">${ev.who}</span>
-    <span>${ev.label || "检定"} DC${ev.dc}</span>
-    <span class="d-detail">${ev.detail}</span>
-    <span class="d-verdict">${ev.success ? "成功" : "失败"}</span>`;
-  if (ev.context) d.title = ev.context;
+    <span class="d-who">${ev.who}</span>`;
+  if (!mods.length) {          // 引擎旧格式/自动失败：退回单行简报
+    d.innerHTML = `<div class="dc-top">${head}
+      <span class="d-label">${ev.label || "检定"} DC${ev.dc}</span>
+      <span class="d-detail">${ev.detail}</span>${verdict}</div>`;
+    if (ev.context) d.title = ev.context;
+    return;
+  }
+  const abil = mods[0][0] || "";
+  const title = ev.kind === "save"
+    ? `${ev.label || abil + "豁免"}（${abil}）`
+    : `${ev.label || "检定"}检定（${abil}）`;
+  const advBadge = ev.adv === 1 ? '<span class="d-adv">优势</span>'
+    : ev.adv === -1 ? '<span class="d-adv">劣势</span>' : "";
+  const modSum = mods.reduce((s, m) => s + (Number(m[1]) || 0), 0);
+  const modsHtml = mods.map(m =>
+    `<b class="mod">${m[0]} ${m[1] >= 0 ? "+" : "−"}${Math.abs(m[1])}</b>`).join("");
+  const sumText = modSum
+    ? `${ev.d20} ${modSum > 0 ? "+" : "−"} ${Math.abs(modSum)} = <b>${ev.total}</b>`
+    : `<b>${ev.total}</b>`;
+  d.innerHTML = `
+    <div class="dc-top">${head}
+      <span class="d-label">${title}</span>${advBadge}${verdict}</div>
+    <div class="dc-break">
+      <span class="dc-part"><label>骰面</label>${diceFaces(ev) || "?"}</span>
+      <span class="dc-part"><label>调整</label>${modsHtml || "<b class='mod'>—</b>"}</span>
+      <span class="dc-part"><label>合计</label><span class="dc-sum">${sumText}</span><i>vs DC ${ev.dc}</i></span>
+    </div>`;
+  d.title = [ev.context, "引擎掷骰：" + ev.detail].filter(Boolean).join("　·　");
 }
 function addSystem(ev) {
   addItem("system-note").textContent = ev.text;
@@ -385,6 +422,29 @@ function showAsk(ev) {
   cancelHide();
   const box = $("#choices"), form = $("#ask-form"), hint = $("#idle-hint");
   hint.style.display = "none";
+  if (ev.kind === "roll") {
+    // 轮到玩家掷骰：专用的 d20 掷骰按钮，点击才落骰
+    form.classList.add("hidden");
+    box.classList.remove("hidden");
+    box.innerHTML = "";
+    const panel = document.createElement("div");
+    panel.className = "roll-panel";
+    const prompt = document.createElement("p");
+    prompt.className = "rp-prompt";
+    prompt.textContent = ev.prompt;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "roll-btn";
+    btn.innerHTML = `
+      <svg class="roll-die" viewBox="0 0 24 24" aria-hidden="true">
+        <path class="die-body" d="M12 1 2.5 6.7 12 23l9.5-16.3L12 1z"/>
+        <path class="die-inner" d="M12 5.2 6.6 8.6 12 17l5.4-8.4L12 5.2z"/>
+      </svg><span>掷 骰 子</span>`;
+    btn.addEventListener("click", () => submitAnswer({ index: 0 }, btn));
+    panel.append(prompt, btn);
+    box.appendChild(panel);
+    return;
+  }
   if (ev.kind === "choose") {
     form.classList.add("hidden");
     box.classList.remove("hidden");
@@ -467,7 +527,8 @@ function route(ev) {
       if (S.live) DiceFX.play({ kind: ev.label && deathLike(ev.label) ? "death" : "check",
                                 who: ev.who, label: ev.label, dc: ev.dc,
                                 d20: ev.d20, rolls: ev.rolls, adv: ev.adv,
-                                total: ev.total, success: ev.success });
+                                total: ev.total, mods: ev.mods,
+                                success: ev.success });
       break;
     case "roll":
       if (S.live) DiceFX.play(ev);

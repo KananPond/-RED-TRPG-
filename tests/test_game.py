@@ -183,5 +183,51 @@ class TestAgentMode(unittest.TestCase):
         self.assertGreater(len(enc.log), before)
 
 
+class _RollGateUI:
+    """记录 ask_roll 调用的最小 UI 桩（模拟 WebUI 的掷骰按钮）。"""
+
+    def __init__(self):
+        self.rolls_asked: list[str] = []
+        self.dice: list[dict] = []
+
+    def ask_roll(self, prompt: str) -> bool:
+        self.rolls_asked.append(prompt)
+        return True
+
+    def check_line(self, result: dict, context: str = "") -> dict:
+        self.dice.append(result)
+        return result
+
+    def save_line(self, result: dict) -> dict:
+        self.dice.append(result)
+        return result
+
+    def system_line(self, text: str) -> dict:
+        return {"ok": True}
+
+
+class TestPlayerRollGate(unittest.TestCase):
+    """玩家本人的检定/豁免要经掷骰按钮；同伴自动落骰。"""
+
+    def test_player_gated_companion_auto(self):
+        state = make_state()
+        ui = _RollGateUI()
+        s = GameSession(state, ui, loop=None)
+        r = s.tools._tool_skill_check("凯尔", "athletics", 10)
+        self.assertEqual(len(ui.rolls_asked), 1)
+        self.assertIn("DC 10", ui.rolls_asked[0])
+        self.assertTrue(ui.dice and ui.dice[-1].get("mods"))
+        # 同伴自动掷，不经按钮
+        comp = state.companions[0].name
+        s.tools._tool_skill_check(comp, "perception", 10)
+        self.assertEqual(len(ui.rolls_asked), 1)
+        # 玩家豁免同样门控
+        s.tools._tool_save("凯尔", "dex", 12)
+        self.assertEqual(len(ui.rolls_asked), 2)
+        self.assertIn("豁免", ui.rolls_asked[-1])
+        # 掷骰结果仍然由引擎结算
+        self.assertIn("total", r)
+
+
 if __name__ == "__main__":
     unittest.main()

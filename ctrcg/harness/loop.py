@@ -35,17 +35,24 @@ class StepBudgetGuard:
 
 
 class ToolTimeoutGuard:
-    def __init__(self, timeout: float = 10.0):
+    # 可能阻塞等待玩家输入的工具（掷骰按钮/升级特性选择）——不受常规超时约束，
+    # 否则玩家思考的十几秒就会把合法的工具调用误判为挂死
+    INTERACTIVE_TOOLS = {"skill_check", "save_roll", "advance_scene", "award_xp"}
+
+    def __init__(self, timeout: float = 10.0, interactive_timeout: float = 3600.0):
         self.timeout = timeout
+        self.interactive_timeout = interactive_timeout
         self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
     def dispatch(self, registry: ToolRegistry, call: ToolCall, session: Session):
         future = self._pool.submit(registry.invoke, call.name, call.arguments)
+        wait = self.interactive_timeout if call.name in self.INTERACTIVE_TOOLS \
+            else self.timeout
         try:
-            return future.result(timeout=self.timeout)
+            return future.result(timeout=wait)
         except concurrent.futures.TimeoutError:
             future.cancel()
-            session.log_guard("tool_timeout", call.name + " 调用超时（" + str(self.timeout) + "s）")
+            session.log_guard("tool_timeout", call.name + " 调用超时（" + str(wait) + "s）")
             return {"ok": False, "error": "工具 " + call.name + " 调用超时"}
 
 

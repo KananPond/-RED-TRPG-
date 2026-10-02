@@ -258,6 +258,30 @@ class Character:
             ac += 2
         return ac
 
+    def skill_breakdown(self, skill: str) -> list:
+        """技能检定的调整值明细 [[标签, 值], ...]（检定过程展示用）。"""
+        abil = D.SKILLS[skill]["ability"]
+        parts = [[D.ABILITIES[abil], self.mod(abil)]]
+        prof = self.prof_bonus()
+        if skill in self.skills:
+            parts.append(["熟练", prof])
+        if skill in self.expertise:
+            parts.append(["专精", prof])
+        elif (self.klass == "bard" and self.level >= 2
+              and skill not in self.saves):
+            parts.append(["万事通", prof // 2])
+        astral = self.astral_ability and D.SKILLS[skill]["ability"] == self.astral_ability
+        if astral and skill not in self.skills and skill not in self.expertise:
+            parts.append(["星界知识", prof])
+        return parts
+
+    def save_breakdown(self, ability: str) -> list:
+        """属性豁免的调整值明细 [[标签, 值], ...]。"""
+        parts = [[D.ABILITIES[ability], self.mod(ability)]]
+        if ability in self.saves:
+            parts.append(["熟练", self.prof_bonus()])
+        return parts
+
     def skill_mod(self, skill: str) -> int:
         if skill not in D.SKILLS:
             raise ValueError(f"未知技能 {skill}")
@@ -475,13 +499,20 @@ class Character:
         if COND_POISONED in self.conditions:
             adv -= 1
         res = self._lucky_d20(rng, adv)
+        mod = self.skill_mod(skill)          # d20 + 调整值 vs DC（属性+熟练/专精）
+        res.modifier = mod
+        res.total = res.kept[0] + mod
         # 祝福术只作用于攻击检定与豁免，不加到属性检定（PHB 2014）
         bi = self.take_bardic(rng)
         ok = res.total + bi >= dc
         total = res.total + bi
+        mods = self.skill_breakdown(skill)
+        if bi:
+            mods.append(["激励", bi])
         return {
             "who": self.name, "check": skill, "dc": dc, "success": ok, "total": total,
             "d20": res.kept[0], "rolls": list(res.rolls), "adv": adv,
+            "mods": mods,
             "detail": res.describe() + (f"（激励+{bi}）" if bi else ""),
         }
 
@@ -508,14 +539,23 @@ class Character:
         if self.exhaustion >= 3:
             adv -= 1
         res = self._lucky_d20(rng, adv)
+        res.modifier = self.save_mod(ability)   # d20 + 调整值 vs DC
+        res.total = res.kept[0] + res.modifier
         bless = 0
         if COND_BLESSED in self.conditions and self.blessing_d4:
             bless = rng.randint(1, self.blessing_d4)
             res.total += bless
         bi = self.take_bardic(rng)
+        mods = self.save_breakdown(ability)
+        if bless:
+            mods.append(["祝福", bless])
+        if bi:
+            mods.append(["激励", bi])
         return {"who": self.name, "save": ability, "dc": dc,
                 "success": res.total + bi >= dc,
+                "total": res.total + bi,
                 "d20": res.kept[0], "rolls": list(res.rolls), "adv": adv,
+                "mods": mods,
                 "detail": res.describe() + (f"（激励+{bi}）" if bi else "")
                           + (f"（祝福+{bless}）" if bless else ""),
                 "bless": bless}

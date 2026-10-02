@@ -67,6 +67,30 @@ class TestCharacterCreation(unittest.TestCase):
         self.assertEqual(c.skill_mod("athletics"), 3 + 2)  # str16=3 + 熟练2
         self.assertEqual(c.skill_mod("arcana"), 0)         # int10 未熟练
 
+    def test_check_mods_breakdown_matches_total(self):
+        """检定过程明细：mods 之和 = 总值 − d20（前端检定卡依赖此恒等式）。"""
+        c = make_fighter()
+        rng = random.Random(11)
+        for skill in ("athletics", "arcana", "intimidation"):
+            r = c.check(rng, skill, 10)
+            mod_sum = sum(v for _, v in r["mods"])
+            self.assertEqual(r["d20"] + mod_sum, r["total"],
+                             f"{skill}: {r['mods']} 与总值不符")
+            labels = [k for k, _ in r["mods"]]
+            self.assertEqual(labels[0], D.ABILITIES[D.SKILLS[skill]["ability"]])
+        # 熟练技能带"熟练"条目，未熟练不带
+        self.assertIn("熟练", [k for k, _ in c.check(rng, "athletics", 10)["mods"]])
+        self.assertNotIn("熟练", [k for k, _ in c.check(rng, "arcana", 10)["mods"]])
+
+    def test_save_mods_breakdown_matches_total(self):
+        c = make_fighter()
+        rng = random.Random(3)
+        r = c.save(rng, "con", 10)
+        mod_sum = sum(v for _, v in r["mods"])
+        self.assertEqual(r["d20"] + mod_sum, r["total"])
+        # 战士体质豁免熟练
+        self.assertIn("熟练", [k for k, _ in r["mods"]])
+
     def test_ranger_slots_start_empty(self):
         c = Character.create(
             name="薇兰", race="high_elf", klass="ranger", background="folk_hero",

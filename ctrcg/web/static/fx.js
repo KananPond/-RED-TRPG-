@@ -174,8 +174,9 @@ const DiceFX = {
     } else {
       const kindName = { save: "豁免", check: "检定", death: "死亡豁免" }[ev.kind] || "检定";
       title = `${who} · ${ev.label || kindName}`;
-      verdict = ev.note ? ev.note
-        : (ev.success ? "成功" : "失败") + (typeof ev.dc === "number" ? `（DC ${ev.dc}）` : "");
+      const sum = typeof ev.total === "number" && typeof ev.dc === "number"
+        ? `${ev.total} vs DC ${ev.dc} · ` : "";
+      verdict = ev.note ? ev.note : `${sum}${ev.success ? "成功" : "失败"}`;
       cls = ev.success ? "ok" : "fail";
       if (ev.kind === "death") cls = ev.success ? "crit" : "fail";
     }
@@ -205,11 +206,14 @@ const DiceFX = {
     setTimeout(() => {
       clearInterval(flicker);
       diceEls.forEach(d => d.classList.remove("tumbling"));
-      // 落定：保留骰高亮，另一颗（优势/劣势的弃骰）暗淡
+      // 落定：保留骰高亮（与 d20 面值匹配，劣势弃高骰也能正确标出），
+      // 其余（优势/劣势弃骰、幸运重骰被覆盖的骰）暗淡
       diceEls.forEach((d, i) => {
-        const kept = !twin || i === 0;      // 约定第一颗为保留骰
+        // 单骰（含幸运重骰：多段 rolls 只渲染一颗）恒为保留骰
+        const kept = diceEls.length === 1 || (twin ? rolls[i] === d20
+                                                   : i === rolls.length - 1);
         d.classList.add("settled", kept ? "kept" : "dropped");
-        d.querySelector(".do-num").textContent = rolls[i] ?? d20 ?? "?";
+        d.querySelector(".do-num").textContent = kept ? (d20 ?? "?") : (rolls[i] ?? "?");
         if (kept && d20 === 20) d.classList.add("nat20");
         if (kept && d20 === 1) d.classList.add("nat1");
       });

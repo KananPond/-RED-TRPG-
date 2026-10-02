@@ -8,7 +8,7 @@ from ctrcg.harness.adapter import OpenAICompatibleAdapter, ScriptedAdapter
 from ctrcg.harness.events import Session
 from ctrcg.harness.loop import (
     Agent, DefaultAgentLoop, DuplicateCallGuard, StepBudgetGuard,
-    TruncateCompactor, estimate_tokens,
+    ToolTimeoutGuard, TruncateCompactor, estimate_tokens,
 )
 from ctrcg.harness.models import ModelResponse, ToolCall
 from ctrcg.harness.registry import ToolRegistry
@@ -136,6 +136,21 @@ class TestLoop(unittest.TestCase):
         r = loop.guard_timeout.dispatch(reg, ToolCall(id="1", name="slow", arguments={}), s)
         self.assertFalse(r["ok"])
         self.assertIn("超时", r["error"])
+
+    def test_interactive_tool_exceeds_normal_timeout(self):
+        """等待玩家点掷骰按钮的工具不受常规超时约束（skill_check 在交互名单）。"""
+        import time
+        reg = ToolRegistry()
+        reg.register("skill_check", "t", {"type": "object", "properties": {}},
+                     fn=lambda: time.sleep(0.4) or {"ok": True})
+        reg.register("slow", "t", {"type": "object", "properties": {}},
+                     fn=lambda: time.sleep(0.4) or {"ok": True})
+        guard = ToolTimeoutGuard(timeout=0.1)
+        s = Session("s6")
+        r = guard.dispatch(reg, ToolCall(id="1", name="slow", arguments={}), s)
+        self.assertFalse(r["ok"])                      # 普通工具 0.1s 超时
+        r = guard.dispatch(reg, ToolCall(id="2", name="skill_check", arguments={}), s)
+        self.assertTrue(r["ok"])                       # 交互工具等满 0.4s
 
 
 class TestEndpointValidation(unittest.TestCase):

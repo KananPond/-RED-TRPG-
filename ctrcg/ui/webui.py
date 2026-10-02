@@ -67,7 +67,9 @@ class WebUI:
     def check_line(self, result: dict, context: str = "") -> dict:
         self._emit("dice", who=result.get("who", ""),
                    label=self._label_cn(result.get("check") or result.get("save") or ""),
+                   kind="check" if result.get("check") else "save",
                    dc=result.get("dc"), detail=result.get("detail", ""),
+                   mods=list(result.get("mods") or []),
                    success=bool(result.get("success")),
                    d20=result.get("d20"), rolls=list(result.get("rolls") or []),
                    adv=result.get("adv", 0), total=result.get("total"),
@@ -129,6 +131,14 @@ class WebUI:
         self._emit("choice_made", index=idx, label=options[idx])
         return idx
 
+    def ask_roll(self, prompt: str) -> bool:
+        """掷骰确认：轮到玩家掷骰时阻塞游戏线程，直到浏览器点击骰子按钮。
+
+        返回 True（按钮语义只有"掷"）。终端 UI 无此方法——检定自动掷骰。"""
+        self._ask("roll", prompt, ["掷骰子"])
+        self._emit("choice_made", index=0, label="掷骰子")
+        return True
+
     def free_input(self, prompt: str) -> str:
         return self._ask("input", prompt, None)
 
@@ -148,7 +158,11 @@ class WebUI:
         if aborted or answer is None:
             raise AbortGame()
         index, text = answer
-        return index if kind == "choose" else (text or "")
+        if kind == "choose":
+            return index
+        if kind == "roll":
+            return True
+        return text or ""
 
     # ------------------------------------------------------------ 应答与终止
     def resolve(self, *, index: int | None = None, text: str | None = None) -> tuple[bool, str | None]:
@@ -157,8 +171,9 @@ class WebUI:
             p = self._pending
             if p is None:
                 return False, "当前没有等待回答的请求"
-            if p["kind"] == "choose":
-                if index is None or not isinstance(index, int) or not (0 <= index < len(p["options"])):
+            if p["kind"] in ("choose", "roll"):
+                if index is None or not isinstance(index, int) \
+                        or not (0 <= index < max(1, len(p["options"]))):
                     return False, "无效的选项编号"
             else:
                 if text is None or not str(text).strip():

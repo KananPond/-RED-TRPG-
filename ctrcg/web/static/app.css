@@ -283,17 +283,68 @@ input:focus, select:focus { outline: 2px solid var(--gold); outline-offset: -1px
 .speech.dm .sp-text { color: #e8dcba; }
 
 .dice {
-  align-self: flex-start; display: inline-flex; align-items: center; gap: 12px;
-  border: 1px solid #8f763f55; background: #241f14cc; padding: 8px 14px;
-  font-family: var(--mono); font-size: 13px; color: #c0b183;
+  align-self: flex-start; display: flex; flex-direction: column; gap: 9px;
+  max-width: 660px; border: 1px solid #8f763f55; background: #241f14cc;
+  padding: 9px 14px; font-family: var(--mono); font-size: 13px; color: #c0b183;
   animation: dieIn .35s ease;
 }
 .dice .d20 { width: 20px; height: 20px; flex-shrink: 0; }
 .dice .d-who { font-family: var(--serif); color: #e2d3a4; }
 .dice .d-detail { color: #93815a; }
-.dice .d-verdict { font-family: var(--serif); letter-spacing: .1em; padding-left: 10px; border-left: 1px solid #8f763f55; }
+.dice .d-verdict { font-family: var(--serif); letter-spacing: .1em; margin-left: auto; padding-left: 12px; border-left: 1px solid #8f763f55; }
 .dice.ok .d-verdict { color: #9fbe7d; }
 .dice.fail .d-verdict { color: #cf7d6a; }
+
+/* 检定过程卡：骰面 → 调整值明细 → 合计 vs DC */
+.dc-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dc-top .d-label { color: #dcc98f; white-space: nowrap; }
+.d-adv {
+  font-size: 11px; padding: 1px 7px; border-radius: 3px; letter-spacing: .1em;
+  color: #c8b078; border: 1px solid #8f763f66; background: #b08a3e14;
+}
+.dc-break {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 26px;
+  margin-top: 2px; padding-top: 9px; border-top: 1px dashed #8f763f38;
+}
+.dc-part { display: flex; align-items: center; gap: 7px; }
+.dc-part label { font-size: 11px; letter-spacing: .24em; color: #7a6a44; }
+.dc-part .face {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 27px; height: 27px; padding: 0 5px;
+  font-size: 14px; font-weight: 700; color: #4a3b1e; background: #efe5cb;
+  border: 1px solid #8f763f;
+  clip-path: polygon(50% 0, 100% 26%, 100% 74%, 50% 100%, 0 74%, 0 26%);
+}
+.dc-part .face.drop {
+  opacity: .42; filter: grayscale(.7); text-decoration: line-through;
+  background: #b9ab8a; border-color: #6d5c34;
+}
+.dc-part .mod { color: #b8c491; }
+.dc-part .mod::first-letter { color: #dcc98f; }
+.dc-part .dc-sum { color: #ecd9a0; font-size: 14px; }
+.dc-part .dc-sum b { font-size: 16px; color: #f4e3b0; text-shadow: 0 0 12px #d2ab5844; }
+.dc-part i { font-style: normal; color: #93815a; letter-spacing: .06em; }
+
+/* ─── 掷骰按钮（轮到玩家掷骰） ─── */
+.roll-panel { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 4px 0; }
+.rp-prompt { font-family: var(--kai); font-size: 15px; color: #c8b88a; letter-spacing: .14em; }
+.roll-btn {
+  display: inline-flex; align-items: center; gap: 14px;
+  font-family: var(--serif); font-size: 19px; letter-spacing: .35em; text-indent: .1em;
+  color: #4a3b1e; background: #efe5cb; border: 1px solid #8f763f;
+  padding: 12px 28px 12px 20px; cursor: pointer;
+  box-shadow: 0 4px 16px #0007, 0 0 26px #d2ab5826;
+  transition: transform .1s ease, border-color .1s ease;
+  animation: riseIn .35s ease both;
+}
+.roll-btn:hover { border-color: var(--gold); transform: translateY(-2px); }
+.roll-btn .roll-die { width: 34px; height: 34px; flex-shrink: 0; }
+.roll-btn .die-body { fill: #b08a3e; stroke: #6b5424; stroke-width: .6; }
+.roll-btn .die-inner { fill: #e8d8a8; opacity: .9; }
+.roll-btn:hover .roll-die { animation: tumble .55s linear infinite; }
+.roll-btn.chosen, .roll-panel.chosen .roll-btn {
+  opacity: .55; pointer-events: none; animation: settlePop .35s ease both;
+}
 
 .system-note { text-align: center; font-size: 13px; color: #a9975f; letter-spacing: .14em; }
 .system-note::before { content: "✦ "; }

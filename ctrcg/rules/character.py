@@ -365,7 +365,6 @@ class Character:
 
     def resource_lines(self) -> list[str]:
         out = []
-        kls = D.CLASSES[self.klass]
         if self.klass == "fighter":
             out.append("回气" + ("已用" if self.second_wind_used else "可用")
                        + "；动作如潮" + ("已用" if self.action_surge_used else "可用"))

@@ -2,6 +2,49 @@
 
 本项目的所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.6.0] — 2026-10-03
+
+SillyTavern 架构推广：非玩家 PC = 独立 Agent，NPC = DM 控制的子智能体；
+默认剧本《蓝望塔》。设计文档：`docs/companion-npc-agents.md`。
+
+### 新增
+- **NPC 子智能体**（`ctrcg/game/npcagent.py`，仅 AI 模式）：DM 新工具
+  `npc_dialogue(npc, instruction)` 把话头交给该 NPC 的子智能体——它依据
+  人设、目标（goals）与对局记忆即兴说 1~2 句，台词渲染到桌面（同伴听得见）、
+  记入 `npc:<id>` 持久会话并回到 DM 的工具结果；DM 随时可用 `speak_as_npc`
+  覆盖，导演权始终在 DM。子代理只有 say 一件工具（无世界面）；LLM 不可达/
+  未知 NPC/剧本模式时优雅降级（返回 ok=False，绝不阻塞对局）。
+- **NPC 持久记忆**：每个 NPC 一份 harness 会话（`GameSession.npc_session`），
+  "NPC 会记仇、也会改主意"有了记忆载体。
+- **模组 NPC 扩展字段**（可选）：`persona/voice/goals/secret/mes_example/
+  first_mes/depth_prompt/talkativeness/book`——最简 name/race/desc 形状
+  行为不变；NPC 卡由 `st.card.card_from_npc` 构建。
+- **同伴接入 ST 组装线**（非玩家 PC = 独立 Agent）：`make_pc_agent` 改经
+  `st.assemble_system` 组装（与 AI PC 同一条通路）——模组可为同伴提供
+  `mes_example / first_mes / depth_prompt / system_prompt / talkativeness /
+  book`（V2 角色书）；卡文本中的 `{{user}}` 宏渲染为玩家角色名
+  （`user` 参数，ST 用户 persona 语义）。
+- **同伴世界书通路**：桌边社交回合注入 `_wi_context`——引擎世界书与该同伴
+  卡上角色书合并扫描（场景/旗标/被点名的 NPC 自动激活），无激活内容不注入。
+- **默认剧本《蓝望塔》**（The Tower of the Blue Watch，
+  `modules/blue-watch/`）：**改编自 InternalRockStudio 的原版冒险素材**
+  （`Additional Ressources/`：指挥官信件、怪物数据、四张地图、物品卡）。
+  三幕五场景（影林土路 → 夏叶旅店 → 蓝望塔），3 遭遇 + 4 种原版自定义
+  怪物（风铃妖/蓝望骷髅卫兵/蓝望队长/『那造物』CR4，CR-XP 与 SRD 一致），
+  校验零警告；蓝望之刃（+1 魔法长剑）按物品卡加入引擎物品表。CLI 与 Web
+  的默认模组 id 均切换为 `blue-watch`；默认剧本缺失时回退代码内置剧本，
+  `blue-watch` 加入 `BUILTIN_IDS`（embergate 一并补齐内置保护）。
+- SillyTavern 上游源码浅克隆至 `.reference/SillyTavern`（gitignored），
+  作为机制参照（`docs/companion-npc-agents.md` 附对照表）。
+
+### 变更
+- `harness.ToolTimeoutGuard` 新增 `LONG_TOOLS` 类别（`npc_dialogue`，180s）：
+  子智能体工具内部要跑几次模型调用，10s 常规超时不够，但仍须有限。
+- `make_pc_agent` / `make_npc_agent` 新增 `user` 关键字参数（玩家名，供
+  `{{user}}` 宏）；既有调用不传时行为不变。
+- 1→3 级入门节奏参考从 starfall 调整为 blue-watch/starfall
+  （MODULE_SPEC §0）。
+
 ## [1.5.0] — 2026-09-20
 
 桌边社交层：智能体更自主——抢话、反应、辩论。

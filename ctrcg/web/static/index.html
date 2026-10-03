@@ -128,6 +128,20 @@
     </div>
 
     <div class="field">
+      <label>AI 玩家角色（AI 代打 · 实验性）</label>
+      <label class="toggle"><input type="checkbox" id="aipc-on">
+        <span>让 AI 代打你的角色（需要已接入 LLM）</span></label>
+      <label class="mini" for="aipc-persona">你的 persona（可空）</label>
+      <textarea id="aipc-persona" rows="3" maxlength="1000"
+        placeholder="希望队伍如何称呼/看待「玩家」：来历、口癖、相处方式……"></textarea>
+      <div class="row-btns">
+        <button class="btn solid" id="aipc-save">保存 AI 代打设置</button>
+      </div>
+      <p class="hint" id="aipc-llm-hint"></p>
+      <p class="hint" id="aipc-msg"></p>
+    </div>
+
+    <div class="field">
       <label>音效</label>
       <div class="sound-row">
         <label class="toggle"><input type="checkbox" id="snd-on">

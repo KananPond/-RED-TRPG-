@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from ..campaign.loader import Module
 from ..harness.loop import Agent
+from ..rules.character import Character
+from ..st import (CharacterCard, Persona, assemble_system, card_from_companion,
+                  card_from_npc)
 
 DM_SYSTEM_TEMPLATE = """你是《{title}》模组的地下城主（DM），跑团舞台是{setting_lead}。
 你的职责：推进剧情、扮演 NPC、裁定行动、控制节奏。规则数值一律通过工具完成，绝不自己编造骰点结果。
@@ -16,7 +21,10 @@ DM_SYSTEM_TEMPLATE = """你是《{title}》模组的地下城主（DM），跑�
 4. 剧情到达新场景时用 advance_scene 推进；到达战斗节点用 start_encounter 触发遭遇。
 5. 完成阶段性剧情后用 award_xp / give_loot 奖励。
 6. 战斗由系统自动结算，你不需要执行战斗动作；战斗结束后你负责收尾叙述。
-7. 结束本回合时，停止调用工具，直接输出最终叙述即可。
+7. 重要 NPC 的对话可以交给子智能体：用 npc_dialogue(npc, instruction) 让该 NPC
+   依据自己的人设与记忆即兴开口（台词会出现在桌面上，同伴们听得见），
+   你再接叙述。一句话的过场用 speak_as_npc 更快。
+8. 结束本回合时，停止调用工具，直接输出最终叙述即可。
 
 桌边社会性（重要）：队伍里的同伴由各自的 AI 扮演，是有主见的活人，不是背景板。
 他们可能抢话、打断你或 NPC、互相争论。绝不要无视他们的插话：
@@ -41,9 +49,9 @@ def make_dm_agent(model: str, module: Module) -> Agent:
         system_prompt=DM_SYSTEM_TEMPLATE.format(
             title=module.title, setting_lead=setting_lead,
             handbook=module.handbook()),
-        tool_names=["narrate", "speak_as_npc", "skill_check", "save_roll",
-                    "get_state", "set_flag", "advance_scene", "award_xp",
-                    "give_loot", "start_encounter"],
+        tool_names=["narrate", "speak_as_npc", "npc_dialogue", "skill_check",
+                    "save_roll", "get_state", "set_flag", "advance_scene",
+                    "award_xp", "give_loot", "start_encounter"],
         model=model, temperature=0.85, max_tokens=1200)
 
 
@@ -114,16 +122,137 @@ TACTICS = {
 }
 
 
+def _anon_persona(user: str) -> Persona | None:
+    """{{user}} 宏的来源（〔ST 规格 §4〕用户 persona 语义）：
+    position=none → 不进 system，只以 name 供给宏渲染；user 为空返回 None
+    （{{user}} 渲染为空串，与旧行为一致）。"""
+    if not user:
+        return None
+    return Persona(name=user, description="", position="none")
+
+
 def make_pc_agent(comp: dict, level: int, weapons: list[str], slots_hint: str,
-                  model: str) -> Agent:
+                  model: str, *, user: str = "") -> Agent:
+    """同伴（非玩家 PC）的**独立 Agent**（docs/companion-npc-agents.md §1）。
+
+    SillyTavern 架构与玩家版 make_aipc_agent 同一条组装线：
+    system_prompt 经 ctrcg.st.assemble_system 按〔ST 规格 §3.2〕默认序组装——
+    main（PC_SYSTEM_TEMPLATE 经 template_vars 预格式化；模组可用卡 system_prompt
+    覆盖并展开 {{original}}）→ 对话示例（mes_example，<START> 分块）；
+    人设/语气进模板槽位后以空副本传卡，避免同一段文本双份进提示词。
+    模组可为同伴提供 ST 卡字段：mes_example / first_mes / depth_prompt /
+    book（角色书，social 层每回合与引擎世界书合并扫描）/ talkativeness
+    （card_from_companion）。user=玩家名，供卡文本中的 {{user}} 宏。"""
+    card = card_from_companion(comp)
+    template_vars = {
+        "name": card.name or comp["name"],
+        "race_name": RACE_NAME.get(comp["race"], comp["race"]),
+        "klass_name": CLASS_NAME.get(comp["klass"], comp["klass"]), "level": level,
+        "persona": card.description,
+        "voice": card.personality,
+        "weapons": "、".join(weapons) or "徒手",
+        "slots_hint": slots_hint, "tactics": TACTICS.get(comp["klass"], "见机行事。"),
+    }
+    # 人设/语气进模板槽位后，卡上同字段不再重复成独立 section
+    st_card = dataclasses.replace(card, description="", personality="")
+    system_prompt = assemble_system(
+        st_card, _anon_persona(user), main_default=PC_SYSTEM_TEMPLATE,
+        template_vars=template_vars)
     return Agent(
         agent_id=f"pc:{comp['id']}", name=comp["name"],
-        system_prompt=PC_SYSTEM_TEMPLATE.format(
-            name=comp["name"], race_name=RACE_NAME.get(comp["race"], comp["race"]),
-            klass_name=CLASS_NAME.get(comp["klass"], comp["klass"]), level=level,
-            persona=comp["persona"], voice=comp["voice"],
-            weapons="、".join(weapons) or "徒手",
-            slots_hint=slots_hint, tactics=TACTICS.get(comp["klass"], "见机行事。"),
-        ),
+        system_prompt=system_prompt,
         tool_names=["say", "combat_action", "explore_intent"],
+        model=model, temperature=0.5, max_tokens=500)
+
+
+# ---------------------------------------------------------------- NPC（子智能体版）
+NPC_SYSTEM_TEMPLATE = """你是跑团桌上的 NPC「{name}」（{race}），由地下城主授权的子智能体扮演。
+地下城主仍是导演：他决定何时轮到你说话，并给你对话焦点与导演提示；你负责以角色身份即兴。
+
+角色设定：{description}
+语气与举止：{personality}
+{goals}{secret}
+
+规矩：
+- 你只说话，不动世界：你没有影响世界的工具，台词之外的一切由 DM 裁定。
+- 台词符合你的身份、处境与记忆（你记得此前与冒险者的每次交锋）；你可以
+  反驳、拖延、讨价还价、被说服或翻脸，但不要无理由服从冒险者。
+- 不替 DM 叙述场景，不替冒险者说话；不要泄露你角色不该知道的剧情底牌
+  （secret 仅供你把握分寸，只有剧情合理揭示时才说出口）。
+- 中文，每次 1~2 句，精炼、有性格、口语化。
+
+用 say 工具说出此刻的台词（至多两句，一句一次调用），说完即停止调用工具。"""
+
+
+def make_npc_agent(npc: dict, model: str, *, user: str = "") -> Agent:
+    """NPC 子智能体 Agent（DM 控制的 SubAgent，docs/companion-npc-agents.md §2）。
+
+    与同伴的独立 Agent 相对：NPC 的 agent 由 DM 的 npc_dialogue 工具调用按需
+    拉起，只配对话面（say-only registry，由 npcagent.NPCDirector 提供），
+    产出直接回到 DM 的工具结果。组装线同 make_pc_agent（assemble_system），
+    模组可为 NPC 提供扩展字段：persona/voice/goals/secret/mes_example/book
+    （card_from_npc）。user=玩家名，供卡文本中的 {{user}} 宏。"""
+    card = card_from_npc(npc)
+    goals = str(npc.get("goals", "") or "")
+    secret = str(npc.get("secret", "") or "")
+    template_vars = {
+        "name": card.name,
+        "race": str(npc.get("race", "") or "未知"),
+        "description": card.description or "（模组未详述，按身份常理行事。）",
+        "personality": card.personality or "未特别说明，按身份常理行事。",
+        "goals": f"动机与目标：{goals}\n" if goals else "",
+        "secret": (f"底牌（仅供把握分寸，不主动泄露）：{secret}\n" if secret else ""),
+    }
+    st_card = dataclasses.replace(card, description="", personality="")
+    system_prompt = assemble_system(
+        st_card, _anon_persona(user), main_default=NPC_SYSTEM_TEMPLATE,
+        template_vars=template_vars)
+    return Agent(
+        agent_id=f"npc:{npc['id']}", name=card.name,
+        system_prompt=system_prompt,
+        tool_names=[],                       # 空 = 全量下发（say-only registry）
+        model=model, temperature=0.9, max_tokens=300)
+
+
+# ---------------------------------------------------------------- AI PC（玩家版）
+def make_aipc_agent(ch: Character, card: CharacterCard,
+                    persona: Persona | None, model: str, *,
+                    scenario: str = "", slots_hint: str = "") -> Agent:
+    """玩家角色的 AI 代打 Agent（docs/aipc-design.md §2.1）。
+
+    与同伴版 make_pc_agent 的差异：
+    - system_prompt 经 ctrcg.st.assemble_system 按〔ST 规格 §3.2〕Prompt Manager
+      默认序组装：main（PC_SYSTEM_TEMPLATE 经 template_vars 预格式化，卡
+      system_prompt 可覆盖并展开 {{original}}）→ persona → scenario（"Scenario: …"）
+      → 对话示例，全文过宏渲染（{{user}}/{{char}}/{{roll::…}} 等）。
+    - tool_names=[]：空列表 = 注册表全部工具下发（registry.schemas 语义）——
+      探索 registry 的 say/explore_intent/explore_act 与战斗 registry 的
+      say/combat_action/explore_intent 全量可见；沿用同伴的显式列表会经
+      loop 的 schema 过滤把 explore_act 静默吞掉（design rev3 ③）。
+    - 卡的 description/personality 已由 template_vars 填进模板的
+      人设/语气槽位，组装时以空副本传入避免同一段文本双份进提示词
+      （与设计文档的字段双写取舍不同，取不重复版本；见 tests/test_aipc.py）。"""
+    if scenario:
+        card = dataclasses.replace(card, scenario=scenario)
+    slots = "、".join(f"{lv}环×{n}" for lv, n in ch.spell_slots().items() if n > 0)
+    template_vars = {
+        "name": card.name or ch.name,
+        "race_name": RACE_NAME.get(ch.race, ch.race),
+        "klass_name": CLASS_NAME.get(ch.klass, ch.klass),
+        "level": str(ch.level),
+        "persona": card.description,
+        "voice": card.personality,
+        "weapons": "、".join(ch.weapons) or "徒手",
+        "slots_hint": slots_hint or ("法术位：" + (slots or "无")),
+        "tactics": TACTICS.get(ch.klass, "见机行事。"),
+    }
+    # 人设/语气进模板槽位后，卡上同字段不再重复成独立 section
+    st_card = dataclasses.replace(card, description="", personality="")
+    system_prompt = assemble_system(
+        st_card, persona, main_default=PC_SYSTEM_TEMPLATE,
+        template_vars=template_vars)
+    return Agent(
+        agent_id=f"aipc:{ch.name}", name=ch.name,
+        system_prompt=system_prompt,
+        tool_names=[],                       # 空 = 全量下发（registry.schemas）
         model=model, temperature=0.5, max_tokens=500)

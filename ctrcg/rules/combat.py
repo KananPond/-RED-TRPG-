@@ -15,12 +15,11 @@ from dataclasses import dataclass, field
 
 from . import data as D
 from .character import (
-    Character, DWARF_RACES, ELF_RACES, GNOME_RACES, SMALL_RACES,
+    Character, ELF_RACES,
     COND_BLESSED, COND_BLINDED, COND_CHARMED, COND_FRIGHTENED, COND_GRAPPLED,
     COND_GUIDED, COND_HIDDEN, COND_INVISIBLE, COND_MARKED, COND_OUTLINED,
     COND_PARALYZED, COND_POISONED, COND_PRONE, COND_RAGING, COND_RESTRAINED,
     COND_SHIELDED, COND_SLEEP, COND_STABLE, COND_STUNNED, COND_UNCONSCIOUS,
-    TIMED_CONDITIONS,
 )
 from .dice import check_roll, roll, parse_expr, DiceResult
 
@@ -459,7 +458,6 @@ class Encounter:
             ws["hp_cur"] -= absorbed
             overflow = amount - absorbed
             if ws["hp_cur"] <= 0:
-                form = ws["form"]
                 target.wild_shape = None
                 target.conditions.discard(COND_UNCONSCIOUS)
                 if overflow > 0:

@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ..harness.loop import Agent, DefaultAgentLoop, DuplicateCallGuard
 from ..rules.character import Character
+from ..st import card_from_companion, engine_worldinfo, merge, scan
 
 # 每波最多几名同伴开口（其余的说了也咽回去，避免整队复读）
 MAX_WAVE_SPEAKERS = 2
@@ -64,12 +65,17 @@ class TableSocial:
         self.loop = loop          # 专用小步数循环（与战斗循环共享 adapter）
 
     # ================================================================ 节拍
-    def beat(self, player_text: str) -> None:
-        """玩家一次输入引发的完整社交节拍（在 ai_explore_turns 中调用）。"""
+    def beat(self, player_text: str, player_trigger: str | None = None) -> None:
+        """玩家一次输入引发的完整社交节拍（在 ai_explore_turns 中调用）。
+
+        player_trigger：抢话窗口的 trigger 文案（AI PC 模式下由
+        AIPCController 传入"玩家角色（…）刚说完话"，避免自我打断的荒谬
+        表述；缺省保持原文案，行为不变）。"""
         s = self.session
         # 1) 抢话窗口：玩家刚开口，DM 还没接话
         self.reaction_wave(
-            trigger=f"玩家（{s.state.player.name}）刚开口说话，DM 还没来得及回应。",
+            trigger=player_trigger
+            or f"玩家（{s.state.player.name}）刚开口说话，DM 还没来得及回应。",
             extra=[f"玩家说：「{player_text}」"])
         if s.encounter is not None:
             return                       # 话没说完就打起来了，桌面转入遭遇
@@ -101,9 +107,14 @@ class TableSocial:
     # ================================================================ 反应波
     def reaction_wave(self, trigger: str, extra: list[str] | None = None,
                       max_speakers: int = MAX_WAVE_SPEAKERS) -> list[dict]:
-        """给每名存活同伴一次"说或不说"的机会（并行决策），返回实际出口的话。"""
+        """给每名存活同伴一次"说或不说"的机会（并行决策），返回实际出口的话。
+
+        speakers = 全队存活 ∩ pc_agents（docs/aipc-design.md §2.6）：AI PC 开启
+        时玩家名在 pc_agents（attach 注册）→ 玩家自动进抢话波/辩论；
+        关闭时玩家不在 pc_agents，过滤结果与旧的 companions 过滤逐位相等
+        （party() = [player]+companions，player 被剔除）——零行为变化。"""
         s = self.session
-        speakers = [c for c in s.state.companions
+        speakers = [c for c in s.state.party()
                     if c.hp_cur > 0 and "dead" not in c.conditions
                     and c.name in s.pc_agents]
         if not speakers:
@@ -139,8 +150,9 @@ class TableSocial:
         reg = self._social_registry(pc, bucket)
         task = SOCIAL_TASK.format(recent=recent, trigger=trigger, name=pc.name)
         try:
-            result = self.loop.run(agent, session, task, registry=reg,
-                                   guard_dup=DuplicateCallGuard())
+            result = self.loop.run(agent, session, task,
+                                   context_messages=self._wi_context(pc),
+                                   registry=reg, guard_dup=DuplicateCallGuard())
             self.session._record_usage(agent, result)
         except Exception:      # noqa: BLE001 —— 桌面社交绝不阻塞对局
             return []
@@ -195,7 +207,12 @@ class TableSocial:
 
     def _debate_round(self, topic: str, active: list[str],
                       transcript: list[str]) -> dict[str, list[dict]]:
-        by_name = {c.name: c for c in self.session.state.companions}
+        # by_name 必须 = party() ∩ pc_agents（docs/aipc-design.md rev2 ①）：
+        # 玩家被 run_debate 邀请进辩论后（name in s.pc_agents），若只映射同伴，
+        # submit 对玩家不发牌 → results 为空 → conceded 恒真、首轮即被"淘汰"。
+        # 关闭 AI PC 时 pc_agents 只含同伴，映射与旧的 companions 过滤逐位相等。
+        s = self.session
+        by_name = {c.name: c for c in s.state.party() if c.name in s.pc_agents}
         trans = "\n".join(transcript[-RECENT_LINES * 2:])
         workers = min(4, len(active))
         with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -211,8 +228,9 @@ class TableSocial:
         reg = self._social_registry(pc, bucket)
         task = DEBATE_TASK.format(topic=topic, transcript=trans, name=pc.name)
         try:
-            result = self.loop.run(agent, session, task, registry=reg,
-                                   guard_dup=DuplicateCallGuard())
+            result = self.loop.run(agent, session, task,
+                                   context_messages=self._wi_context(pc),
+                                   registry=reg, guard_dup=DuplicateCallGuard())
             self.session._record_usage(agent, result)
         except Exception:      # noqa: BLE001
             return []
@@ -257,6 +275,27 @@ class TableSocial:
              "required": []},
             hold)
         return reg
+
+    def _wi_context(self, pc: Character) -> list[dict]:
+        """同伴独立 Agent 的世界情报上下文（SillyTavern World Info 通路）。
+
+        引擎世界书（当前场景/旗标/在桌面上被点名的 NPC）与该同伴卡上的
+        角色书（模组 companions[].book，card_from_companion）合并，按桌面
+        窗口扫描激活；无激活内容时不注入（省 token）。世界书只影响叙事
+        上下文，永不进入结算路径。"""
+        s = self.session
+        wi = engine_worldinfo(s.state)
+        comp = next((c for c in s.module.companions
+                     if isinstance(c, dict) and c.get("name") == pc.name), None)
+        if comp:
+            book = card_from_companion(comp).book
+            if book is not None:
+                wi = merge(wi, book)
+        res = scan(wi, self._recent(), rng=s.state.rng)
+        block = "\n".join(x for x in (res.before, res.after) if x.strip())
+        if not block.strip():
+            return []
+        return [{"role": "user", "content": "【世界书】\n" + block}]
 
     def _recent(self, extra: list[str] | None = None) -> str:
         s = self.session

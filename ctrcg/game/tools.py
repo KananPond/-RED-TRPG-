@@ -36,6 +36,19 @@ class GameTools:
              "required": ["npc", "text"]},
             lambda npc, text: self.ui.npc_line(npc, text))
         registry.register(
+            "npc_dialogue",
+            "把话头交给某个 NPC 的子智能体：它依据自己的人设、目标与对局记忆"
+            "即兴说 1~2 句（台词会出现在桌面上，同伴们听得见，并记入该 NPC 的"
+            "长期记忆）。npc=模组 NPC 的 id 或名字；instruction=导演提示"
+            "（这段对话的焦点/你的意图/NPC 的态度倾向，可空）。适合多回合的"
+            "重要对话（讨价还价/对峙/盘问/诱降）；失败时改用 speak_as_npc。",
+            {"type": "object",
+             "properties": {"npc": {"type": "string"},
+                            "instruction": {"type": "string",
+                                            "description": "导演提示，可空"}},
+             "required": ["npc"]},
+            self._tool_npc_dialogue)
+        registry.register(
             "skill_check",
             "让某位角色进行技能检定（引擎掷骰）。who 为角色全名或'队伍'；"
             "轮到玩家本人时会先等其点击掷骰按钮再结算。",
@@ -90,9 +103,19 @@ class GameTools:
     def _ask_player_roll(self, member: Character, prompt: str) -> None:
         """轮到玩家本人掷骰时，先弹出掷骰按钮等待点击（桌面掷自己的骰子）。
 
-        同伴与终端 UI（无 ask_roll）自动落骰，不打断节奏。"""
-        if member is self.state.player and hasattr(self.ui, "ask_roll"):
+        同伴与终端 UI（无 ask_roll）自动落骰，不打断节奏。
+        AI PC 模式下玩家与同伴一样自动落骰（design §2.7）：掷骰仍是引擎结算，
+        仅跳过人类按钮；webui 的 ask_roll 在 AI PC 对局中不会被调用，
+        ui.check_line 照常播骰动画。"""
+        if member is self.state.player and hasattr(self.ui, "ask_roll") \
+                and not (self.harness_session is not None
+                         and getattr(self.harness_session, "aipc", None) is not None):
             self.ui.ask_roll(prompt)
+
+    def _tool_npc_dialogue(self, npc: str, instruction: str = "") -> dict:
+        if self.harness_session is None:
+            return {"ok": False, "error": "编排器未就绪"}
+        return self.harness_session.npc_dialogue(npc, instruction)
 
     def _tool_skill_check(self, who: str, skill: str, dc, context: str = "") -> dict:
         if skill not in D.SKILLS:
@@ -291,3 +314,71 @@ class GameTools:
             t = enc.find(target) if target else pc
             return enc.lay_on_hands(pc, t, int(amount or 5))
         return {"ok": False, "error": "未知动作 " + action}
+
+    # ================================================================ AI PC
+    def register_aipc_tools(self, registry: ToolRegistry, who: Character) -> None:
+        """AI PC 的探索期工具面（docs/aipc-design.md §2.3）。
+
+        与 register_pc_tools 的差异：say 带桌面记账（探索期 AI PC 的话必须进
+        table_log，DM 的 _digest_table 与同伴的 _recent 才"听得见"）；新增
+        explore_act 非交互行动面（替代人类斜杠指令：休整/喝药/购买/保存）。
+        战斗期不用本组——player_combat_turn 走 companion_turn → register_pc_tools
+        （战斗喊话沿用同伴 say：只渲染、不进 table_log，与同伴现状一致）。"""
+        registry.register(
+            "say", f"以 {who.name} 的口吻说一句话（中文，符合人设）。to=对谁说（可空）。",
+            {"type": "object",
+             "properties": {"text": {"type": "string"}, "to": {"type": "string"}},
+             "required": ["text"]},
+            lambda text, to="": self._aipc_say(who, text, to))
+        registry.register(
+            "explore_intent", "非战斗时声明一个探索意图（如搜查、攀爬、谈话对象）。",
+            {"type": "object", "properties": {"text": {"type": "string"}},
+             "required": ["text"]},
+            lambda text: {"ok": True, "intent": text})
+        registry.register(
+            "explore_act",
+            "执行一次探索期行动。kind ∈ rest_short（队伍短休）/rest_long（队伍长休）/"
+            "drink_potion（喝药水）/buy（购买，需 item=商品 key：healing_potion/"
+            "potion_greater_healing/healer_kit/torch）/save（保存游戏）/state（查看状态）/"
+            "inventory（查看背包）。",
+            {"type": "object",
+             "properties": {"kind": {"type": "string"}, "item": {"type": "string"}},
+             "required": ["kind"]},
+            self._tool_explore_act)
+
+    def _aipc_say(self, who: Character, text: str, to: str = "") -> dict:
+        """AI PC 的桌面发言：渲染 + 记入 table_log（行结构与 social.py 对齐）。"""
+        self.ui.companion_line(who.name, str(text))
+        self.harness_session.table_log.append(
+            {"who": who.name, "text": str(text), "to": str(to or ""),
+             "interrupt": False, "kind": "table"})
+        return {"ok": True, "note": "已说出口，桌边都听见了。"}
+
+    def _tool_explore_act(self, kind: str, item: str = "") -> dict:
+        """非交互探索行动面。全部毫秒级完成，不在 ToolTimeoutGuard.INTERACTIVE_TOOLS
+        内（10s 常规超时绰绰有余）；绝不触达 ui.choose/free_input 阻塞点。"""
+        s = self.harness_session
+        if s is None:
+            return {"ok": False, "error": "编排器未就绪"}
+        kind = str(kind or "").strip()
+        if kind == "rest_short":
+            s.party_short_rest()
+            return {"ok": True, "note": "队伍短休完毕。"}
+        if kind == "rest_long":
+            s.party_long_rest()
+            return {"ok": True, "note": "队伍长休完毕。"}
+        if kind == "drink_potion":
+            s.drink_potion_out_of_combat()
+            return {"ok": True, "note": "已喝下药水（如背包里有）。"}
+        if kind == "buy":
+            return s.buy_good(str(item or ""))
+        if kind == "save":
+            path = s.autosave()
+            return {"ok": True, "note": f"已保存到 {path}"}
+        if kind == "state":
+            self.ui.raw(self.state.party_snapshot())
+            return {"ok": True, "note": "状态已呈现。"}
+        if kind == "inventory":
+            s.show_inventory()
+            return {"ok": True, "note": "背包已呈现。"}
+        return {"ok": False, "error": "未知行动 " + kind}

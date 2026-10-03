@@ -1,0 +1,373 @@
+{
+  "id": "generated-saltmarsh-siren-song",
+  "title": "盐沼塞壬之歌",
+  "en_title": "The Siren's Song of Saltmarsh",
+  "setting": "剑湾北岸的盐沼镇，一座以晒盐和捕鱼为生的小镇，近来渔船接连失踪，海面夜夜传来诡异的歌声。",
+  "synopsis": "盐沼镇的渔船在近海接连失踪，镇民传闻是塞壬归来。冒险者受托调查，发现失踪事件背后是海盗团伙与一只被奴役的塞壬。海盗逼迫塞壬用歌声引诱渔船触礁，再掠夺货物。冒险者需潜入海盗的礁石巢穴，解救塞壬，并击败海盗首领及其巫师。最终塞壬重获自由，盐沼镇恢复安宁。",
+  "party_level_start": 1,
+  "expected_end_level": 3,
+  "act_titles": {
+    "1": "失踪的渔船",
+    "2": "礁石巢穴"
+  },
+  "epilogue": "塞壬重获自由，盘旋在盐沼镇上空唱起清澈的歌声，海水归于平静。镇民们欢呼着迎接英雄归来。镇长将一面绣着金枪鱼的锦旗赠予你们，盐沼镇永远铭记你们的恩情。",
+  "npcs": {
+    "elder_maris": {
+      "name": "玛里斯长老",
+      "race": "人类",
+      "desc": "盐沼镇最年长的渔民，饱经风霜，忧心忡忡。他知道塞壬的传说，请求冒险者查明真相。"
+    },
+    "captain_rorsk": {
+      "name": "罗尔斯克船长",
+      "race": "半兽人",
+      "desc": "海盗头目，冷酷无情，利用塞壬的歌声劫掠船只。他盘踞在礁石巢穴中，手下有一群亡命之徒。"
+    },
+    "siren_lyra": {
+      "name": "塞壬莉拉",
+      "race": "塞壬（人鱼）",
+      "desc": "被海盗囚禁的塞壬，被迫用歌声引诱船只。她渴望自由，但被巫师的法术束缚。"
+    }
+  },
+  "companions": [
+    {
+      "id": "bran",
+      "name": "布兰",
+      "race": "human",
+      "klass": "fighter",
+      "background": "soldier",
+      "fighting_style": "dueling",
+      "scores": {
+        "str": 16,
+        "dex": 13,
+        "con": 15,
+        "int": 10,
+        "wis": 12,
+        "cha": 8
+      },
+      "skills": [
+        "athletics",
+        "intimidation"
+      ],
+      "persona": "沉默寡言的老兵，重视荣誉，保护弱者。",
+      "voice": "低沉沙哑，言简意赅。"
+    },
+    {
+      "id": "lyra",
+      "name": "莱拉",
+      "race": "high_elf",
+      "klass": "wizard",
+      "background": "sage",
+      "fighting_style": "",
+      "scores": {
+        "str": 8,
+        "dex": 14,
+        "con": 12,
+        "int": 16,
+        "wis": 13,
+        "cha": 10
+      },
+      "skills": [
+        "arcana",
+        "history"
+      ],
+      "persona": "博学的精灵法师，对古代传说充满好奇。",
+      "voice": "优雅从容，喜欢引经据典。"
+    },
+    {
+      "id": "tass",
+      "name": "塔斯",
+      "race": "lightfoot_halfling",
+      "klass": "rogue",
+      "background": "criminal",
+      "fighting_style": "archery",
+      "scores": {
+        "str": 10,
+        "dex": 16,
+        "con": 12,
+        "int": 12,
+        "wis": 10,
+        "cha": 14
+      },
+      "skills": [
+        "stealth",
+        "sleight_of_hand"
+      ],
+      "persona": "机灵狡黠的半身人盗贼，改邪归正但手艺不减。",
+      "voice": "轻快活泼，爱开玩笑。"
+    }
+  ],
+  "encounters": {
+    "e_dock_thugs": {
+      "title": "码头恶棍",
+      "dark": false,
+      "intro": "三个地痞围了上来，手里握着短棍，显然不怀好意。",
+      "monsters": [
+        [
+          "bandit",
+          3
+        ]
+      ],
+      "loot": {
+        "gold": 15,
+        "items": {
+          "healing_potion": 1
+        }
+      }
+    },
+    "e_wolves": {
+      "title": "饥饿的狼群",
+      "dark": false,
+      "intro": "三只瘦骨嶙峋的狼从灌木丛中窜出，眼中闪着绿光。",
+      "monsters": [
+        [
+          "wolf",
+          3
+        ]
+      ],
+      "loot": {
+        "gold": 0,
+        "items": {}
+      }
+    },
+    "e_goblin_scouts": {
+      "title": "地精斥候",
+      "dark": false,
+      "intro": "两只地精从礁石后探出头，尖声叫着拔出弯刀。",
+      "monsters": [
+        [
+          "goblin",
+          2
+        ]
+      ],
+      "loot": {
+        "gold": 10,
+        "items": {}
+      }
+    },
+    "e_pirate_guard": {
+      "title": "海盗守卫",
+      "dark": false,
+      "intro": "两名海盗守卫拦住去路，挥舞着弯刀扑来。",
+      "monsters": [
+        [
+          "bandit",
+          2
+        ],
+        [
+          "bandit_captain",
+          1
+        ]
+      ],
+      "loot": {
+        "gold": 40,
+        "items": {
+          "healing_potion": 1
+        }
+      }
+    },
+    "e_rorsk_boss": {
+      "title": "罗尔斯克船长",
+      "dark": true,
+      "intro": "罗尔斯克从阴影中走出，巨大的双刃斧拖在地上发出刺耳的刮擦声。",
+      "monsters": [
+        [
+          "bandit_captain",
+          1
+        ],
+        [
+          "bandit",
+          2
+        ],
+        [
+          "ash_mage",
+          1
+        ]
+      ],
+      "loot": {
+        "gold": 100,
+        "items": {
+          "healing_potion": 2
+        }
+      }
+    }
+  },
+  "custom_monsters": {},
+  "scenes": [
+    {
+      "id": "s1",
+      "act": 1,
+      "location": "盐沼镇码头",
+      "intro": "海风裹着咸腥味扑面而来，码头上一片愁云惨雾。几个渔民正围着玛里斯长老，激动地说着什么。",
+      "explore": "与玛里斯长老交谈，向渔民打听失踪事件，在码头周围搜查。",
+      "skills": [
+        {
+          "skill": "persuasion",
+          "dc": 10,
+          "success": "玛里斯长老信任你们，详细讲述了失踪渔船的情况。",
+          "fail": "渔民们对你们半信半疑，但玛里斯长老还是开口了。"
+        },
+        {
+          "skill": "investigation",
+          "dc": 12,
+          "success": "你们在码头边发现了一些奇怪的痕迹，像是有人拖拽过重物。",
+          "fail": "你们没发现什么异常。"
+        }
+      ],
+      "encounter": "e_dock_thugs",
+      "next": "s2",
+      "milestone": 0,
+      "level_to": null,
+      "outro": "地痞们被打跑后，玛里斯长老上前道谢，并邀请你们到他的小屋详谈。"
+    },
+    {
+      "id": "s2",
+      "act": 1,
+      "location": "玛里斯长老的小屋",
+      "intro": "小屋内炉火正旺，墙上挂着旧渔网和一幅褪色的海图。玛里斯长老请你们坐下，递上热茶。",
+      "explore": "询问更多细节，查看海图，研究塞壬的传说。",
+      "skills": [
+        {
+          "skill": "arcana",
+          "dc": 13,
+          "success": "你回忆起关于塞壬的古老传说：她们的歌声能迷惑水手，但很少主动袭击。",
+          "fail": "你不太确定塞壬的习性。"
+        },
+        {
+          "skill": "history",
+          "dc": 12,
+          "success": "你想起十年前也有类似失踪事件，当时不了了之。",
+          "fail": "你对此地历史了解不多。"
+        }
+      ],
+      "encounter": null,
+      "next": "s3",
+      "milestone": 50,
+      "level_to": null,
+      "outro": "玛里斯长老告诉你们，最后一次失踪的渔船是在西北方向的礁石群附近消失的。"
+    },
+    {
+      "id": "s3",
+      "act": 1,
+      "location": "海岸小径",
+      "intro": "沿着海岸线的小径通往西北方的礁石群。海风呼啸，浪花拍打着岩石。",
+      "explore": "沿小径前进，留意周围的动静。",
+      "skills": [
+        {
+          "skill": "perception",
+          "dc": 12,
+          "success": "你发现小径旁有新鲜的脚印，通往礁石群。",
+          "fail": "你只顾赶路，没注意到细节。"
+        },
+        {
+          "skill": "survival",
+          "dc": 10,
+          "success": "你辨认出脚印是半兽人的，大约有五六个人。",
+          "fail": "你无法辨认脚印的主人。"
+        }
+      ],
+      "encounter": "e_wolves",
+      "next": "s4",
+      "milestone": 0,
+      "level_to": null,
+      "outro": "狼群被击退后，你们继续前进，远处传来若有若无的歌声。"
+    },
+    {
+      "id": "s4",
+      "act": 2,
+      "location": "礁石群入口",
+      "intro": "巨大的黑色礁石矗立在海中，形成一个天然迷宫。入口处有两名海盗站岗。",
+      "explore": "观察海盗的巡逻路线，寻找潜入的方法。",
+      "skills": [
+        {
+          "skill": "stealth",
+          "dc": 14,
+          "success": "你们悄无声息地绕过守卫，潜入礁石群内部。",
+          "fail": "你们不小心踩到碎石，惊动了守卫。"
+        }
+      ],
+      "encounter": "e_goblin_scouts",
+      "next": "s5",
+      "milestone": 50,
+      "level_to": null,
+      "outro": "你们解决了地精斥候，但打斗声可能已经惊动了海盗。"
+    },
+    {
+      "id": "s5",
+      "act": 2,
+      "location": "海盗巢穴",
+      "intro": "礁石群内部被凿出了洞穴，火把摇曳，海盗们喝酒喧哗。深处传来哀伤的歌声。",
+      "explore": "避开巡逻，寻找塞壬被囚禁的位置。",
+      "skills": [
+        {
+          "skill": "perception",
+          "dc": 13,
+          "success": "你发现洞穴深处有一条通往水牢的通道。",
+          "fail": "你在错综复杂的洞穴中迷失了方向。"
+        },
+        {
+          "skill": "investigation",
+          "dc": 12,
+          "success": "你发现海盗的补给箱，里面有一些金币和药水。",
+          "fail": "你没找到什么有价值的东西。"
+        }
+      ],
+      "encounter": "e_pirate_guard",
+      "next": "s6",
+      "milestone": 50,
+      "level_to": 2,
+      "outro": "你们击败了守卫，但战斗的噪音惊动了整个巢穴。"
+    },
+    {
+      "id": "s6",
+      "act": 2,
+      "location": "水牢",
+      "intro": "洞穴深处是一个水潭，塞壬莉拉被铁链锁在水中的石柱上，她的歌声充满悲伤。",
+      "explore": "与塞壬交谈，寻找解开锁链的方法。",
+      "skills": [
+        {
+          "skill": "persuasion",
+          "dc": 12,
+          "success": "莉拉告诉你们，海盗首领罗尔斯克有一把钥匙，能打开锁链。",
+          "fail": "莉拉不信任你们，拒绝交谈。"
+        },
+        {
+          "skill": "investigation",
+          "dc": 14,
+          "success": "你发现锁链上附有魔法符文，可能需要巫师解除。",
+          "fail": "你无法理解符文的意义。"
+        }
+      ],
+      "encounter": null,
+      "next": "s7",
+      "milestone": 50,
+      "level_to": null,
+      "outro": "莉拉恳求你们救她出去，并警告说罗尔斯克就在不远处的船长室。"
+    },
+    {
+      "id": "s7",
+      "act": 2,
+      "location": "船长室",
+      "intro": "厚重的木门后是罗尔斯克的船长室，墙上挂满战利品，桌上散落着金币。罗尔斯克正等着你们。",
+      "explore": "与罗尔斯克对峙，寻找钥匙。",
+      "skills": [
+        {
+          "skill": "intimidation",
+          "dc": 15,
+          "success": "你的气势让罗尔斯克微微后退，他露出破绽。",
+          "fail": "罗尔斯克冷笑一声，毫不畏惧。"
+        },
+        {
+          "skill": "athletics",
+          "dc": 14,
+          "success": "你一把掀翻桌子，冲向罗尔斯克。",
+          "fail": "桌子太重，你没能推动。"
+        }
+      ],
+      "encounter": "e_rorsk_boss",
+      "next": null,
+      "milestone": 200,
+      "level_to": 3,
+      "outro": "罗尔斯克倒下后，你们在他身上找到了钥匙。你们返回水牢，解救了塞壬莉拉。莉拉唱起自由的歌，海水为之欢腾。"
+    }
+  ]
+}

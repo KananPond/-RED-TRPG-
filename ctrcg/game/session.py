@@ -21,7 +21,6 @@ from ..rules import data as D
 from ..rules.character import (
     Character, COND_BLESSED, COND_GRAPPLED, COND_INVISIBLE, COND_MARKED,
     COND_RAGING, COND_SHIELDED, COND_SLEEP, COND_PRONE, COND_STABLE,
-    COND_UNCONSCIOUS,
 )
 from ..rules.combat import Encounter, monster_choose_action
 from ..rules.dice import roll
@@ -69,11 +68,13 @@ class GameSession:
         self.ai_mode = loop is not None
         self._dm_session = Session("dm", log_dir=log_dir)
         self._pc_sessions: dict[str, Session] = {}
+        self._npc_sessions: dict[str, Session] = {}
         self._log_dir = log_dir
         self.table_log: list[dict] = []       # 桌面插话（DM 消化进上下文后清账）
         # 桌边社交层（抢话/反应/辩论）：专用小步数循环，工具调用线程池独立，
         # 避免与 DM 战斗工具调用争抢同一 guard 线程池
         self.social: TableSocial | None = None
+        self.npc_director = None
         if self.ai_mode:
             social_loop = DefaultAgentLoop(
                 registry=None, adapter=loop.adapter,
@@ -82,11 +83,30 @@ class GameSession:
                 guard_dup=DuplicateCallGuard(),
                 compactor=loop.compactor)
             self.social = TableSocial(self, social_loop)
+            # NPC 子智能体调度器（NPC = DM 控制的 SubAgent，
+            # docs/companion-npc-agents.md §2）：剧本模式不构建，
+            # npc_dialogue 工具返回不可用
+            from .npcagent import NPCDirector
+            self.npc_director: NPCDirector | None = NPCDirector(self, loop)
+        # AI PC 控制器（docs/aipc-design.md §2.1）：构造后由 AIPCController.attach
+        # 赋值；为 None 时全部新分支短路，行为与基线完全一致
+        self.aipc = None
 
     def pc_session(self, name: str) -> Session:
         """同伴的持久会话（战斗与桌面社交共用一份记忆）。"""
         return self._pc_sessions.setdefault(
             name, Session(f"pc:{name}", log_dir=self._log_dir))
+
+    def npc_session(self, npc_id: str) -> Session:
+        """NPC 子智能体的持久会话：NPC 记得此前与冒险者的每次交锋。"""
+        return self._npc_sessions.setdefault(
+            npc_id, Session(f"npc:{npc_id}", log_dir=self._log_dir))
+
+    def npc_dialogue(self, npc: str, instruction: str = "") -> dict:
+        """把话头交给某个 NPC 的子智能体（DM 的 npc_dialogue 工具落点）。"""
+        if self.npc_director is None:
+            return {"ok": False, "error": "NPC 子智能体仅在 AI 模式可用"}
+        return self.npc_director.dialogue(npc, instruction)
 
     # ================================================================ 主流程
     def run(self) -> None:
@@ -152,6 +172,9 @@ class GameSession:
                 if msg:
                     self.ui.system_line(msg)
                 self._resolve_level_up_choices(c)
+        # AI PC：场景变化 → 重写卡 scenario 并重建 agent（design §2.2）
+        if self.aipc is not None:
+            self.aipc.refresh()
         self.autosave()
 
     def resolve_pending_choices(self) -> None:
@@ -162,14 +185,38 @@ class GameSession:
             self._resolve_level_up_choices(c)
 
     def _resolve_level_up_choices(self, c: Character) -> None:
-        """升级带来的职业特性选择：玩家交互选择，同伴走推荐默认。"""
+        """升级带来的职业特性选择：玩家交互选择，同伴走推荐默认。
+
+        AI PC 模式下玩家同样走推荐默认（无 UI，静默结算，design §2.9）——
+        与同伴路径的差异仅在术士龙脉血统的 HP 补差（交互路径有、
+        apply_default_choices 没有），经 _apply_origin_fixup 对齐。"""
         if not c.pending_feature_choices():
             return
         if c is not self.state.player:
             c.apply_default_choices()
             return
+        if self.aipc is not None:
+            needs = c.pending_feature_choices()
+            c.apply_default_choices()
+            # 龙脉 HP 补差仅在本轮 pending 确实含 origin 时做一次回溯补齐
+            # （origin 已定时每级 +1 由 _level_up_static 的 _draconic_resilience
+            # 分支结算，这里再补会逐级重复膨胀——与交互路径 need=="origin"
+            # 分支的触发条件对齐）
+            if "origin" in needs:
+                self._apply_origin_fixup(c)
+            return
         for need in c.pending_feature_choices():
             self._ask_feature_choice(c, need)
+
+    def _apply_origin_fixup(self, c: Character) -> None:
+        """术士龙脉血统的每级 +1 HP 回溯补差（仅在 origin 本轮被选中时调用）。
+
+        补足 1..c.level 各级漏掉的 +1（_level_up_static 在 origin 未定时
+        不加）；交互路径 need=="origin" 分支与 aipc 默认选择分支共用；
+        同伴仍直接走 apply_default_choices、不经过本函数，行为不变。"""
+        if c.feature_choices.get("origin") == "draconic":
+            c.hp_max += c.level
+            c.hp_cur = c.hp_max
 
     _STYLE_NAMES = {"archery": "箭术（远程攻击+2）", "defense": "防御（AC+1）",
                     "dueling": "对决（单手近战伤害+2）", "two_weapon": "双武器格斗（副手加属性）",
@@ -258,8 +305,7 @@ class GameSession:
                                 "混沌原力（叙事呈现）"])
             fc["origin"] = "draconic" if i == 0 else "wild"
             if fc["origin"] == "draconic":
-                c.hp_max += c.level  # 补齐每级+1
-                c.hp_cur = c.hp_max
+                self._apply_origin_fixup(c)  # 补齐每级+1（代码平移，行为不变）
         elif need == "metamagic":
             i = self.ui.choose("选择超魔×2（术士3级）",
                                ["疾咒 + 强咒（动作法术改附赠 / 目标豁免劣势）",
@@ -408,56 +454,97 @@ class GameSession:
                 return "quit"
 
     # ================================================================ 探索：AI 模式
+    _EXPLORE_COMMANDS = ("/状态", "/背包", "/短休", "/喝药", "/购买", "/长休", "/保存")
+
     def ai_explore_turns(self, scene: dict) -> str:
         self.ui.system_line("输入行动或对白；/状态 /背包 /短休 /长休 /喝药 /购买 /保存 /退出 为指令。")
         while True:
+            if self.aipc is not None:
+                # 1) 人类旁听指令（非阻塞，design §2.4/§2.8）
+                cmd = self.aipc.poll_command(0.4)
+                if cmd is not None:
+                    cmd = cmd.strip()
+                    if cmd == "/退出":
+                        return "quit"
+                    self._handle_explore_command(cmd)
+                    continue
+                # 2) AI 代打本节拍；False = LLM 故障 → 本轮交还人类（优雅降级）
+                if self.aipc.explore_beat():
+                    if self._post_beat():
+                        return "end"
+                    continue
+                self.ui.system_line("（AI 代打暂不可用，本轮请亲自输入行动。）")
+            # 3) 人类输入（AI PC 关闭/降级时才到达；原路径逐字保留）
             text = self.ui.free_input("\n你> ")
             if not text:
                 continue
-            if text == "/状态":
-                self.ui.raw(self.state.party_snapshot())
-                continue
-            if text == "/背包":
-                self.show_inventory()
-                continue
-            if text == "/短休":
-                self.party_short_rest()
-                continue
-            if text == "/喝药":
-                self.drink_potion_out_of_combat()
-                continue
-            if text == "/购买":
-                scene = self.module.scene_by_id(self.state.scene_id) or {}
-                if scene.get("shop"):
-                    self.open_shop()
-                else:
-                    self.ui.system_line("这里没有商队。")
-                continue
-            if text == "/长休":
-                self.party_long_rest()
-                continue
-            if text == "/保存":
-                path = G.save_game(self.state, SAVE_FILE)
-                self.ui.system_line(f"已保存到 {path}")
-                continue
             if text == "/退出":
                 return "quit"
+            if self._handle_explore_command(text):
+                continue
             if self.social is not None:
                 self.social.beat(text)    # 抢话/反应/辩论 + DM 回合
             else:
                 self.dm_turn(text)
-            # DM 本回合可能触发了战斗
-            if self.encounter is not None:
-                outcome = self.run_combat()
-                if outcome == "tpk":
-                    raise GameOver()
-                scene = self.module.scene_by_id(self.state.scene_id)
-                if scene.get("outro"):
-                    self.ui.raw("")
-                    for para in scene["outro"].split("\n"):
-                        self.ui.raw(para)
-                if scene["next"] is None:
-                    return "end"
+            if self._post_beat():
+                return "end"
+
+    def _handle_explore_command(self, text: str) -> bool:
+        """探索期斜杠指令分发（从 ai_explore_turns 原有 if 链抽出）。
+
+        返回 True = 已消费（调用方 continue）；False = 非指令，交回正常流程。
+        AI PC 模式下亦作为旁听指令的处理器（未识别文本给一行提示）。"""
+        text = str(text or "").strip()
+        if not text.startswith("/") or text == "/退出":
+            return False
+        if text == "/状态":
+            self.ui.raw(self.state.party_snapshot())
+            return True
+        if text == "/背包":
+            self.show_inventory()
+            return True
+        if text == "/短休":
+            self.party_short_rest()
+            return True
+        if text == "/喝药":
+            self.drink_potion_out_of_combat()
+            return True
+        if text == "/购买":
+            scene = self.module.scene_by_id(self.state.scene_id) or {}
+            if scene.get("shop"):
+                self.open_shop()
+            else:
+                self.ui.system_line("这里没有商队。")
+            return True
+        if text == "/长休":
+            self.party_long_rest()
+            return True
+        if text == "/保存":
+            path = G.save_game(self.state, SAVE_FILE)
+            self.ui.system_line(f"已保存到 {path}")
+            return True
+        if self.aipc is not None:
+            self.ui.system_line("（旁听指令仅支持：/状态 /背包 /短休 /长休 /喝药 /购买 /保存 /退出）")
+            return True
+        return False
+
+    def _post_beat(self) -> bool:
+        """节拍/战斗收尾（原 ai_explore_turns 尾部逻辑抽出，design §2.4）。
+
+        内部按 self.state.scene_id 重取 scene（战斗可能已推进场景，不得使用
+        调用方传入的旧 scene 变量）。返回 True = 最终场景战斗完结，
+        调用方应向上传播 "end"（epilogue 才能触发）。"""
+        if self.encounter is None:
+            return False
+        outcome = self.run_combat()
+        if outcome == "tpk":
+            raise GameOver()
+        scene = self.module.scene_by_id(self.state.scene_id)
+        if scene.get("outro"):
+            self.ui.raw("")
+            for para in scene["outro"].split("\n"):
+                self.ui.raw(para)
+        return scene["next"] is None
 
     def dm_turn(self, player_text: str, lead: str = "玩家回合，请推进剧情",
                 input_label: str = "玩家输入") -> str | None:
@@ -544,8 +631,16 @@ class GameSession:
                 "note": "战斗即将开始，编排器接管回合流程。"}
 
     def _reaction_prompt(self, target, ctx: dict) -> bool:
-        """玩家反应询问；同伴自动决策。"""
+        """玩家反应询问；同伴自动决策。
+
+        AI PC 模式（docs/aipc-design.md §2.6）：返回 None —— 恒不弹人类菜单。
+        语义如实声明：combat.Encounter._ask_reaction 对可调用 prompt 直接
+        bool(prompt(...))，bool(None)=False，其后的引擎自动规则分支不可达——
+        即 AI 模式里同伴本就从不在战斗中自动触发反应，AI PC 玩家同样恒不触发
+        （与同伴现状一致），并非"引擎自动规则接管"。"""
         if target is self.state.player:
+            if self.aipc is not None:
+                return None
             label = {"shield": "以反应施放护盾术（1环，AC+5）",
                      "uncanny_dodge": "灵活闪避（反应：伤害减半）",
                      "hellish_rebuke": "狱火斥喝（反应：2d10 火焰）",
@@ -678,6 +773,11 @@ class GameSession:
             self.ui.raw("  " + line)
 
     def player_combat_turn(self, enc: Encounter) -> None:
+        # AI PC（docs/aipc-design.md §2.5）：走同伴回合链（pc_agents 命中 →
+        # _pc_agent_turn → combat_action 工具；LLM 故障落 _scripted_pc_turn 启发式）
+        if self.aipc is not None:
+            self.aipc.combat_turn(enc)
+            return
         pc = self.state.player
         # 动作阶段（begin_turn 已由 next_turn 处理）
         while enc.has_action(pc) and enc.is_over() is None:
@@ -1277,7 +1377,10 @@ class GameSession:
             self.ui.system_line("（吟游诗人的休憩之歌：每次生命骰回复额外 +1d6）")
         for c in self.state.alive_party():
             spend = None
-            if c is self.state.player and c.hp_die_count() > 0 and c.hp_cur < c.hp_max:
+            if c is self.state.player and c.hp_die_count() > 0 and c.hp_cur < c.hp_max \
+                    and self.aipc is None:
+                # AI PC 模式：spend_dice=None（引擎自动花到回满/骰尽，与同伴同款，
+                # 零 LLM、零 UI——character.short_rest 的既有语义）
                 opts = [str(i) for i in range(0, c.hp_die_count() + 1)]
                 i = self.ui.choose(f"{c.name}：消耗几颗生命骰？（共 {c.hp_die_count()} 颗，"
                                    "每颗回复 1d生命骰+体质）", opts)
@@ -1297,19 +1400,43 @@ class GameSession:
             name = D.ITEMS.get(item, {}).get("name", item)
             self.ui.raw(f"  {name} ×{n}")
 
-    def autosave(self) -> None:
+    def autosave(self):
+        """自动存档。返回存档路径（失败返回 None）——供 AI PC 的 explore_act
+        ("save") 把结果回填给模型。"""
         try:
-            G.save_game(self.state, SAVE_FILE)
+            return G.save_game(self.state, SAVE_FILE)
         except OSError:
-            pass
+            return None
 
     def _weapon_label(self, pc: Character, wkey: str) -> str:
         w = D.WEAPONS.get(wkey, {})
         return (f"{w.get('name', wkey)}（{w.get('dmg', '?')}"
                 f"{'，远程' if w.get('ranged') else ''}）")
 
+    def buy_good(self, key: str) -> dict:
+        """商店非交互购买（docs/aipc-design.md §2.3）：校验场景/货品/金币，
+        扣款入包、autosave、返回 {ok/note|error}。人类菜单（open_shop）与
+        AI PC 的 explore_act("buy") 共用——全部毫秒级完成，绝不触达 ui.choose，
+        因此不会在 Agent 工具分发内被 ToolTimeoutGuard 的 10s 常规超时砍断。"""
+        key = str(key or "").strip()
+        scene = self.module.scene_by_id(self.state.scene_id) or {}
+        if not scene.get("shop"):
+            return {"ok": False, "error": "这里没有商队。"}
+        price = next((p for k, p in SHOP_GOODS if k == key), None)
+        if price is None:
+            return {"ok": False, "error": "货摊上没有这种货物。"}
+        pc = self.state.player
+        if pc.gold < price:
+            return {"ok": False, "error": f"金币不够（需 {price}，持有 {pc.gold}）。"}
+        pc.gold -= price
+        pc.inventory[key] = pc.inventory.get(key, 0) + (10 if key == "healer_kit" else 1)
+        self.ui.system_line(f"买下{D.ITEMS[key]['name']}（−{price} 金币，余 {pc.gold}）。")
+        self.autosave()
+        return {"ok": True, "note": f"买下{D.ITEMS[key]['name']}（−{price} 金币）。"}
+
     def open_shop(self) -> None:
-        """商店：金币购买补给（scene.shop = true 的场景开放）。"""
+        """商店：金币购买补给（scene.shop = true 的场景开放）。人类菜单，
+        购买结算经 buy_good（行为不变：金币不足保留原提示文案）。"""
         pc = self.state.player
         while True:
             self.ui.raw(f"你摸了摸钱袋：{pc.gold} 金币。")
@@ -1318,15 +1445,11 @@ class GameSession:
             i = self.ui.choose("商队货摊——要买点什么？", opts)
             if i >= len(SHOP_GOODS):
                 return
-            key, price = SHOP_GOODS[i]
-            if pc.gold < price:
+            key, _price = SHOP_GOODS[i]
+            if pc.gold < _price:
                 self.ui.system_line("金币不够，掌柜摇了摇头。")
                 continue
-            pc.gold -= price
-            pc.inventory[key] = pc.inventory.get(key, 0) +                 (10 if key == "healer_kit" else 1)
-            self.ui.system_line(f"买下{D.ITEMS[key]['name']}"
-                                f"（−{price} 金币，余 {pc.gold}）。")
-            self.autosave()
+            self.buy_good(key)
 
     def drink_potion_out_of_combat(self) -> None:
         """探索阶段喝药（引擎代掷回复骰，药效最强者优先）。"""

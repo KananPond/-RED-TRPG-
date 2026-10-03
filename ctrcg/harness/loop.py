@@ -38,16 +38,25 @@ class ToolTimeoutGuard:
     # 可能阻塞等待玩家输入的工具（掷骰按钮/升级特性选择）——不受常规超时约束，
     # 否则玩家思考的十几秒就会把合法的工具调用误判为挂死
     INTERACTIVE_TOOLS = {"skill_check", "save_roll", "advance_scene", "award_xp"}
+    # 子智能体类工具：内部还要跑几次模型调用，10s 不够；但仍须有限——
+    # 外部服务挂起时不能把 DM 回合卡死一小时
+    LONG_TOOLS = {"npc_dialogue"}
 
-    def __init__(self, timeout: float = 10.0, interactive_timeout: float = 3600.0):
+    def __init__(self, timeout: float = 10.0, interactive_timeout: float = 3600.0,
+                 long_timeout: float = 180.0):
         self.timeout = timeout
         self.interactive_timeout = interactive_timeout
+        self.long_timeout = long_timeout
         self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
     def dispatch(self, registry: ToolRegistry, call: ToolCall, session: Session):
         future = self._pool.submit(registry.invoke, call.name, call.arguments)
-        wait = self.interactive_timeout if call.name in self.INTERACTIVE_TOOLS \
-            else self.timeout
+        if call.name in self.INTERACTIVE_TOOLS:
+            wait = self.interactive_timeout
+        elif call.name in self.LONG_TOOLS:
+            wait = self.long_timeout
+        else:
+            wait = self.timeout
         try:
             return future.result(timeout=wait)
         except concurrent.futures.TimeoutError:

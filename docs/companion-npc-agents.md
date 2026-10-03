@@ -1,0 +1,140 @@
+# 非玩家 PC（独立 Agent）与 NPC（DM 控制的子智能体）
+
+版本：1.0（对应 ctrcg 1.6.0）　上游参照：`.reference/SillyTavern`（浅克隆源码，gitignored）
+
+本设计把〔AI PC 设计（docs/aipc-design.md）〕建成的 SillyTavern 式提示词栈
+（`ctrcg/st/`：角色卡 / persona / 宏 / 世界书 / 组装 / 深度注入）推广到
+**桌上其余的智能体**，并给两类角色划清层级：
+
+| 角色 | 架构地位 | 控制权 | 记忆载体 |
+|------|----------|--------|----------|
+| 玩家 PC（AI 代打开） | 独立 Agent（`AIPCController`） | 自主决策 | `pc:<玩家名>` |
+| **同伴（非玩家 PC）** | **独立 Agent**（`make_pc_agent` + 社交层） | 各自独立决策，编排器只管时机 | `pc:<同伴名>`（战斗/桌边共用） |
+| **NPC** | **DM 控制的子智能体**（`NPCDirector`） | DM 用 `npc_dialogue` 工具按需拉起，随时可用 `speak_as_npc` 覆盖 | `npc:<id>`（跨回合持久） |
+
+ST 源码对照（克隆于 `.reference/SillyTavern`，仅作机制参照，不引入代码依赖）：
+角色卡字段 → `src/character-card-parser.js`、`public/char-data.js`；
+群聊多角色 → `public/scripts/group-chats.js`；用户 persona →
+`public/scripts/personas.js`；世界书 → `public/scripts/world-info.js`。
+本仓 `ctrcg/st` 的纯 Python 实现与 docs/sillytavern-architecture.md 的
+规格一一对应，本设计只做**接线**，不改 st 机制。
+
+---
+
+## 1. 非玩家 PC = 独立 Agent（同伴接入 ST 组装线）
+
+### 1.1 组装
+
+`make_pc_agent`（ctrcg/game/agents.py）不再手拼 `str.format`，改走与玩家版
+`make_aipc_agent` 完全相同的 `st.assemble_system` 默认序：
+
+```
+main（PC_SYSTEM_TEMPLATE 经 template_vars 预格式化）
+→ 卡对话示例（mes_example，<START> 分块）
+→ 全文宏渲染（{{user}}/{{char}}/{{roll::…}}）
+```
+
+- **卡字段进模组**：`companions[]` 现在接受可选 ST 扩展字段——
+  `mes_example`（对话示例）、`first_mes`、`depth_prompt`、`system_prompt`
+  （覆盖默认 main，支持 `{{original}}`）、`talkativeness`、
+  `book`（V2 世界书 dict，`wi_from_book` 导入）→ `card_from_companion`。
+- **`{{user}}` 语义**：`user` 参数传入玩家名，经 `_anon_persona`
+  （`Persona(name=玩家, position="none")`）只供宏渲染、不进 system——
+  同伴卡里的 `{{user}}` 渲染成玩家角色名（ST 用户 persona 语义）。
+- 人设/语气仍填模板槽位（persona/voice → description/personality 后置空副本），
+  与 aipc 的取舍一致：不双份进提示词。
+
+### 1.2 世界书通路（每回合）
+
+桌边社交回合（`TableSocial._pc_social_turn` / `_pc_debate_turn`）注入
+`_wi_context(pc)`：
+
+- 引擎世界书 `engine_worldinfo(state)`（场景 constant 条目 / 旗标 / 桌面上
+  被点名的 NPC / 场景检定）+ 该同伴卡上的 `book` 合并（`merge`）；
+- 以桌面最近文本为扫描窗口激活（`scan`），无激活内容不注入（省 token）；
+- 作为 `context_messages` 传入 `loop.run`——"模型可见 ⟺ 已记录"不变量自动成立。
+
+世界书只影响叙事上下文，永不进入结算路径（铁律不变）。
+
+### 1.3 不变量
+
+- AI 模式关闭 → `pc_agents` 为空、`social` 不构建 → 全部新分支不存在。
+- 同伴战斗回合链（`companion_turn`）不变；AI PC 的 attach/refresh 机制不变。
+
+## 2. NPC = DM 控制的子智能体（`ctrcg/game/npcagent.py`）
+
+### 2.1 控制流
+
+```
+DM Agent ── npc_dialogue(npc, instruction) ──▶ NPCDirector.dialogue()
+                                               │ 卡: card_from_npc → make_npc_agent（ST 组装线）
+                                               │ 循环: 专用小步数循环（adapter/compactor 共享）
+                                               │ 会话: npc:<id>（持久——NPC 记得每次交锋）
+                                               ▼
+                                    say-only registry ──▶ 台词列表
+                                               │
+              ui.npc_line（桌面渲染）+ table_log（kind="npc"）+ 返回 DM 工具结果
+```
+
+- **DM 是导演**：何时让 NPC 说话、给什么导演提示（instruction），都是 DM 的
+  工具调用决策；台词作为工具结果回到 DM 的上下文，DM 继续叙述收束。
+  DM 不想授权时，`speak_as_npc` 一句话过场的路径原样保留。
+- **子代理无世界面**：registry 只有 `say`（产出台词），没有任何影响游戏
+  状态的工具——"LLM 只决策、引擎结算"在子代理层同样成立。
+- **NPC 有记忆与立场**：`npc:<id>` 持久会话让它记得此前与冒险者的交锋
+  （记仇 / 改主意有了载体）；模组可给 NPC 写 `goals`（动机）与 `secret`
+  （底牌，进系统提示仅供把握分寸，不主动泄露）。
+- **桌面互通**：NPC 台词进 `table_log`（`kind="npc"`）→ 同伴的 `_recent`
+  与 DM 的 `_digest_table` 都"听得见"，桌边辩论可以围绕 NPC 的话展开。
+
+### 2.2 模组 NPC 字段扩展
+
+`npcs{}` 条目在必有字段 `name/race/desc` 之外，接受可选 ST 扩展：
+`persona`（性格，进 description）、`voice`（语气）、`goals`、`secret`、
+`mes_example`、`first_mes`、`depth_prompt`、`talkativeness`、`book`。
+最简形状（name/race/desc）行为不变；`card_from_npc` 兜底
+description = persona 或"种族。desc"。
+
+### 2.3 降级矩阵（绝不阻塞对局）
+
+| 场景 | 行为 |
+|------|------|
+| 剧本模式（无 LLM） | `npc_director=None`，工具返回 `ok=False`（"仅 AI 模式可用"） |
+| LLM 不可达/超时 | 返回 `ok=False` + 提示 DM 改用 `speak_as_npc`，桌面零污染 |
+| NPC 不开口（未调 say） | `ok=True, lines=[]`，提示调整导演提示或回退 |
+| 未知 NPC | `ok=False`，error 列出模组可用 NPC |
+| 超时层级 | DM 侧 `npc_dialogue` 归入 `ToolTimeoutGuard.LONG_TOOLS`（180s，内部还要跑几次模型调用）；子代理自身工具超时 60s、步数 ≤3 |
+
+### 2.4 DM 侧接线
+
+- 工具面：`npc_dialogue` 加入 `make_dm_agent.tool_names` 与
+  `GameTools.register_dm_tools`；DM 系统模板工作方式第 7 条指导用法
+  （重要对话交给子智能体、过场用 speak_as_npc）。
+- 用量计量：挂在 `npc:<id>` agent 名下（模型取 dm_agent.model）。
+
+## 3. 默认剧本《蓝望塔》（The Tower of the Blue Watch）
+
+- `modules/blue-watch/module.json`：**改编自 InternalRockStudio 的原版冒险
+  《The Blue Watch Tower》**（素材位于 `Additional Ressources/`：指挥官信件、
+  怪物数据 JSON、四张地图、物品卡）。三幕五场景（影林土路 → 夏叶旅店 →
+  蓝望塔一层/宿舍/地窖）、3 遭遇 + **4 种原版自定义怪物**（风铃妖 CR1/8 /
+  蓝望骷髅卫兵 CR1/4 / 蓝望队长 CR1/2 / 『那造物』Die Kreatur CR4，
+  CR-XP 与 SRD 一致，校验零警告）；蓝望之刃（+1 魔法长剑）按物品卡加入
+  引擎物品表（`watchers_blade`）。离线 demo 全流程可通关
+  （`python main.py --module blue-watch --demo --seed 7`）。
+- NPC 子智能体的示范字段放在指挥官拉库斯身上：`persona/voice` 取自信件
+  文风，`goals/secret` 源自信件的关键事实（他压下了"箱子是活的"的报告）。
+  模组同伴缺省 → 引擎默认三人组；ST 扩展字段（book/mes_example）的机制
+  示范见 `tests/test_npc_agent.py` 的模组夹具。
+- 默认 id 切换：`main.DEFAULT_MODULE_ID = "blue-watch"`（CLI）与 web `AppState.start`
+  默认一致；`blue-watch` 加入 `BUILTIN_IDS`（不可卸载/删除，embergate 一并补齐）；
+  默认剧本目录缺失时回退代码内置的 starfall（`default_fallback_module`），
+  游戏永不硬失败。旧存档的 module_id 兜底仍指向 starfall（读档兼容）。
+
+## 4. 测试
+
+`tests/test_npc_agent.py`（17 用例，全离线 ScriptedAdapter）：
+NPC 子代理的工具注册/委派渲染/持久记忆/未知 NPC/LLM 降级/剧本模式不可用/
+ST 字段进系统提示/台词回流 DM 上下文；同伴卡的 mes_example+宏渲染/book
+往返/最简兜底/社交 WI 上下文注入与激活；蓝望塔校验零警告、内置保护、
+默认 id 与缺失回退。全仓 304 用例通过。

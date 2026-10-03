@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ctrcg"
-version = "1.5.0"
+version = "1.6.0"
 description = "CTRCG —— 单人 AI 跑团：完整 D&D 5e 规则引擎 + AI DM/队友（被遗忘的大陆）"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -21,7 +21,7 @@ classifiers = [
 
 [tool.setuptools]
 packages = ["ctrcg", "ctrcg.rules", "ctrcg.campaign", "ctrcg.harness",
-            "ctrcg.game", "ctrcg.ui", "ctrcg.web"]
+            "ctrcg.game", "ctrcg.st", "ctrcg.ui", "ctrcg.web"]
 
 [project.urls]
 Homepage = "https://github.com/KananPond/CTRCG"

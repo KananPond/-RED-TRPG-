@@ -413,7 +413,11 @@ class TestShop(unittest.TestCase):
         rng = random.Random(3)
         hero = make_pc(name="凯尔")
         hero.gold = gold
-        return GameSession(G.GameState(hero, [hero], rng), ui, loop=None), hero
+        session = GameSession(G.GameState(hero, [hero], rng), ui, loop=None)
+        # 商店只在 scene.shop = true 的场景开放（buy_good 会校验场景），
+        # 故把会话切到内置模组的商店场景 town_arrive
+        session.state.scene_id = "town_arrive"
+        return session, hero
 
     def test_buy_and_leave(self):
         # 货摊 4 项：买治疗药水(50) → 买火把(5) → 离开

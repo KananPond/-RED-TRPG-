@@ -4,7 +4,8 @@
 const $ = (s) => document.querySelector(s);
 const S = { lastId: 0, es: null, meta: null, started: false, ask: null, live: false,
             module: "starfall", provider: "deepseek",
-            levels: null, gold: null };
+            levels: null, gold: null, aipc: null,
+            aipcGame: false, over: false };
 const ABILITY_CN = { str: "力量", dex: "敏捷", con: "体质", int: "智力", wis: "感知", cha: "魅力" };
 const SOURCE_CN = { builtin: "内置", generated: "AI 生成", imported: "导入" };
 
@@ -194,6 +195,20 @@ async function renderSettings() {
   $("#set-env-hint").innerHTML = "密钥也可以用环境变量提供：" +
     cur.key_envs.map(e => `<code>${e}</code>`).join(" / ") +
     "。设置仅对新开对局生效；密钥永不写入磁盘。";
+  await renderAipcSettings();
+}
+
+/* AI PC 模式（AI 代打）：开关独立持久化（POST /api/settings/aipc），
+   无 LLM 时也可保存，对局启动时由服务端降级为人类操控 */
+async function renderAipcSettings() {
+  const r = await jfetch("/api/settings/aipc");
+  if (!r.ok) return;
+  S.aipc = r.body;
+  $("#aipc-on").checked = !!r.body.enabled;
+  $("#aipc-persona").value = r.body.persona || "";
+  $("#aipc-llm-hint").innerHTML = r.body.llm_active
+    ? "开启后：新开对局中你的角色将由 AI 代打（行动、战斗与桌边社交），开关对新开对局生效。"
+    : "<b>尚未接入 LLM：</b>开关可以先保存，但对局将回退由你亲自操控；接入 LLM 后新开对局生效。";
 }
 
 $("#set-save").addEventListener("click", async () => {
@@ -216,6 +231,22 @@ $("#set-test").addEventListener("click", async () => {
     headers: { "Content-Type": "application/json" } });
   msg.innerHTML = r.ok ? `<span class="okok">连接正常：${r.body.reply}</span>`
     : `<span class="err">${r.body.error}</span>`;
+});
+
+$("#aipc-save").addEventListener("click", async () => {
+  const msg = $("#aipc-msg");
+  const r = await jfetch("/api/settings/aipc", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled: $("#aipc-on").checked,
+                           persona: $("#aipc-persona").value.trim() }),
+  });
+  if (!r.ok) {
+    msg.innerHTML = `<span class="err">${r.body.error || "保存失败"}</span>`;
+    return;
+  }
+  S.aipc = r.body.aipc || S.aipc;
+  msg.innerHTML = '<span class="okok">已保存。对新开对局生效（局内不可切换）。</span>';
+  renderAipcSettings();
 });
 
 /* ═══════════ 设置页：Token 用量 ═══════════ */
@@ -417,6 +448,17 @@ let hideTimer = null;
 function cancelHide() {
   if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
 }
+// AI PC 对局的旁听指令常驻输入框（aipc-design §2.8/§4.2）：无 pending 时
+// ask-form 保持可见，提交经 POST /api/answer {text} 由服务端转投
+// ui.post_command（server 在 pending_view() 为 None 时分派）——人类在对局中
+// 仍可发 /状态 /保存 /退出 等指令，AI 代打不锁死控制台
+function updateAskForm() {
+  if (S.ask) return;                       // 有 pending 交由 showAsk 接管
+  if (!(S.aipcGame && S.started && !S.over)) return;
+  $("#ask-form").classList.remove("hidden");
+  $("#ask-box").placeholder = "旁听指令：/状态 /保存 /退出…（回车提交）";
+  $("#idle-hint").style.display = "none";
+}
 function showAsk(ev) {
   S.ask = ev;
   cancelHide();
@@ -465,7 +507,7 @@ function showAsk(ev) {
     $("#ask-box").focus();
   }
 }
-async function submitAnswer(payload, btn) {
+async function submitAnswer(payload, btn, keepOpen) {
   const r = await jfetch("/api/answer", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -479,19 +521,29 @@ async function submitAnswer(payload, btn) {
     hideTimer = setTimeout(() => {
       if (!S.ask) $("#choices").classList.add("hidden");
     }, 700);
+    $("#idle-hint").style.display = "";
   } else {
     S.ask = null;
-    $("#ask-form").classList.add("hidden");
+    if (!keepOpen) {                       // 旁听指令常驻：提交后不收起输入框
+      $("#ask-form").classList.add("hidden");
+      $("#idle-hint").style.display = "";
+    }
   }
-  $("#idle-hint").style.display = "";
   refreshState();
 }
 $("#ask-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const box = $("#ask-box");
-  if (!box.value.trim() || !S.ask || S.ask.kind !== "input") return;
-  submitAnswer({ text: box.value.trim() });
+  const text = box.value.trim();
+  if (!text) return;
+  if (S.ask) {
+    if (S.ask.kind !== "input") return;    // 选择/掷骰 pending 走按钮，不走文本框
+    submitAnswer({ text }, null, S.aipcGame);
+  } else if (S.aipcGame && S.started && !S.over) {
+    submitAnswer({ text }, null, true);    // 无 pending：服务端转投旁听指令槽
+  } else return;
   box.value = "";
+  updateAskForm();
 });
 
 /* ═══════════ SSE ═══════════ */
@@ -546,6 +598,7 @@ function resetForNewStream() {
   S.live = false;          // 重放完成（ready 事件）后才恢复特效
   S.levels = null;
   S.gold = null;
+  S.over = false;          // 新流 = 新对局，旁听输入框恢复可用
   $("#ending").classList.add("hidden");
   $("#flourish").classList.add("hidden");
   // 若页面仍停在开始页（他处开团/外部驱动），自动跟随进入对局
@@ -565,6 +618,7 @@ function markRemoteChoice(ev) {
   }, 700);
 }
 function onGameOver(ev) {
+  S.over = true;           // 终局后旁听指令无消费者，收起输入框
   $("#ask-form").classList.add("hidden");
   $("#choices").classList.add("hidden");
   $("#idle-hint").style.display = "";
@@ -597,10 +651,14 @@ async function refreshState() {
     connectSSE();
   }
   if (st.generation !== undefined) S.gen = st.generation;
-  // 模式徽标（AI 接入与否）
+  // 模式徽标（AI 接入与否 + AI 代打）；requested=开关已开但本局降级为人类操控
+  const aipcOn = !!(st.aipc && st.aipc.enabled);
+  S.aipcGame = aipcOn;                     // enabled=控制器已挂载（server snapshot）
   const badge = $("#mode-badge");
-  badge.textContent = st.llm_active ? `AI 模式 · ${st.model || ""}` : "剧本模式";
+  badge.textContent = (st.llm_active ? `AI 模式 · ${st.model || ""}` : "剧本模式")
+    + (aipcOn ? " · AI 代打" : "");
   badge.classList.toggle("ai", !!st.llm_active);
+  updateAskForm();                         // 旁听指令常驻输入框按需显隐
   setScene({ act: st.act, title: st.act_title, location: st.location });
   $("#gold-chip").textContent = st.gold + " 金币";
   // 金币变动音（仅 live 推进时）
@@ -640,7 +698,7 @@ async function refreshState() {
     d.innerHTML = `
       <div class="medal">${AvatarFX.avatar(pc.race, pc.klass_key || pc.klass, pc.name)}</div>
       <div>
-        <div class="pc-name"><span>${pc.name}</span><span class="pc-klass">${pc.level}级${pc.klass}${pc.is_player ? " · 你" : ""}</span></div>
+        <div class="pc-name"><span>${pc.name}</span><span class="pc-klass">${pc.level}级${pc.klass}${pc.is_player ? (aipcOn ? " · 你 · AI 代打" : " · 你") : ""}</span></div>
         <div class="pc-line2">
           <span class="hpbar"><i style="width:${pct}%; background:${color}"></i></span>
           <span class="pc-hpnum">${pc.hp}/${pc.hp_max}</span>
@@ -703,6 +761,12 @@ async function buildCreateForm() {
       <div class="hint">背景技能自动获得；<span id="race-skill-hint"></span></div></div>
     <div class="field" id="style-field"><label>战斗风格</label>
       <div class="card-row" id="c-style"></div></div>
+    <div class="field"><label>角色简介（可选 · AI 代打时的行为依据）</label>
+      <textarea id="c-desc" rows="3" maxlength="2000"
+        placeholder="来历、动机、行事倾向……留空则由种族·职业·背景自动概括"></textarea></div>
+    <div class="field"><label>说话语气（可选）</label>
+      <textarea id="c-voice" rows="2" maxlength="2000"
+        placeholder="如：低沉寡言，句句带刺；或热情外向，爱讲挖矿段子"></textarea></div>
     <p class="hint" style="margin-top:14px">同行伙伴由 AI 代打；若模组定义了自己的队友，以模组为准。</p>
     <button class="big-btn" id="c-start">开始冒险</button>
     <p class="hint" id="form-error" style="color:#8c3030"></p>`;
@@ -864,6 +928,10 @@ async function submitCreate() {
     bonus2: form.bonus2, bonus1: form.bonus1,
     skills: form.skills,
     fighting_style: form.fighting_style, module_id: S.module,
+    // AI PC（aipc-design §3.3/§4.2）：开关取设置页持久化偏好；人设作 PC 角色卡素材
+    aipc_enabled: !!(S.aipc && S.aipc.enabled),
+    description: ($("#c-desc") ? $("#c-desc").value.trim() : ""),
+    personality: ($("#c-voice") ? $("#c-voice").value.trim() : ""),
   };
   await startGame(payload);
 }
@@ -884,6 +952,7 @@ async function startGame(payload) {
 
 function enterGame() {
   S.started = true;
+  S.over = false;
   $("#start-screen").classList.add("hidden");
   $("#app").classList.remove("hidden");
   connectSSE();
@@ -901,6 +970,8 @@ $("#btn-reset").addEventListener("click", async () => {
 
 /* ═══════════ 启动 ═══════════ */
 (async function boot() {
+  // AI PC 开关偏好预取：建卡提交体始终携带当前开关状态（免先访问设置页）
+  jfetch("/api/settings/aipc").then(r => { if (r.ok) S.aipc = r.body; }).catch(() => {});
   const r = await jfetch("/api/state");
   if (r.body && r.body.started) {
     enterGame();          // 断线/刷新后回到对局

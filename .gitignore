@@ -6,3 +6,4 @@ webserver.log
 .env
 .mimosa/
 dist/
+.reference/

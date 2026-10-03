@@ -6,4 +6,4 @@
   （Session 事件日志 / ModelAdapter / ToolRegistry / AgentLoop / Guard / Compaction）。
 """
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"

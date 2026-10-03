@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..rules.character import Character
 from ..campaign import module_data as M
 from ..campaign.loader import Module
+
+if TYPE_CHECKING:
+    from ..rules.combat import Encounter
 
 
 class GameState:
@@ -22,6 +26,12 @@ class GameState:
         self.scene_id = self.module.first_scene_id()
         self.visited: list[str] = []
         self.rng = rng or random.Random()
+        # AI PC（docs/aipc-design.md §3.1）：全部带默认值，既有构造调用方零改动。
+        # ctrcg.st（st.card）未落地时 persona/aipc_card 以 dict 序列形态暂存，
+        # st 就绪后由读档（from_dict）与 server.build_session 接缝重建为对象。
+        self.aipc_enabled: bool = False   # 本局是否 AI 代打（构建期快照，局内只读）
+        self.persona = None               # 用户 persona：Persona | None（AI PC 关闭时也可供 DM 上下文用）
+        self.aipc_card = None             # 玩家角色卡：CharacterCard | None（建卡/读档时填充）
 
     # ------------------------------------------------------------ 队伍
     def party(self) -> list[Character]:
@@ -70,7 +80,7 @@ class EncounterBuildError(Exception):
 
 
 def build_encounter(encounter_id: str, state: GameState,
-                    surprised: bool = False) -> "Encounter":  # noqa: F821
+                    surprised: bool = False) -> "Encounter":
     from ..rules.combat import Encounter, Monster
     spec = state.module.encounter(encounter_id)
     if spec is None:
@@ -90,6 +100,31 @@ def build_encounter(encounter_id: str, state: GameState,
 
 
 # ---------------------------------------------------------------- 存档
+def _aipc_to_json(obj):
+    """AI PC 块内 persona/card → JSON 形态：st 对象经 to_dict()，dict 原样透传。"""
+    if obj is None:
+        return None
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    return obj if isinstance(obj, dict) else None
+
+
+def _aipc_from_json(raw, class_name: str):
+    """aipc 块内 persona/card 反序列化（aipc-design §3.2）。
+
+    ctrcg.st.card 已落地时用其 from_dict 重建为对象；st 未就绪（持久化通路
+    先行合入）或数据异常时保留原始 dict——内容无损，就绪后读档即恢复为对象，
+    接缝层（server.build_session）同时接受两种形态。"""
+    if not isinstance(raw, dict) or not raw:
+        return None
+    try:
+        from ..st import card as _st_card
+        return getattr(_st_card, class_name).from_dict(raw)
+    except Exception:  # noqa: BLE001 —— st 缺失/数据损坏时保留原始形态
+        return raw
+
+
 def save_game(state: GameState, path: str | Path) -> Path:
     _ver, ints, _gauss = state.rng.getstate()
     data = {
@@ -100,6 +135,13 @@ def save_game(state: GameState, path: str | Path) -> Path:
         "scene_id": state.scene_id,
         "visited": state.visited,
         "rng_state": list(ints),
+        # AI PC 块（§3.2）：旧档无此键 → 读档默认关闭，完全兼容；
+        # 块内只有开关与非敏感叙事文本（persona/角色卡），无任何密钥字段。
+        "aipc": {
+            "enabled": bool(getattr(state, "aipc_enabled", False)),
+            "persona": _aipc_to_json(getattr(state, "persona", None)),
+            "card": _aipc_to_json(getattr(state, "aipc_card", None)),
+        },
     }
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,4 +161,10 @@ def load_game(path: str | Path, module: Module | None = None) -> GameState:
     st.flags = data.get("flags", {})
     st.scene_id = data.get("scene_id") or module.first_scene_id()
     st.visited = data.get("visited", [])
+    # AI PC（§3.2）：旧档无 aipc 键 → 开关关闭、persona/卡为空
+    aipc = data.get("aipc")
+    aipc = aipc if isinstance(aipc, dict) else {}
+    st.aipc_enabled = bool(aipc.get("enabled"))
+    st.persona = _aipc_from_json(aipc.get("persona"), "Persona")
+    st.aipc_card = _aipc_from_json(aipc.get("card"), "CharacterCard")
     return st

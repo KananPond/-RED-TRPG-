@@ -33,7 +33,7 @@ from .loader import Module
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,48}$")
 
 # 内置模组 id（随发行版附带，禁止经 UI 删除）
-BUILTIN_IDS = {"starfall", "saltmist", "mistgate"}
+BUILTIN_IDS = {"starfall", "saltmist", "mistgate", "embergate", "blue-watch"}
 
 PENDING = "pending"      # 已挂载，等待依赖服务
 ACTIVE = "active"        # 副作用运行中
@@ -215,7 +215,7 @@ class Cordis:
 
     def unload(self, module_id: str) -> tuple[bool, str | None]:
         """卸载一个模组。服务消失 → 依赖它的插件被自动处置（连坐）。"""
-        if module_id == "starfall":
+        if module_id in BUILTIN_IDS:
             return False, "内置模组不可卸载"
         fiber = self._fibers.get(module_id)
         if fiber is None:

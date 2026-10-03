@@ -23,6 +23,8 @@ class WebUI:
         self.subscribers: list[queue.Queue] = []
         self._lock = threading.Lock()
         self._pending: dict | None = None      # 等待浏览器应答的请求
+        self._command: str | None = None       # AI PC 旁听指令槽（非阻塞）
+        self._cmd_event = threading.Event()    # 旁听指令到达信号
         self.aborted = False
         self._dice: dict[str, int] = {"rolls": 0, "nat20": 0, "nat1": 0,
                                       "passed": 0, "failed": 0}
@@ -141,6 +143,29 @@ class WebUI:
 
     def free_input(self, prompt: str) -> str:
         return self._ask("input", prompt, None)
+
+    # ------------------------------------------------------------ AI PC 旁听指令
+    def post_command(self, text: str) -> dict:
+        """写入旁听指令槽（/api/answer 在无 pending 且 AI PC 对局时转投此处）。
+        读写全程持锁；poll_command 取走即清，不存在双消费。"""
+        cmd = str(text or "").strip()
+        with self._lock:
+            self._command = cmd or None
+        if cmd:
+            self._cmd_event.set()
+        return {"ok": True}
+
+    def poll_command(self, timeout: float = 0.0) -> "str | None":
+        """AI PC 探索循环每节拍调用（非阻塞）：取走并清空旁听指令。
+
+        timeout>0 时最多等这么久（探索循环传 0.4，避免空转烧 CPU）；
+        ConsoleUI/AutoUI 无此方法——控制器经 getattr 防御转发恒得 None。"""
+        if timeout and timeout > 0:
+            self._cmd_event.wait(timeout)
+        with self._lock:
+            cmd, self._command = self._command, None
+            self._cmd_event.clear()
+        return cmd
 
     def _ask(self, kind: str, prompt: str, options: list[str] | None):
         ev = threading.Event()

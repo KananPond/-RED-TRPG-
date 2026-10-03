@@ -14,6 +14,32 @@ STYLE_NAMES = {"archery": "箭术（远程攻击+2）", "defense": "防御（AC+
                "dueling": "对决（单手近战伤害+2）", "two_weapon": "双武器格斗",
                "great_weapon": "大武器格斗（双手武器伤害骰1/2重骰）"}
 
+# ---------------------------------------------------------------- AI PC 人设字段
+# 玩家人设 = AI 代打的 PC 角色卡素材（docs/aipc-design.md §3.3/§4.2）。
+# description=角色简介（行为依据），personality=说话语气；mes_example/system_prompt
+# 为进阶覆盖字段（仅随 start spec 透传，Web 表单不暴露）。终端建卡 P0 不加交互项
+# （create_player_console 不动），字段留空时由 st.card.card_from_player 以
+# 种族·职业·背景兜底文案组卡。
+AIPC_FIELD_LIMIT = 2000
+AIPC_CARD_FIELDS = ("description", "personality", "mes_example", "system_prompt")
+
+
+def clamp_aipc_text(value, limit: int = AIPC_FIELD_LIMIT) -> str:
+    """清洗玩家人设文本：str 化、去首尾空白、超长截断（纯文本，无密钥面）。"""
+    return str(value or "").strip()[:limit]
+
+
+def aipc_card_fields(spec: dict) -> dict[str, str]:
+    """从 start spec 提取非空的玩家人设字段（供 web.charbuild.build_aipc_card 组卡）。"""
+    if not isinstance(spec, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key in AIPC_CARD_FIELDS:
+        text = clamp_aipc_text(spec.get(key))
+        if text:
+            out[key] = text
+    return out
+
 # 按职业的推荐属性优先级（掷骰结果按此顺序从高到低分配）
 RECOMMENDED: dict[str, dict[str, int]] = {
     "barbarian": {"str": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "int": 8},

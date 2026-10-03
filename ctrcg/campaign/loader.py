@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
-
 from ..rules import data as D
 
 MAX_MODULE_BYTES = 4 * 1024 * 1024

@@ -6,10 +6,11 @@
 引擎按"被遗忘的大陆 · D&D 5e（SRD 5.1）"规则运行剧本；所有骰点由规则引擎
 完成，LLM 只做决策与叙述，**不生成任何数值结果**。
 
-- 内置剧本：`modules/starfall`（星坠矿脉的阴影）、`modules/saltmist`
+- 内置剧本：`modules/blue-watch`（《蓝望塔》The Tower of the Blue Watch，
+  **默认剧本**）、`modules/starfall`（星坠矿脉的阴影）、`modules/saltmist`
   （盐雾灯塔的低语）、`modules/mistgate`（新手教学）、`modules/embergate`
   （《余烬之门》，3→5 级终章战役）。
-- 不确定怎么写时，直接对照内置剧本抄结构：1-3 级节奏参考 starfall，
+- 不确定怎么写时，直接对照内置剧本抄结构：1-3 级节奏参考 blue-watch/starfall，
   3-5 级节奏（含 CR2-5 怪物与里程碑升级点）参考 embergate。
 - 运行时产生的 `generated-*` / `imported-*` 目录同样遵循本规范。
 

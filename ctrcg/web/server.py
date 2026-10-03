@@ -3,6 +3,9 @@
 模组：GET/POST /api/modules*（列表/导入/AI生成/删除），start 时按 module_id 原子加载。
 设置：GET/POST /api/settings/llm（供应商预设，OpenAI 兼容协议），密钥只存在
       本服务进程内存或环境变量中，不落盘、不回显。
+AI PC：GET/POST /api/settings/aipc（AI 代打开关 + 玩家 persona，非敏感叙事文本），
+      独立端点持久化到 saves/llm_config.json 的 "aipc" 键——不走 apply_llm_settings
+      （其缺密钥时早退不落盘），无 LLM 时开关同样可保存（docs/aipc-design.md §4.1）。
 用量：GET /api/usage、POST /api/usage/clear（TokenMeter 持久化到 saves/）。
 """
 
@@ -29,11 +32,11 @@ from ..rules.character import Character
 from ..rules.dice import roll_scores
 from ..ui.charcreate import RECOMMENDED
 from ..ui.webui import AbortGame, WebUI
-from .charbuild import build_character
+from .charbuild import build_aipc_card, build_character
 
 STATIC_DIR = Path(__file__).parent / "static"
 SAVE_FILE = "saves/game.json"
-LLM_SETTINGS_FILE = "saves/llm_config.json"   # 仅存非敏感字段（provider/base_url/model）
+LLM_SETTINGS_FILE = "saves/llm_config.json"   # 仅存非敏感字段（provider/base_url/model + aipc）
 
 _GEN_SYSTEM = """你是资深的 D&D 5e 模组设计师，为"被遗忘的大陆"（被遗忘的国度，剑湾一带）创作跑团模组。
 你要输出一个完整的模组 JSON，供跑团引擎直接加载运行。只输出 JSON 本身，不要任何解释或代码围栏。
@@ -106,6 +109,9 @@ class AppState:
         self.meter = TokenMeter("saves/token_usage.json")
         self._runtime_key: str | None = None       # 仅内存，不落盘
         self._persisted: dict = self._load_llm_settings()
+        self.aipc_prefs: dict = (                  # AI PC 偏好（开关/persona，非敏感）
+            self._persisted["aipc"] if isinstance(self._persisted.get("aipc"), dict)
+            else {})
         self.lock = threading.Lock()
         self.generation = 0                        # 对局代际：每次 start +1
         self.llm_cfg = self._resolve_llm_config()
@@ -118,9 +124,14 @@ class AppState:
         except (OSError, json.JSONDecodeError):
             return {}
 
-    def _save_llm_settings(self, cfg: LLMConfig) -> None:
-        payload = {"provider": cfg.provider, "base_url": cfg.base_url,
-                   "model": cfg.model}
+    def _save_llm_settings(self, cfg: LLMConfig | None = None) -> None:
+        """持久化非敏感配置：provider/base_url/model + aipc 偏好（无任何密钥字段）。"""
+        payload = {k: self._persisted[k] for k in ("provider", "base_url", "model")
+                   if k in self._persisted}
+        if cfg is not None:
+            payload.update({"provider": cfg.provider, "base_url": cfg.base_url,
+                            "model": cfg.model})
+        payload["aipc"] = dict(self.aipc_prefs)
         try:
             Path(LLM_SETTINGS_FILE).parent.mkdir(parents=True, exist_ok=True)
             Path(LLM_SETTINGS_FILE).write_text(
@@ -179,6 +190,24 @@ class AppState:
         self.llm_cfg = cfg
         return True, None, cfg
 
+    def apply_aipc_settings(self, spec: dict) -> tuple[bool, str | None]:
+        """AI PC 偏好持久化（aipc-design §4.1，rev3 ④）。
+
+        独立于 apply_llm_settings——后者缺密钥时提前 return 且不落盘，而开关必须
+        在无 LLM 时也可保存（对局启动时再按 llm_cfg 降级为人类操控）。
+        persona 为非敏感叙事文本（≤1000 字符，超长截断），无密钥面。"""
+        if not isinstance(spec, dict):
+            spec = {}
+        self.aipc_prefs = {"enabled": bool(spec.get("enabled")),
+                           "persona": str(spec.get("persona") or "").strip()[:1000]}
+        self._save_llm_settings()
+        return True, None
+
+    def aipc_settings_view(self) -> dict:
+        return {"enabled": bool(self.aipc_prefs.get("enabled")),
+                "persona": str(self.aipc_prefs.get("persona") or ""),
+                "llm_active": self.llm_cfg is not None}
+
     def llm_settings_view(self) -> dict:
         cfg = self.llm_cfg
         return {
@@ -188,6 +217,9 @@ class AppState:
             "model": cfg.model if cfg else "",
             "key_source": ("runtime" if self._runtime_key else
                            "env" if cfg else "none"),
+            # AI PC 开关随视图下发（持久化走 POST /api/settings/aipc 独立端点）
+            "aipc": {"enabled": bool(self.aipc_prefs.get("enabled")),
+                     "persona": str(self.aipc_prefs.get("persona") or "")},
         }
 
     # ------------------------------------------------------------ 对局
@@ -209,7 +241,7 @@ class AppState:
                     return False, f"存档所需模组缺失：{module_id}", {}
                 state = G.load_game(save_path, module=module)
             else:
-                module_id = str(spec.get("module_id") or "starfall")
+                module_id = str(spec.get("module_id") or "blue-watch")
                 module, errs, warns = self.cordis.ensure(module_id)
                 if module is None:
                     return False, "；".join(errs) or f"模组加载失败：{module_id}", {}
@@ -222,6 +254,18 @@ class AppState:
                     player.level_up_to(module.party_level_start)
                 companions = build_companions(module, state_level=player.level)
                 state = G.GameState(player, companions, rng, module=module)
+                # AI PC（aipc-design §4.1）：开关以开局 spec 优先，缺省回退设置页
+                # 持久化偏好；续档走 load_game，以存档 aipc.enabled 为准，不在此覆盖。
+                state.aipc_enabled = bool(spec.get(
+                    "aipc_enabled", self.aipc_prefs.get("enabled")))
+                state.aipc_card = build_aipc_card(spec, name=player.name)
+                persona_text = str(self.aipc_prefs.get("persona") or "").strip()
+                if persona_text:
+                    # Persona 的 dict 序列形态（字段同 st.card.Persona.to_dict）；
+                    # st 就绪后由 build_session 接缝经 Persona.from_dict 重建
+                    state.persona = {"name": player.name, "description": persona_text,
+                                     "position": "in_prompt", "depth": 2,
+                                     "role": "system"}
         except (ValueError, KeyError, FileNotFoundError, TypeError) as e:
             return False, str(e), {}
 
@@ -292,6 +336,13 @@ class AppState:
                 "is_player": c is st.player,
             } for c in st.party()],
         })
+        # AI PC 模式（§4.1）：enabled=控制器已挂载（真正接管）；requested=开关已开
+        # 但本局降级为人类操控（LLM 未配置/组件未就绪/名字冲突），前端据此说明
+        base["aipc"] = {
+            "enabled": getattr(self.session, "aipc", None) is not None,
+            "requested": bool(getattr(st, "aipc_enabled", False)),
+            "player": st.player.name,
+        }
         return base
 
 
@@ -317,9 +368,18 @@ def build_companions(module: Module, state_level: int = 1) -> list[Character]:
 def build_session(state: G.GameState, ui: WebUI, llm_cfg: LLMConfig | None,
                   module: Module | None = None,
                   meter: TokenMeter | None = None) -> GameSession:
-    """按 LLM 配置构建 AI 模式会话，否则剧本模式。"""
+    """按 LLM 配置构建 AI 模式会话，否则剧本模式。
+
+    AI PC（aipc-design §0/§4.1）：仅当 llm_cfg 非 None 且 state.aipc_enabled 时
+    才挂 AIPCController；开关关闭时全部新分支短路，行为与基线完全一致。
+    本阶段接缝只做参数与降级通路——ctrcg.st / ctrcg.game.aipc 由后续集成落地，
+    未就绪（ImportError）、attach 返回 None（玩家名与同伴冲突，§2.1）或
+    卡/persona 数据无效时，回退人类操控并在 UI 说明。"""
     module = module or state.module
     if llm_cfg is None:
+        if getattr(state, "aipc_enabled", False):
+            _aipc_note(ui, "（AI 代打未启用：尚未接入 LLM，本局由你亲自操控。"
+                           "开关已保存，接入 LLM 后新开对局生效。）")
         return GameSession(state, ui, loop=None, module=module, meter=meter)
     from ..game.agents import make_dm_agent, make_pc_agent
     from ..harness.adapter import OpenAICompatibleAdapter
@@ -336,9 +396,60 @@ def build_session(state: G.GameState, ui: WebUI, llm_cfg: LLMConfig | None,
         slots_hint = "法术位：" + ("、".join(f"{lv}环×{n}" for lv, n in ch.spell_slots().items())
                                    or "无")
         pc_agents[ch.name] = make_pc_agent(comp, ch.level, ch.weapons,
-                                           slots_hint, llm_cfg.model)
-    return GameSession(state, ui, loop=loop, dm_agent=dm_agent, pc_agents=pc_agents,
-                       module=module, meter=meter)
+                                           slots_hint, llm_cfg.model,
+                                           user=state.player.name)
+    session = GameSession(state, ui, loop=loop, dm_agent=dm_agent, pc_agents=pc_agents,
+                          module=module, meter=meter)
+    _maybe_attach_aipc(session, state, ui, llm_cfg, loop)
+    return session
+
+
+def _aipc_note(ui, text: str) -> None:
+    """AI PC 启用/降级说明行（UI 事件流；发送失败不阻塞开局）。"""
+    try:
+        ui.system_line(text)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _maybe_attach_aipc(session: GameSession, state: G.GameState, ui,
+                       llm_cfg: LLMConfig, loop) -> None:
+    """AI PC agent 构建接缝（aipc-design §2.1/§4.1，签名约定处）。
+
+    开关开启且 LLM 就绪时按设计文档签名挂载：
+        AIPCController.attach(session, loop, llm_cfg.model, card, persona) -> AIPCController | None
+    attach 在内部注册第 4 名同伴（session.pc_agents[玩家名]）、复用
+    session.pc_session(玩家名) 并赋值 session.aipc；返回 None=玩家名与同伴冲突。
+    persona/card 接受对象或 dict 序列形态（本阶段持久化通路先行的暂存形态），
+    在此统一重建；任一步失败都降级为人类操控并说明，绝不阻塞开局。"""
+    if not getattr(state, "aipc_enabled", False):
+        return
+    try:
+        from ..game.aipc import AIPCController
+        from ..st.card import CharacterCard, Persona, card_from_player
+    except ImportError:
+        _aipc_note(ui, "（AI 代打未启用：AI PC 组件尚未就绪，本局由你亲自操控。）")
+        return
+    try:
+        card = state.aipc_card
+        if isinstance(card, dict):
+            card = CharacterCard.from_dict(card)
+        if card is None:
+            card = card_from_player(state.player)
+        persona = state.persona
+        if isinstance(persona, dict):
+            persona = Persona.from_dict(persona)
+        if persona is None:
+            persona = Persona(name=state.player.name)
+    except Exception as e:  # noqa: BLE001 —— 卡/persona 数据无效时降级
+        _aipc_note(ui, f"（AI 代打未启用：角色卡或 persona 无效"
+                       f"（{type(e).__name__}），本局由你亲自操控。）")
+        return
+    aipc = AIPCController.attach(session, loop, llm_cfg.model, card, persona)
+    if aipc is None:
+        _aipc_note(ui, "（AI 代打未启用：玩家角色名与同伴重名，本局由你亲自操控。）")
+        return
+    _aipc_note(ui, f"（AI 代打已启用：{state.player.name} 将由 AI 扮演。）")
 
 
 def meta_payload(app: AppState) -> dict:
@@ -503,6 +614,8 @@ class Handler(BaseHTTPRequestHandler):
                  "default": bool(v.get("default"))}
                 for k, v in LLM_PROVIDERS.items()]
             return self._json(view)
+        if path == "/api/settings/aipc":
+            return self._json(self.app.aipc_settings_view())
         return self._json({"error": "not found"}, 404)
 
     def _file(self, name: str, ctype: str) -> None:
@@ -524,14 +637,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
-        if self.app.ui is None:
+        ui = self.app.ui
+        if ui is None:
             self.wfile.write(b"event: ready\ndata: {}\n\n")
             self.wfile.flush()
             return
-        q = self.app.ui.subscribe()
+        q = ui.subscribe()
         gen = self.app.generation
         try:
-            history = list(self.app.ui.history)
+            history = list(ui.history)
             for ev in history:
                 self._sse(ev)
             self.wfile.write(b"event: ready\ndata: {}\n\n")
@@ -556,7 +670,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ConnectionAbortedError, BrokenPipeError, OSError):
             pass
         finally:
-            self.app.ui.unsubscribe(q)
+            ui.unsubscribe(q)
 
     def _sse(self, ev: dict) -> None:
         data = json.dumps(ev, ensure_ascii=False)
@@ -575,7 +689,16 @@ class Handler(BaseHTTPRequestHandler):
             ui = self.app.ui
             if ui is None:
                 return self._json({"ok": False, "error": "对局未开始"}, 409)
-            ok, err = ui.resolve(index=body.get("index"), text=body.get("text"))
+            text = body.get("text")
+            # AI PC 对局旁听指令（aipc-design §2.8/§4.1）：无 pending 且控制器已
+            # 挂载时，自由文本转投 ui.post_command（webui 落地前该分支不可达）
+            if (body.get("index") is None and isinstance(text, str) and text.strip()
+                    and ui.pending_view() is None
+                    and getattr(self.app.session, "aipc", None) is not None
+                    and hasattr(ui, "post_command")):
+                ui.post_command(text.strip())
+                return self._json({"ok": True})
+            ok, err = ui.resolve(index=body.get("index"), text=text)
             return self._json({"ok": ok, "error": err}, 200 if ok else 409)
         if path == "/api/reset":
             self.app.reset()
@@ -584,6 +707,11 @@ class Handler(BaseHTTPRequestHandler):
             ok, err, cfg = self.app.apply_llm_settings(body)
             return self._json({"ok": ok, "error": err,
                                "settings": self.app.llm_settings_view()},
+                              200 if ok else 400)
+        if path == "/api/settings/aipc":
+            ok, err = self.app.apply_aipc_settings(body)
+            return self._json({"ok": ok, "error": err,
+                               "aipc": self.app.aipc_settings_view()},
                               200 if ok else 400)
         if path == "/api/llm/test":
             cfg = self.app.llm_cfg

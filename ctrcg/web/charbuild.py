@@ -14,7 +14,7 @@ import random
 from ..rules import data as D
 from ..rules.character import Character
 from ..rules.dice import roll_scores
-from ..ui.charcreate import RECOMMENDED, assign_by_recommended
+from ..ui.charcreate import aipc_card_fields, assign_by_recommended
 
 STYLE_KEYS = {"archery", "defense", "dueling", "two_weapon", "great_weapon"}
 _ABILITY_KEYS = ("str", "dex", "con", "int", "wis", "cha")
@@ -56,6 +56,23 @@ def build_character(spec: dict, rng: random.Random | None = None) -> Character:
             fighting_style=style, bonus2=bonus2, bonus1=bonus1)
     except ValueError as e:
         raise ValueError(f"角色构建失败：{e}")
+
+
+def build_aipc_card(spec: dict, name: str = "") -> dict | None:
+    """从 start spec 提取玩家人设，产出 AI PC 的角色卡素材（aipc-design §3.3/§4.1）。
+
+    返回与 st.card.CharacterCard.from_dict 兼容的序列化形态：st（ctrcg.st.card）
+    未落地时以纯 dict 暂存于 GameState.aipc_card 并随存档往返，由
+    server.build_session 接缝在 st 就绪后重建为 CharacterCard。
+    四个字段全为空时返回 None——接缝将回退 card_from_player(state.player) 的
+    引擎兜底文案（种族·职业·背景 + 战术风格摘要）。字段经 aipc_card_fields
+    清洗：纯文本、各 ≤AIPC_FIELD_LIMIT 字符（超长截断，与姓名截断同风格）。"""
+    fields = aipc_card_fields(spec)
+    if not fields:
+        return None
+    card = {"name": str(name or "")}
+    card.update(fields)
+    return card
 
 
 def _resolve_scores(spec: dict, klass: str, rng: random.Random | None = None) -> dict[str, int]:

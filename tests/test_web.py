@@ -3,6 +3,7 @@
 import http.client
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -10,10 +11,18 @@ import unittest
 from pathlib import Path
 
 from ctrcg.campaign.module_data import COMPANIONS as M_COMPANIONS
+from ctrcg.config import LLM_PROVIDERS
 from ctrcg.web.server import AppState, make_server
 from ctrcg.ui.webui import AbortGame, WebUI
 
 HOST = "127.0.0.1"  # 本地回环上的测试服务
+
+# 测试期必须移除的 LLM 环境变量：各供应商密钥（与 config.LLM_PROVIDERS 同步
+# 派生）+ 可选覆盖项。本机若设有 DEEPSEEK_API_KEY 等，AppState 会据此激活
+# AI 模式，让 /api/meta 断言与全流程测试走真实联网路径。
+LLM_ENV_VARS = sorted({env for preset in LLM_PROVIDERS.values()
+                       for env in preset["key_envs"]}
+                      | {"CTRCG_LLM_BASE_URL", "CTRCG_LLM_MODEL"})
 
 
 def builtin_json_text() -> dict:
@@ -130,6 +139,11 @@ class TestWebServer(unittest.TestCase):
     """起真实 HTTP 服务做端到端验证。"""
 
     def setUp(self):
+        # LLM 环境隔离：移除本机可能存在的密钥环境变量，保证离线路径；
+        # 需要真实配置的用例（如 test_ai_mode_dm_turn_over_http）会显式
+        # 设置 self.app.llm_cfg，不依赖环境变量。
+        self._llm_env_backup = {name: os.environ.pop(name)
+                                for name in LLM_ENV_VARS if name in os.environ}
         self.tmp = tempfile.TemporaryDirectory()
         self.old_cwd = os.getcwd()
         os.chdir(self.tmp.name)     # 存档写入临时目录，避免污染真实存档
@@ -145,6 +159,7 @@ class TestWebServer(unittest.TestCase):
         self.server.shutdown()
         os.chdir(self.old_cwd)
         self.tmp.cleanup()
+        os.environ.update(self._llm_env_backup)   # 还原本机 LLM 环境变量
 
     # ------------------------------------------------------------ 端点
     def test_static_and_meta(self):
@@ -166,6 +181,74 @@ class TestWebServer(unittest.TestCase):
     def test_answer_without_pending_conflict(self):
         status, body = http_post(self.port, "/api/answer", {"index": 0})
         self.assertEqual(status, 409)
+
+    # ------------------------------------------------------------ SSE 流
+    def _open_stream(self):
+        """打开 /api/stream，返回 (response, 读线程, 缓冲拼接函数)。"""
+        conn = http.client.HTTPConnection(HOST, self.port, timeout=10)
+        conn.request("GET", "/api/stream")
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        self.assertIn("text/event-stream", resp.getheader("Content-Type", ""))
+        chunks: list[str] = []
+        done = threading.Event()
+
+        def reader():
+            try:
+                while True:
+                    chunk = resp.read1(4096)
+                    if not chunk:
+                        break
+                    chunks.append(chunk.decode("utf-8"))
+            except OSError:
+                pass
+            finally:
+                done.set()
+
+        threading.Thread(target=reader, daemon=True).start()
+        return conn, done, (lambda: "".join(chunks))
+
+    def _wait_stream(self, text, predicate, timeout=5.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if predicate(text()):
+                return True
+            time.sleep(0.05)
+        return predicate(text())
+
+    def _stream_ids(self, text):
+        return [int(m) for m in re.findall(r"^id: (\d+)$", text, re.M)]
+
+    def test_sse_stream_replays_history_and_pushes_live(self):
+        """/api/stream：先回放历史 + ready 帧，其后新事件实时推送。
+        回归：_stream 循环曾引用未定义的 ui，历史回放后第一轮循环即
+        NameError 断流，导致 SSE 永远收不到实时事件。"""
+        self._start_game()
+        conn, done, text = self._open_stream()
+        self.assertTrue(self._wait_stream(text, lambda t: "event: ready" in t))
+        self.assertIn("id: 1\n", text())            # 对局事件从头回放
+        replay_max = max(self._stream_ids(text()))
+
+        pending = self._pending()
+        payload = {"text": "继续前进。"} if pending["kind"] == "input" else {"index": 0}
+        status, _ = http_post(self.port, "/api/answer", payload)
+        self.assertEqual(status, 200)
+        self.assertTrue(self._wait_stream(text,
+            lambda t: max(self._stream_ids(t), default=0) > replay_max))
+        conn.close()
+
+    def test_sse_stream_disconnects_when_game_resets(self):
+        """对局重置后旧流应干净断开并退订，订阅者不泄漏
+        （浏览器 EventSource 收到 EOF 后自动重连）。"""
+        self._start_game()
+        ui = self.app.ui
+        conn, done, text = self._open_stream()
+        self.assertTrue(self._wait_stream(text, lambda t: "event: ready" in t))
+
+        self.app.reset()
+        self.assertTrue(done.wait(5))               # 读到 EOF，读线程退出
+        self.assertEqual(ui.subscribers, [])        # 旧流已退订
+        conn.close()
 
     def test_start_rejects_invalid_character(self):
         status, body = http_post(self.port, "/api/start", {

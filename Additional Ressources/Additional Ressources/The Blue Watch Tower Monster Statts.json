@@ -1,0 +1,564 @@
+{
+	"_meta": {
+		"sources": [
+			{
+				"json": "Thebluewatchtower",
+				"abbreviation": "TBWT",
+				"full": "The Blue Watch Tower",
+				"url": "https://www.patreon.com/InternalRockStudio",
+				"authors": [
+					"InternalRockStudio"
+				],
+				"convertedBy": [
+					"InternalRockStudio"
+				],
+				"color": "0e00d6",
+				"version": "1.0"
+			}
+		],
+		"optionalFeatureTypes": {
+			"F:RA": "Fighter; Runic Augmentations",
+			"Psi. Man.": "Psionic Manifestation",
+			"Unit": "Unit"
+		}
+	},
+	"class": [],
+	"subclass": [],
+	"spell": [],
+	"monster": [
+		{
+			"name": "Fengling",
+			"source": "TheoldWatchtower",
+			"size": [
+				"S"
+			],
+			"type": "fey",
+			"alignment": [
+				"C",
+				"N"
+			],
+			"ac": [
+				12
+			],
+			"hp": {
+				"formula": "1d10",
+				"average": 5
+			},
+			"speed": {
+				"walk": 30
+			},
+			"str": 8,
+			"dex": 12,
+			"con": 10,
+			"int": 6,
+			"wis": 8,
+			"cha": 8,
+			"skill": {
+				"stealth": "+4"
+			},
+			"senses": [
+				"darkvision 60 ft."
+			],
+			"passive": 9,
+			"resist": [
+				"psychic"
+			],
+			"conditionImmune": [
+				"charmed",
+				"frightened"
+			],
+			"cr": "1/8",
+			"trait": [
+				{
+					"name": "Light Sensitivity",
+					"entries": [
+						"While in bright light, gibberlings have disadvantage on attack rolls, as well as on Wisdom ({@skill Perception}) checks that rely on sight."
+					]
+				}
+			],
+			"action": [
+				{
+					"name": "Claw",
+					"entries": [
+						"{@atk mw} {@hit 3} to hit, reach 5 ft., one target. {@h}4 ({@damage 1d4 + 1}) piercing damage."
+					]
+				}
+			],
+			"traitTags": [
+				"Light Sensitivity",
+				"Reckless"
+			],
+			"miscTags": [
+				"MW"
+			],
+			"hasFluff": true,
+			"hasFluffImages": true,
+			"senseTags": [
+				"D"
+			],
+			"tokenHref": {
+				"type": "external",
+				"url": "https://i.imgur.com/MsXalT8.png"
+			},
+			"fluff": {
+				"images": [
+					{
+						"type": "image",
+						"href": {
+							"type": "external",
+							"url": "https://i.imgur.com/MsXalT8.png"
+						}
+					}
+				]
+			},
+			"damageTags": [
+				"P"
+			]
+		},
+		{
+			"name": "Blue Watcher Skeleton",
+			"source": "TheoldWatchtower",
+			"basicRules": true,
+			"size": [
+				"M"
+			],
+			"type": "undead",
+			"alignment": [
+				"L",
+				"N"
+			],
+			"ac": [
+				{
+					"ac": 14,
+					"from": [
+						"{@item shield|phb}",
+						"broken armor"
+					]
+				}
+			],
+			"hp": {
+				"formula": "2d6 + 2",
+				"average": 9
+			},
+			"speed": {
+				"walk": 30
+			},
+			"str": 12,
+			"dex": 12,
+			"con": 13,
+			"int": 6,
+			"wis": 8,
+			"cha": 8,
+			"senses": [
+				"darkvision 60 ft."
+			],
+			"passive": 11,
+			"immune": [
+				"poison"
+			],
+			"vulnerable": [
+				"bludgeoning"
+			],
+			"conditionImmune": [
+				"exhaustion",
+				"poisoned"
+			],
+			"languages": [
+				"understands all languages it spoke in life but can't speak"
+			],
+			"cr": "1/4",
+			"action": [
+				{
+					"name": "Rusty Sword",
+					"entries": [
+						"{@atk mw} {@hit 3} to hit, reach 5 ft., one target. {@h} 4 ({@damage 1d6 + 1}) slashing damage."
+					]
+				}
+			],
+			"senseTags": [
+				"D"
+			],
+			"languageTags": [
+				"CS",
+				"LF"
+			],
+			"miscTags": [
+				"MW"
+			],
+			"hasFluff": true,
+			"hasFluffImages": true,
+			"skill": {
+				"perception": "+1"
+			},
+			"resist": [
+				"piercing"
+			],
+			"trait": [
+				{
+					"name": "Brave",
+					"entries": [
+						"The blue watcher skeleton has advantage on saving throws against being {@condition frightened}."
+					]
+				}
+			],
+			"tokenHref": {
+				"type": "external",
+				"url": "https://i.imgur.com/1ml9ZCS.png"
+			},
+			"fluff": {
+				"images": [
+					{
+						"type": "image",
+						"href": {
+							"type": "external",
+							"url": "https://i.imgur.com/1ml9ZCS.png"
+						}
+					}
+				]
+			},
+			"damageTags": [
+				"S"
+			]
+		},
+		{
+			"name": "Blue Watcher Captian",
+			"source": "TheoldWatchtower",
+			"basicRules": true,
+			"size": [
+				"M"
+			],
+			"type": "undead",
+			"alignment": [
+				"L",
+				"N"
+			],
+			"ac": [
+				{
+					"ac": 16,
+					"from": [
+						"{@item shield|phb}",
+						"rusty chainmail"
+					]
+				}
+			],
+			"hp": {
+				"formula": "4d6 + 8",
+				"average": 22
+			},
+			"speed": {
+				"walk": 30
+			},
+			"str": 14,
+			"dex": 12,
+			"con": 15,
+			"int": 6,
+			"wis": 8,
+			"cha": 8,
+			"senses": [
+				"darkvision 60 ft."
+			],
+			"passive": 11,
+			"immune": [
+				"poison"
+			],
+			"vulnerable": [
+				"bludgeoning"
+			],
+			"conditionImmune": [
+				"exhaustion",
+				"poisoned"
+			],
+			"languages": [
+				"understands all languages it spoke in life but can't speak"
+			],
+			"cr": "1/2",
+			"action": [
+				{
+					"name": "The Watchers blade",
+					"entries": [
+						"{@atk mw} {@hit 5} to hit, reach 5 ft., one target. {@h} 8 ({@damage 1d10 + 3}) slashing damage, or 9 ({@damage 1d12 + 3}) slashing damage if used with two hands."
+					]
+				}
+			],
+			"senseTags": [
+				"D"
+			],
+			"languageTags": [
+				"CS",
+				"LF"
+			],
+			"miscTags": [
+				"MW"
+			],
+			"hasFluff": true,
+			"hasFluffImages": true,
+			"skill": {
+				"perception": "+1"
+			},
+			"resist": [
+				"piercing"
+			],
+			"bonus": [
+				{
+					"name": "Shieldbash",
+					"entries": [
+						"{@atk mw} {@hit 7} to hit, reach 5 ft., one creature. {@h}If the target is a Medium or smaller creature, it must succeed on a {@dc 14} Strength saving throw or be knocked {@condition prone}."
+					]
+				}
+			],
+			"conditionInflict": [
+				"prone"
+			],
+			"trait": [
+				{
+					"name": "Brave",
+					"entries": [
+						"The blue watcher captian has advantage on saving throws against being {@condition frightened}."
+					]
+				}
+			],
+			"tokenHref": {
+				"type": "external",
+				"url": "https://i.imgur.com/9EeRxQ1.png"
+			},
+			"fluff": {
+				"images": [
+					{
+						"type": "image",
+						"href": {
+							"type": "external",
+							"url": "https://i.imgur.com/9EeRxQ1.png"
+						}
+					}
+				]
+			},
+			"damageTags": [
+				"S"
+			],
+			"savingThrowForced": [
+				"strength"
+			]
+		},
+		{
+			"name": "Die Kreatur",
+			"source": "TheoldWatchtower",
+			"traitTags": [
+				"Amorphous",
+				"Keen Senses",
+				"Light Sensitivity",
+				"Regeneration"
+			],
+			"hasFluff": true,
+			"hasFluffImages": true,
+			"size": [
+				"L"
+			],
+			"type": "monstrosity",
+			"alignment": [
+				"C",
+				"E"
+			],
+			"ac": [
+				{
+					"ac": 14,
+					"from": [
+						"natural armor"
+					]
+				}
+			],
+			"hp": {
+				"formula": "8d6 + 32",
+				"average": 60
+			},
+			"speed": {
+				"walk": 40
+			},
+			"str": 19,
+			"dex": 11,
+			"con": 18,
+			"int": 11,
+			"wis": 12,
+			"cha": 4,
+			"senses": [
+				"darkvision 60 ft.",
+				"blindsight 30 ft."
+			],
+			"passive": 11,
+			"cr": "4",
+			"trait": [
+				{
+					"name": "Not his true body",
+					"entries": [
+						"Die Kreatur heals his fake body. At the start of its turn it regains 10 hit points. If it is within 50 ft. of a light source or its chest was damaged this turn, his regeneration does not work for this turn."
+					]
+				},
+				{
+					"name": "Walker of Gabs",
+					"entries": [
+						"Die Kreatur can move through a space as narrow as 1 inch but only while it is clouded in darkness. It deforms his body for this."
+					]
+				},
+				{
+					"name": "Light Aversion",
+					"entries": [
+						"Die Kreatur has a aversion of light. While within a light source, Die Kreatur has disadvantage on attack rolls and saving throws."
+					]
+				},
+				{
+					"name": "The Chest",
+					"entries": [
+						"The chest is the true body of Die Kreatur. Its dark appearance is only the extension of the chest. If damage is made to the chest subtract it from its hit points."
+					]
+				},
+				{
+					"name": "Half Hitpoints(Event)",
+					"entries": [
+						"When Die Kreatur is reduced to half its hit points ({@damage 30}) it will immediately use his Extinguish All Light ability."
+					]
+				}
+			],
+			"action": [
+				{
+					"name": "Eat A Face",
+					"entries": [
+						"{@atk mw} {@hit 6} to hit, reach 5 ft., one target. {@h} 14 ({@damage 2d10 + 4}) piercing damage."
+					]
+				}
+			],
+			"senseTags": [
+				"D",
+				"B"
+			],
+			"actionTags": [
+				"Multiattack"
+			],
+			"miscTags": [
+				"MW"
+			],
+			"languages": [
+				"Abyssal"
+			],
+			"languageTags": [
+				"AB"
+			],
+			"resist": [
+				{
+					"resist": [],
+					"preNote": "All",
+					"note": "(except magical weapon damage)",
+					"cond": true
+				}
+			],
+			"vulnerable": [
+				{
+					"vulnerable": [
+						"bludgeoning",
+						"fire",
+						"force",
+						"thunder"
+					],
+					"note": "(only against the chest)"
+				}
+			],
+			"legendary": [
+				{
+					"name": "Extinguish Light",
+					"entries": [
+						"Die Kreatur extinguishes one light source within 50 ft. of him."
+					]
+				},
+				{
+					"name": "Extinguish All Light (Costs 3)",
+					"entries": [
+						"Die Kreatur extinguishes all light sources within 50 ft. of him."
+					]
+				},
+				{
+					"name": "Tearing claw",
+					"entries": [
+						"{@atk mw} {@hit 6} to hit, reach 5 ft., one target. {@h}10 ({@damage 1d10 + 4}) slashing damage."
+					]
+				}
+			],
+			"bonus": [
+				{
+					"name": "Walk the Shadows",
+					"entries": [
+						"While in shadow die Kreatur can pseudo teleport within 90 ft. of him. It moves into a small gab and reappears somewhere else. It can only do that once. This movement does not provoke attack of opportunities."
+					]
+				}
+			],
+			"legendaryHeader": [
+				"Die Kreatur can take 3 legendary actions, choosing from the options below. Only one legendary action can be used at a time and only at the end of another creature's turn. Die Kreatur regains spent legendary actions at the start of its turn."
+			],
+			"tokenHref": {
+				"type": "external",
+				"url": "https://i.imgur.com/34zQhHK.png"
+			},
+			"fluff": {
+				"images": [
+					{
+						"type": "image",
+						"href": {
+							"type": "external",
+							"url": "https://i.imgur.com/34zQhHK.png"
+						}
+					}
+				]
+			},
+			"damageTags": [
+				"P",
+				"S"
+			]
+		}
+	],
+	"legendaryGroup": [],
+	"monsterFluff": [],
+	"feat": [],
+	"optionalfeature": [],
+	"race": [],
+	"raceFluff": [],
+	"subrace": [],
+	"deity": [],
+	"item": [],
+	"baseitem": [],
+	"variant": [],
+	"itemProperty": [],
+	"itemType": [],
+	"psionic": [],
+	"reward": [],
+	"object": [],
+	"trap": [],
+	"hazard": [],
+	"variantrule": [],
+	"condition": [],
+	"disease": [],
+	"adventure": [],
+	"adventureData": [],
+	"book": [],
+	"bookData": [],
+	"table": [],
+	"tableGroup": [],
+	"vehicle": [],
+	"action": [],
+	"cult": [],
+	"boon": [],
+	"language": [],
+	"makebrewCreatureTrait": [],
+	"classFeature": [],
+	"subclassFeature": [],
+	"itemFluff": [],
+	"status": [],
+	"spellFluff": [],
+	"vehicleUpgrade": [],
+	"charoption": [],
+	"charoptionFluff": [],
+	"languageScript": [],
+	"itemEntry": [],
+	"recipe": [],
+	"backgroundFeature": [],
+	"raceFeature": [],
+	"vehicleWeapon": [],
+	"psionicDisciplineFocus": [],
+	"psionicDisciplineActive": []
+}

@@ -1,4 +1,4 @@
-"""CTRCG 入口：单人 AI 跑团《星坠矿脉的阴影》。
+"""CTRCG 入口：单人 AI 跑团（默认剧本《蓝望塔》The Tower of the Blue Watch）。
 
 用法：
   python main.py --web             # 网页版（推荐）：开始页含 模组/存档/帮助/设置
@@ -25,13 +25,20 @@ from ctrcg.rules.character import Character
 from ctrcg.ui.cli import AutoUI, ConsoleUI
 from ctrcg.ui.charcreate import create_player_console
 
+# 默认剧本：《蓝望塔》(The Tower of the Blue Watch)
+DEFAULT_MODULE_ID = "blue-watch"
+
 
 def load_module(cordis_dir: str, module_id: str | None) -> Module:
     registry = Cordis(cordis_dir)
-    mid = module_id or "starfall"
+    mid = module_id or DEFAULT_MODULE_ID
     mod, errors, _warns = registry.ensure(mid)
     if mod is None:
-        if mid == "starfall":
+        if mid == DEFAULT_MODULE_ID:
+            # 默认剧本缺失（如全新环境只有代码）：回退到代码内置的
+            # 星坠矿脉，游戏永不硬失败
+            print(f"默认剧本《蓝望塔》加载失败：{'；'.join(errors)}\n"
+                  "已回退到内置剧本《星坠矿脉的阴影》。", file=sys.stderr)
             mod = default_fallback_module()
         else:
             print(f"模组加载失败：{'；'.join(errors)}", file=sys.stderr)
@@ -106,7 +113,7 @@ def run_web(args, cfg: LLMConfig | None) -> int:
     url = f"http://127.0.0.1:{port}"
     mode = f"AI 模式（{app.llm_cfg.provider} · {app.llm_cfg.model}）" if app.llm_cfg \
         else "剧本模式（离线）"
-    print(f"\n《星坠矿脉的阴影》网页版 · {mode}")
+    print(f"CTRCG 网页版 · 默认剧本《蓝望塔》 · {mode}")
     print(f"请用浏览器打开：{url}")
     print("（服务运行期间请保持本窗口开启，Ctrl+C 停止）\n")
     if not args.no_open:
@@ -131,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8500)
     parser.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
     parser.add_argument("--module", metavar="ID", default=None,
-                        help="模组 id（modules/ 目录，默认 starfall）")
+                        help=f"模组 id（modules/ 目录，默认 {DEFAULT_MODULE_ID}）")
     args = parser.parse_args(argv)
 
     cfg = LLMConfig.from_env()
@@ -197,7 +204,8 @@ def main(argv: list[str] | None = None) -> int:
             slots_hint = "法术位：" + (
                 "、".join(f"{lv}环×{n}" for lv, n in ch.spell_slots().items()) or "无（1级游侠）")
             pc_agents[ch.name] = make_pc_agent(
-                comp, ch.level, ch.weapons, slots_hint, cfg.model)
+                comp, ch.level, ch.weapons, slots_hint, cfg.model,
+                user=state.player.name)
         session = GameSession(state, ui, loop=loop, dm_agent=dm_agent,
                               pc_agents=pc_agents, module=module)
     session.run()

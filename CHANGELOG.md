@@ -114,6 +114,12 @@
   `_local/pdf_pages` / `_local/pdf_images` / `_local/pdf_extract*.txt`
   （该模组中文版的页图与文本抽取物，约 44 MB）——两者都已被 2.0.0 取代，
   仓库不再保留任何 D&D 5e 素材。
+- `docs/screenshots/`（旧规则版本的 4 张界面截图，约 3 MB）：界面预览待
+  RED 版出图后重拍补入。
+- 版本库外的旧时代产物一并清理（约 724 MB）：`_work/run/`（移植前的 5e
+  工程整份拷贝，git 历史已有）、`_local/dist/CTRCG-1.0.0~1.4.0.zip`（旧版
+  发行包）、死循环事故留下的 `demo_out.txt` / `demo7.log`（约 711 MB）。
+  1.6.0 会话日志的唯一抢救副本 `_local/logs-ads/` **保留**。
 
 ## [1.8.0] — 2026-10-05
 

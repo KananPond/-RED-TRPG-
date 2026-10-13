@@ -109,6 +109,11 @@
   `award_xp`、`save_roll` 等工具与函数（含 `data.py` / `character.py` /
   `dice.py` / `loader.py` 中的对应实现）。
 - 界面与文档中的旧奇幻设定表述（大陆、海岸、BG3 名单等）。
+- 旧 5e 模组的本地素材：`Additional Ressources/`（《蓝色守望之塔》原版 PDF、
+  指挥官信件、怪物数据、四张地图、物品卡、纸模与棋子，约 131 MB）与
+  `_local/pdf_pages` / `_local/pdf_images` / `_local/pdf_extract*.txt`
+  （该模组中文版的页图与文本抽取物，约 44 MB）——两者都已被 2.0.0 取代，
+  仓库不再保留任何 D&D 5e 素材。
 
 ## [1.8.0] — 2026-10-05
 

@@ -23,15 +23,17 @@ from ctrcg.st import (CharacterCard, Injection, MacroContext, Persona, WIResult,
 
 
 def make_player() -> Character:
+    """RED 玩家角色卡（十项属性 + 技能等级；无出身/分类/背景概念）。"""
     return Character.create(
-        name="凯尔", race="human", klass="fighter", background="soldier",
-        scores={"str": 15, "dex": 13, "con": 14, "int": 10, "wis": 12, "cha": 8},
-        skill_choices=["athletics", "intimidation"], fighting_style="defense")
+        name="Kyle", role="solo",
+        stats={"int": 5, "ref": 6, "dex": 6, "tech": 4, "cool": 5,
+               "will": 6, "luck": 5, "move": 5, "body": 7, "emp": 6},
+        skill_levels={"athletics": 4, "brawling": 5, "perception": 5})
 
 
 def make_ctx(**kw) -> MacroContext:
-    kw.setdefault("user", "阿命")
-    kw.setdefault("char", "凯尔")
+    kw.setdefault("user", "Ash")
+    kw.setdefault("char", "Kyle")
     return MacroContext(**kw)
 
 
@@ -41,12 +43,12 @@ class TestMacros(unittest.TestCase):
 
     def test_user_char_case_insensitive(self):
         ctx = make_ctx()
-        self.assertEqual(render("{{user}}和{{CHAR}}", ctx), "阿命和凯尔")
-        self.assertEqual(render("{{User}}/{{char}}", ctx), "阿命/凯尔")
+        self.assertEqual(render("{{user}}和{{CHAR}}", ctx), "Ash和Kyle")
+        self.assertEqual(render("{{User}}/{{char}}", ctx), "Ash/Kyle")
 
     def test_old_tags(self):
         self.assertEqual(render("<USER>对<BOT>说，<CHAR>点头", make_ctx()),
-                         "阿命对凯尔说，凯尔点头")
+                         "Ash对Kyle说，Kyle点头")
 
     def test_escape_keeps_literal(self):
         self.assertEqual(render(r"\{\{user\}\}", make_ctx()), "{{user}}")
@@ -61,21 +63,21 @@ class TestMacros(unittest.TestCase):
         a = render("{{random::{{char}}::甲}}", ctx, rng=random.Random(7))
         b = render("{{random::{{char}}::甲}}", ctx, rng=random.Random(7))
         self.assertEqual(a, b)
-        self.assertIn(a, ("凯尔", "甲"))
+        self.assertIn(a, ("Kyle", "甲"))
         # 内层解析、外层未识别 → 外层按字面保留但内层已展开
-        self.assertEqual(render("{{upper::{{char}}}}", ctx), "{{upper::凯尔}}")
+        self.assertEqual(render("{{upper::{{char}}}}", ctx), "{{upper::Kyle}}")
 
     def test_nested_beyond_two_layers_kept_literal(self):
         out = render("{{a::{{b::{{char}}}}}}", make_ctx())
-        self.assertEqual(out, "{{a::{{b::凯尔}}}}")
+        self.assertEqual(out, "{{a::{{b::Kyle}}}}")
 
     def test_roll_same_seed_deterministic(self):
         ctx = make_ctx()
-        a = render("伤害 {{roll::1d20+3}}", ctx, rng=random.Random(42))
-        b = render("伤害 {{roll::1d20+3}}", ctx, rng=random.Random(42))
+        a = render("伤害 {{roll::2d6+3}}", ctx, rng=random.Random(42))
+        b = render("伤害 {{roll::2d6+3}}", ctx, rng=random.Random(42))
         self.assertEqual(a, b)
         total = int(a.split()[1])
-        self.assertTrue(4 <= total <= 23)
+        self.assertTrue(5 <= total <= 15)
 
     def test_roll_invalid_expr_kept(self):
         self.assertEqual(render("{{roll::不是骰子}}", make_ctx()),
@@ -95,16 +97,16 @@ class TestMacros(unittest.TestCase):
                          "甲\n乙 丙")
 
     def test_persona_and_snapshot_fields(self):
-        ctx = make_ctx(persona="沉默的旅人", party="凯尔、罗兰", scene="s1：酒馆",
+        ctx = make_ctx(persona="沉默的旅人", party="Kyle、Roland", scene="s1：酒馆",
                        flags={"met_boss": "yes"})
         out = render("{{persona}}|{{party}}|{{scene}}|{{flags}}", ctx)
-        self.assertEqual(out, "沉默的旅人|凯尔、罗兰|s1：酒馆|{'met_boss': 'yes'}")
+        self.assertEqual(out, "沉默的旅人|Kyle、Roland|s1：酒馆|{'met_boss': 'yes'}")
 
     def test_card_field_macros_from_extra(self):
         ctx = make_ctx(extra={"description": "剑士", "personality": "沉稳",
                               "scenario": "护送中"})
         self.assertEqual(render("{{char}}：{{description}}/{{personality}}/{{scenario}}",
-                                ctx), "凯尔：剑士/沉稳/护送中")
+                                ctx), "Kyle：剑士/沉稳/护送中")
 
     def test_pick_stable_across_renders(self):
         ctx = make_ctx()
@@ -120,7 +122,7 @@ class TestCard(unittest.TestCase):
 
     def test_card_roundtrip_with_book(self):
         card = CharacterCard(
-            name="凯尔", description="剑士", personality="沉稳", scenario="护送",
+            name="Kyle", description="剑士", personality="沉稳", scenario="护送",
             mes_example="<START>示例", system_prompt="覆盖", talkativeness=0.7,
             alternate_greetings=["你好"], depth_prompt="@D 注释",
             book=WorldInfo(entries=[WLEntry(keys=["国王"], content="设定",
@@ -128,7 +130,7 @@ class TestCard(unittest.TestCase):
             extensions={"x_custom": "保留"})
         data = card.to_dict()
         back = CharacterCard.from_dict(data)
-        self.assertEqual(back.name, "凯尔")
+        self.assertEqual(back.name, "Kyle")
         self.assertEqual(back.description, "剑士")
         self.assertEqual(back.talkativeness, 0.7)
         self.assertEqual(back.alternate_greetings, ["你好"])
@@ -139,7 +141,7 @@ class TestCard(unittest.TestCase):
         self.assertEqual(back.book.entries[0].order, 7)
 
     def test_unknown_keys_preserved_in_extensions(self):
-        back = CharacterCard.from_dict({"name": "凯尔", "creator_notes": "仅展示",
+        back = CharacterCard.from_dict({"name": "Kyle", "creator_notes": "仅展示",
                                         "tags": ["ttrpg"]})
         self.assertEqual(back.extensions.get("creator_notes"), "仅展示")
         self.assertEqual(back.extensions.get("tags"), ["ttrpg"])
@@ -148,25 +150,25 @@ class TestCard(unittest.TestCase):
         p = Persona.from_dict(None)
         self.assertEqual((p.name, p.description, p.position, p.depth, p.role),
                          ("", "", "in_prompt", 2, "system"))
-        p2 = Persona.from_dict({"name": "阿命", "description": "旅人",
+        p2 = Persona.from_dict({"name": "Ash", "description": "旅人",
                                 "position": "in_chat", "depth": "5", "role": "queen"})
         self.assertEqual((p2.position, p2.depth, p2.role),
                          ("in_prompt", 5, "system"))  # 非法枚举回退、depth 容错
 
     def test_card_from_companion_mapping(self):
-        card = card_from_companion({"name": "罗兰·北风", "persona": "前卫戍兵",
+        card = card_from_companion({"name": "Roland Northwind", "persona": "前卫戍兵",
                                     "voice": "低沉，句子很短。"})
-        self.assertEqual(card.name, "罗兰·北风")
+        self.assertEqual(card.name, "Roland Northwind")
         self.assertEqual(card.description, "前卫戍兵")
         self.assertEqual(card.personality, "低沉，句子很短。")
         self.assertEqual(card.scenario, "")
 
     def test_card_from_player_fallback_text(self):
+        """兜底文案走 RED 口径：职业名 + 十项属性行。"""
         card = card_from_player(make_player())
-        self.assertEqual(card.name, "凯尔")
-        self.assertIn("人类", card.description)
-        self.assertIn("战士", card.description)
-        self.assertIn("士兵", card.description)
+        self.assertEqual(card.name, "Kyle")
+        self.assertIn("独行侠", card.description)          # D.ROLES["solo"]["name"]
+        self.assertIn("体格7", card.description)           # 十项属性行
         self.assertTrue(card.personality)          # 通用兜底文案
         card2 = card_from_player(make_player(), description="表单简介",
                                  personality="表单语气")
@@ -188,11 +190,11 @@ class TestAssemble(unittest.TestCase):
 
     def _card(self) -> CharacterCard:
         return CharacterCard(
-            name="凯尔", description="描述内容", personality="性格内容",
+            name="Kyle", description="描述内容", personality="性格内容",
             scenario="情境内容", mes_example="<START>示例甲\n<START>示例乙")
 
     def test_assemble_system_order(self):
-        text = assemble_system(self._card(), Persona(name="阿命", description="命代言人设"),
+        text = assemble_system(self._card(), Persona(name="Ash", description="命代言人设"),
                                wi_before="世界书前", wi_after="世界书后",
                                main_default="MAIN默认模板")
         marks = ["MAIN默认模板", "世界书前", "命代言人设", "描述内容", "性格内容",
@@ -209,46 +211,47 @@ class TestAssemble(unittest.TestCase):
         self.assertTrue(text.startswith("X"))     # 覆盖段在 main 位
 
     def test_template_vars_and_fail_fast(self):
-        tpl = "你是{name}（{race}），由 AI 代打。"
+        tpl = "你是{name}（{role_name}），由 AI 代打。"
         text = assemble_system(self._card(), None, main_default=tpl,
-                               template_vars={"name": "凯尔", "race": "人类"})
-        self.assertIn("你是凯尔（人类）", text)
+                               template_vars={"name": "Kyle",
+                                              "role_name": "独行侠"})
+        self.assertIn("你是Kyle（独行侠）", text)
         with self.assertRaises(KeyError):
             assemble_system(self._card(), None, main_default=tpl)  # 缺键 fail-fast
 
     def test_persona_position_gating(self):
         card = self._card()
-        inp = assemble_system(card, Persona(name="阿命", description="进提示词",
+        inp = assemble_system(card, Persona(name="Ash", description="进提示词",
                                             position="in_prompt"))
         self.assertIn("进提示词", inp)
-        off = assemble_system(card, Persona(name="阿命", description="不进",
+        off = assemble_system(card, Persona(name="Ash", description="不进",
                                             position="none"))
         self.assertNotIn("不进", off)
-        atd = assemble_system(card, Persona(name="阿命", description="走深度",
+        atd = assemble_system(card, Persona(name="Ash", description="走深度",
                                             position="at_depth"))
         self.assertNotIn("走深度", atd)
 
     def test_macros_resolved_in_assembled_system(self):
         card = self._card()
         card.description = "{{char}}是{{personality}}的剑士"
-        text = assemble_system(card, Persona(name="阿命"))
-        self.assertIn("凯尔是性格内容的剑士", text)
+        text = assemble_system(card, Persona(name="Ash"))
+        self.assertIn("Kyle是性格内容的剑士", text)
 
     def test_build_context_block_shape(self):
         injs = [Injection(depth=0, role="system", text="浅层注"),
                 Injection(depth=2, role="system", text="深层注")]
         out = build_context_block(
-            lead="以 凯尔 的身份行动", scene="s1：老巢", party="凯尔 HP 10/10",
+            lead="以 Kyle 的身份行动", scene="s1：老巢", party="Kyle HP 10/10",
             flags="", table="甲：「你好」", last_narration="旁白一句。",
             injections=injs, persona_note="沉默寡言", wi="世界书条目",
             phi="PHI 最后指令")
         self.assertEqual(len(out), 2)
         self.assertEqual(out[1], {"role": "user", "content": "PHI 最后指令"})
         text = out[0]["content"]
-        marks = ["【场景】s1：老巢", "【队伍】凯尔 HP 10/10", "【旗标】无",
+        marks = ["【场景】s1：老巢", "【队伍】Kyle HP 10/10", "【旗标】无",
                  "【桌上插话】\n甲：「你好」", "【最近旁白】旁白一句。",
                  "【世界书】\n世界书条目", "【注入】", "【玩家】沉默寡言",
-                 "以 凯尔 的身份行动"]
+                 "以 Kyle 的身份行动"]
         pos = [text.index(m) for m in marks]
         self.assertEqual(pos, sorted(pos), text)
         self.assertLess(text.index("深层注"), text.index("浅层注"))  # depth 降序
@@ -497,23 +500,27 @@ class TestWorldInfoImportMerge(unittest.TestCase):
 
     def test_engine_worldinfo(self):
         module = SimpleNamespace(
-            npcs={"vessk": {"name": "维斯克", "race": "人类", "desc": "黑鸦帮头目。"}},
+            npcs={"vessk": {"name": "Vessk", "role": "黑鸦帮头目",
+                            "desc": "黑鸦帮头目。"}},
             scene_by_id=lambda sid: {
                 "id": "s1", "location": "黑鸦帮老巢",
                 "intro": "第一行\n第二行",
-                "skills": [{"skill": "perception", "dc": 12,
+                "checks": [{"skill": "perception", "dv": 15,
                             "success": "你发现了暗门。"}]},
         )
         state = SimpleNamespace(module=module, scene_id="s1",
                                 flags={"met_boss": "yes"})
         wi = engine_worldinfo(state)
-        self.assertEqual(len(wi.entries), 4)         # 场景 / 旗标 / NPC / skills=1
+        self.assertEqual(len(wi.entries), 4)         # 场景 / 旗标 / NPC / checks=1
         r0 = scan(wi, "", budget_tokens=1024, rng=random.Random(1))
         self.assertEqual(r0.activated, ["scene:s1"])  # 空窗口仅 constant 入选
         self.assertIn("黑鸦帮老巢", r0.before)
-        r1 = scan(wi, "维斯克现身，需要察觉检定", budget_tokens=1024,
+        # 窗口文本用 RED 技能名（感知），难度值以 DV 呈现
+        r1 = scan(wi, "Vessk现身，需要做感知检定", budget_tokens=1024,
                   rng=random.Random(1))
-        self.assertEqual(sorted(r1.activated), ["npc:vessk", "scene:s1", "skill:perception"])
+        self.assertEqual(sorted(r1.activated),
+                         ["npc:vessk", "scene:s1", "skill:perception"])
+        self.assertIn("DV 15", r1.before)
         r2 = scan(wi, "met_boss 被提及", budget_tokens=1024, rng=random.Random(1))
         self.assertIn("flag:met_boss", r2.activated)
 

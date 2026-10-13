@@ -5,7 +5,7 @@ import random
 import unittest
 
 from ctrcg.harness.adapter import OpenAICompatibleAdapter, ScriptedAdapter
-from ctrcg.harness.events import Session
+from ctrcg.harness.events import Session, safe_filename
 from ctrcg.harness.loop import (
     Agent, DefaultAgentLoop, DuplicateCallGuard, StepBudgetGuard,
     ToolTimeoutGuard, TruncateCompactor, estimate_tokens,
@@ -124,6 +124,16 @@ class TestLoop(unittest.TestCase):
             with open(path, encoding="utf-8") as f:
                 events = [json.loads(line) for line in f]
             self.assertEqual(events[0]["type"], "message")
+
+    def test_session_log_filename_is_path_safe(self):
+        """会话 id 来自角色名（如 `pc:24/7`）：落盘前必须洗掉路径非法字符。"""
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            s = Session("pc:24/7", log_dir=d)
+            s.log_message({"role": "user", "content": "hi"})
+            self.assertEqual(safe_filename("pc:24/7"), "pc_24_7")
+            files = os.listdir(d)
+            self.assertEqual(files, ["pc_24_7.jsonl"])
 
     def test_guard_timeout(self):
         import time

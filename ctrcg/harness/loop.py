@@ -37,7 +37,8 @@ class StepBudgetGuard:
 class ToolTimeoutGuard:
     # 可能阻塞等待玩家输入的工具（掷骰按钮/升级特性选择）——不受常规超时约束，
     # 否则玩家思考的十几秒就会把合法的工具调用误判为挂死
-    INTERACTIVE_TOOLS = {"skill_check", "save_roll", "advance_scene", "award_xp"}
+    INTERACTIVE_TOOLS = {"skill_check", "request_roll", "opposed_check",
+                         "advance_scene", "award_ip"}
     # 子智能体类工具：内部还要跑几次模型调用，10s 不够；但仍须有限——
     # 外部服务挂起时不能把 DM 回合卡死一小时
     LONG_TOOLS = {"npc_dialogue"}
@@ -169,10 +170,15 @@ class DefaultAgentLoop:
     def run(self, agent: Agent, session: Session, task: str,
             context_messages: list[dict] | None = None,
             registry: ToolRegistry | None = None,
-            guard_dup: DuplicateCallGuard | None = None) -> AgentResult:
+            guard_dup: DuplicateCallGuard | None = None,
+            post_build=None) -> AgentResult:
         """context_messages：调用方注入的场景上下文（作为 user 消息）。
         registry：可按次覆盖（DM/PC 使用不同工具组）。
-        guard_dup：可按次覆盖（并行运行同一 loop 时各自独立计数）。"""
+        guard_dup：可按次覆盖（并行运行同一 loop 时各自独立计数）。
+        post_build：消息构建后的最终整形钩子（按深度注入用，
+        docs/battlemap-design.md §3）——签名 (messages) -> messages，
+        只影响本次请求的消息列表，事件日志仍按注入前记录（模型可见 ⟺
+        已记录以"内容等价"口径成立：注入条目同时写日志，见调用方）。"""
         registry = registry or self.registry
         dup = guard_dup or self.guard_dup
         dup.reset()
@@ -188,6 +194,8 @@ class DefaultAgentLoop:
                 return self._finish(agent, session, "（本回合循环步数已达上限，简要收束。）",
                                     step, trace, usage_total)
             messages = self._build_messages(agent, session)
+            if post_build is not None:
+                messages = post_build(list(messages))
             resp = self.adapter.chat(
                 model=agent.model, messages=messages,
                 tools=registry.schemas(agent.tool_names) or None,

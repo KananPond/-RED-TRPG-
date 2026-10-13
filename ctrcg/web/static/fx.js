@@ -1,9 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════
    CTRCG 视听特效引擎（零外部资产）：
-   - AudioFX：WebAudio 实时合成的音效（骰子/命中/暴击/施法/升级/终局…）
-   - DiceFX：d20 掷骰动画（优势双骰、nat20 金色爆辉、nat1 裂纹）
-   - AvatarFX：种族×职业 程序化 SVG 头像
-   - Flourish：升级华彩 / 终局卡
+   - AudioFX：WebAudio 实时合成的音效（骰子/命中/暴击/治疗/提升/终局…）
+   - DiceFX：d10 检定动画（暴击成功 10 金色爆辉、暴击失败 1 裂纹）
+   - AvatarFX：职业（role）程序化 SVG 头像（赛博朋克 RED 的十个职业）
+   - Flourish：改进点 IP 提升华彩 / 终局卡
    设置持久化于 localStorage（ctrcg.sound / ctrcg.volume）。
    ═══════════════════════════════════════════════════════════════ */
 "use strict";
@@ -97,14 +97,14 @@ const AudioFX = {
                           filter: 1400 + Math.random() * 1800, q: 2, when: w });
     }
   },
-  diceLand({ nat20 = false, nat1 = false, good = null } = {}) {
+  diceLand({ crit = false, fumble = false, good = null } = {}) {
     this.noise(0.09, { gain: 0.2, filter: 900, q: 1.5 });
     this.tone(220, 0.12, { type: "triangle", gain: 0.16 });
-    if (nat20) {
+    if (crit) {
       [523.25, 659.25, 783.99, 1046.5].forEach((f, i) =>
         this.tone(f, 0.35, { type: "triangle", gain: 0.16, when: 0.05 + i * 0.07 }));
       this.noise(0.5, { gain: 0.05, filter: 5200, q: 3, when: 0.05 });
-    } else if (nat1) {
+    } else if (fumble) {
       this.tone(196, 0.5, { type: "sawtooth", gain: 0.12, slide: -90 });
       this.tone(98, 0.55, { type: "sine", gain: 0.14, when: 0.04 });
     } else if (good === true) {
@@ -160,9 +160,12 @@ const DiceFX = {
     const box = document.getElementById("dice-overlay");
     if (!box) { this.playing = false; this._next(); return; }
     const isAttack = ev.kind === "attack";
-    const d20 = (typeof ev.d20 === "number") ? ev.d20 : null;
     const rolls = Array.isArray(ev.rolls) ? ev.rolls : [];
-    const twin = rolls.length > 1 && (ev.adv === 1 || ev.adv === -1);
+    const d10 = (typeof ev.d10 === "number") ? ev.d10
+      : (rolls.length ? rolls[0] : null);
+    const extra = rolls.length > 1 ? rolls.slice(1) : [];
+    const crit = ev.crit_success === true || ev.crit === true;
+    const fumble = ev.crit_failure === true;
 
     // 标题与结论文案
     const who = ev.who || "";
@@ -172,21 +175,25 @@ const DiceFX = {
       verdict = ev.crit ? "暴击！" : ev.hit ? "命中" : "未命中";
       cls = ev.crit ? "crit" : ev.hit ? "ok" : "miss";
     } else {
-      const kindName = { save: "豁免", check: "检定", death: "死亡豁免" }[ev.kind] || "检定";
+      const kindName = { save: "生存检定", check: "检定", death: "生存检定" }[ev.kind] || "检定";
       title = `${who} · ${ev.label || kindName}`;
-      const sum = typeof ev.total === "number" && typeof ev.dc === "number"
-        ? `${ev.total} vs DC ${ev.dc} · ` : "";
+      const sum = typeof ev.total === "number" && typeof ev.dv === "number"
+        ? `${ev.total} vs DV ${ev.dv} · ` : "";
       verdict = ev.note ? ev.note : `${sum}${ev.success ? "成功" : "失败"}`;
       cls = ev.success ? "ok" : "fail";
+      if (crit) verdict = `${sum}暴击成功！`;
+      if (fumble) verdict = `${sum}暴击失败`;
       if (ev.kind === "death") cls = ev.success ? "crit" : "fail";
     }
 
+    const badge = crit ? "（暴击成功）" : fumble ? "（暴击失败）" : "";
     box.innerHTML = `
       <div class="dice-stage ${cls}">
-        <p class="do-title">${title}${twin ? (ev.adv > 0 ? "（优势）" : "（劣势）") : ""}</p>
-        <div class="do-dice">${this._dieHTML(twin ? 2 : 1)}</div>
-        <p class="do-sub">${isAttack && typeof ev.ac === "number"
-          ? `vs AC ${ev.ac}${typeof ev.total === "number" ? ` · 总值 ${ev.total}` : ""}` : ""}</p>
+        <p class="do-title">${title}${badge}</p>
+        <div class="do-dice">${this._dieHTML(1)}${extra.length ? this._dieHTML(1) : ""}</div>
+        <p class="do-sub">${isAttack && (typeof ev.armor_left === "number" || typeof ev.sp === "number")
+          ? `vs SP ${ev.armor_left != null ? ev.armor_left : ev.sp}${typeof ev.total === "number" ? ` · 总值 ${ev.total}` : ""}`
+          : (typeof ev.dv === "number" && ev.dv ? `难度值 DV ${ev.dv}` : "")}</p>
         <p class="do-verdict">${verdict}</p>
       </div>`;
     box.classList.remove("hidden");
@@ -195,30 +202,29 @@ const DiceFX = {
     const numEls = [...box.querySelectorAll(".do-num")];
     AudioFX.dice();
 
-    // 翻滚阶段：数字快速闪变 + 骰体抖动旋转
+    // 翻滚阶段：数字快速闪变（d10：1-10）+ 骰体抖动旋转
     const TUMBLE = 950, SETTLE = 1050;
-    const t0 = performance.now();
     const flicker = setInterval(() => {
-      numEls.forEach(n => { n.textContent = 1 + Math.floor(Math.random() * 20); });
+      numEls.forEach(n => { n.textContent = 1 + Math.floor(Math.random() * 10); });
     }, 70);
-    diceEls.forEach((d, i) => d.classList.add("tumbling"));
+    diceEls.forEach(d => d.classList.add("tumbling"));
 
     setTimeout(() => {
       clearInterval(flicker);
       diceEls.forEach(d => d.classList.remove("tumbling"));
-      // 落定：保留骰高亮（与 d20 面值匹配，劣势弃高骰也能正确标出），
-      // 其余（优势/劣势弃骰、幸运重骰被覆盖的骰）暗淡
       diceEls.forEach((d, i) => {
-        // 单骰（含幸运重骰：多段 rolls 只渲染一颗）恒为保留骰
-        const kept = diceEls.length === 1 || (twin ? rolls[i] === d20
-                                                   : i === rolls.length - 1);
-        d.classList.add("settled", kept ? "kept" : "dropped");
-        d.querySelector(".do-num").textContent = kept ? (d20 ?? "?") : (rolls[i] ?? "?");
-        if (kept && d20 === 20) d.classList.add("nat20");
-        if (kept && d20 === 1) d.classList.add("nat1");
+        const val = i === 0 ? d10 : extra[i - 1];
+        d.classList.add("settled");
+        d.querySelector(".do-num").textContent = (val ?? "?");
+        if (i === 0) {
+          if (crit) d.classList.add("crit");
+          if (fumble) d.classList.add("fumble");
+        } else {
+          d.classList.add(crit ? "crit" : fumble ? "fumble" : "dropped");
+        }
       });
       box.querySelector(".dice-stage").classList.add("settling");
-      AudioFX.diceLand({ nat20: d20 === 20, nat1: d20 === 1,
+      AudioFX.diceLand({ crit: crit, fumble: fumble,
                          good: isAttack ? (ev.hit ? true : null) : (ev.success ?? null) });
       if (ev.crit) AudioFX.crit();
       else if (isAttack && ev.hit) AudioFX.hit();
@@ -234,18 +240,19 @@ const DiceFX = {
     }, TUMBLE + SETTLE);
   },
 
+  /* d10 骰体（十面骰的六边形投影 + 正面内框） */
   _dieHTML() {
     return `<div class="do-die">
       <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path class="die-body" d="M12 1 2.5 6.7 12 23l9.5-16.3L12 1z"/>
-        <path class="die-inner" d="M12 5.2 6.6 8.6 12 17l5.4-8.4L12 5.2z"/>
+        <path class="die-body" d="M12 1 3 6.2v11.6L12 23l9-5.2V6.2L12 1z"/>
+        <path class="die-inner" d="M12 4 6 7.5v9L12 20l6-3.5v-9L12 4z"/>
       </svg>
-      <span class="do-num">20</span>
+      <span class="do-num">10</span>
     </div>`;
   },
 };
 
-/* ───────────────────────── 程序化头像 ───────────────────────── */
+/* ───────────────────────── 程序化头像（赛博朋克 RED · 按职业） ───────────────────────── */
 const AvatarFX = {
   _hash(str) {
     let h = 2166136261;
@@ -253,122 +260,73 @@ const AvatarFX = {
     return h >>> 0;
   },
 
-  /* 种族底色与特征 */
-  _raceLook(race) {
-    const r = String(race || "human");
-    if (r.includes("drow"))
-      return { skin: "#8d7ba3", skin2: "#6d5c85", ear: "pointed", hair: "#e8e2f2", extra: "" };
-    if (r.includes("elf") || r.includes("gith"))
-      return { skin: r.includes("gith") ? "#b9c98a" : "#f0dcc4", skin2: "#d9c0a0",
-               ear: "pointed", hair: r.includes("wood") ? "#7a5a34" : "#e8dcc8", extra: "" };
-    if (r.includes("dwarf"))
-      return { skin: "#e2b58e", skin2: "#c99b74", ear: "round",
-               hair: r.includes("duergar") ? "#b8b2a8" : "#a8703a", extra: "beard" };
-    if (r.includes("halfling"))
-      return { skin: "#eec9a2", skin2: "#d6ad84", ear: "round", hair: "#8a5c2e", extra: "" };
-    if (r.includes("gnome"))
-      return { skin: "#ecc3a0", skin2: "#d2a37e", ear: "pointed", hair: "#c8d878", extra: "" };
-    if (r.includes("tiefling"))
-      return { skin: "#d4929a", skin2: "#b4737e", ear: "pointed", hair: "#5c2430", extra: "horns" };
-    if (r.includes("orc"))
-      return { skin: "#9cb88a", skin2: "#7e9c6e", ear: "pointed", hair: "#3d3226", extra: "tusks" };
-    if (r.includes("dragonborn")) {
-      const scales = { black: "#5c665e", blue: "#5c74a8", brass: "#c8a05a",
-                       bronze: "#b0a068", copper: "#a87848", gold: "#d8b848",
-                       green: "#6a9c58", red: "#b04030", silver: "#c0c8d0",
-                       white: "#dce4e8" };
-      const key = Object.keys(scales).find(k => r.includes(k)) || "red";
-      return { skin: scales[key], skin2: "#00000033", ear: "round", hair: "",
-               extra: "snout" };
-    }
-    return { skin: "#e8c39e", skin2: "#cfa47c", ear: "round", hair: "#4a3220", extra: "" };
-  },
-
-  /* 职业装束与配色 */
-  _klassLook(klass) {
-    const k = String(klass || "fighter");
+  /* 职业 → 装束/配色/头饰（10 个 RED 职业） */
+  _roleLook(role) {
+    const r = String(role || "solo");
     const map = {
-      fighter:   { hat: "helm",    cloth: "#7a4a3a", metal: "#a8a8b0" },
-      paladin:   { hat: "wing",    cloth: "#e8e2d0", metal: "#d8d8e0" },
-      barbarian: { hat: "wild",    cloth: "#8a5c30", metal: "#8a8a92" },
-      ranger:    { hat: "hood",    cloth: "#4d6640", metal: "#8a8a80" },
-      rogue:     { hat: "hood",    cloth: "#3a3a44", metal: "#707078" },
-      bard:      { hat: "feather", cloth: "#7a3a6a", metal: "#b8a878" },
-      wizard:    { hat: "point",   cloth: "#3a4a7a", metal: "#c8c8d0" },
-      sorcerer:  { hat: "wild",    cloth: "#8a2a3a", metal: "#d8a848" },
-      warlock:   { hat: "cowl",    cloth: "#4a2a5a", metal: "#a878c8" },
-      warlock_:  { hat: "cowl",    cloth: "#4a2a5a", metal: "#a878c8" },
-      cleric:    { hat: "circlet", cloth: "#d8d0b8", metal: "#e0d8a0" },
-      druid:     { hat: "leaf",    cloth: "#5a6a3a", metal: "#a8b878" },
-      monk:      { hat: "band",    cloth: "#c89858", metal: "#b0a888" },
+      solo:      { hat: "visor",   cloth: "#2f3540", metal: "#c8443c", skin: "#e5bb96", hair: "#2b2620" },
+      netrunner: { hat: "jack",    cloth: "#22303c", metal: "#4fd0e0", skin: "#e2c6b2", hair: "#1f6f88" },
+      tech:      { hat: "goggles", cloth: "#3d3a2a", metal: "#d8a23c", skin: "#dcb083", hair: "#5a4326" },
+      medtech:   { hat: "mask",    cloth: "#e8e6e0", metal: "#b03040", skin: "#e6c3a4", hair: "#3a3a44" },
+      media:     { hat: "cam",     cloth: "#33384a", metal: "#d8d2c0", skin: "#e0b892", hair: "#2a2118" },
+      cop:       { hat: "cap",     cloth: "#2c3a54", metal: "#9fb6d8", skin: "#d9ad84", hair: "#241d16" },
+      corporate: { hat: "suit",    cloth: "#23262e", metal: "#c8b06a", skin: "#e8c9a8", hair: "#1c1a18" },
+      fixer:     { hat: "fedora",  cloth: "#3a2f38", metal: "#c8973c", skin: "#d6a678", hair: "#26201c" },
+      nomad:     { hat: "bandana", cloth: "#4a3a2c", metal: "#a8723c", skin: "#c9925f", hair: "#3a2a1c" },
+      rockerboy: { hat: "mohawk",  cloth: "#3a1f34", metal: "#e0559c", skin: "#e8c09a", hair: "#e0559c" },
     };
-    return map[k] || map.fighter;
+    return map[r] || map.solo;
   },
 
-  /* 返回内联 SVG：风格化胸像（种族肤色/耳形/角牙 + 职业头饰） */
-  avatar(race, klass, name = "") {
-    const rc = this._raceLook(race), kl = this._klassLook(klass);
-    const seed = this._hash(String(name) + race + klass);
-    const bg = ["#2e2418", "#31281c", "#2a2c20", "#30221a"][seed % 4];
-    const hairPath = rc.extra === "beard"
-      ? `<path d="M25 26 Q25 40 32 41 Q39 40 39 26 L39 22 L25 22 Z" fill="${rc.hair}"/>
-         <path d="M28 30 Q32 40 36 30 L36 26 L28 26 Z" fill="${rc.hair}" opacity=".8"/>`
-      : `<path d="M23 22 Q22 14 32 13 Q42 14 41 22 Q41 18 32 17 Q23 18 23 22Z" fill="${rc.hair}"/>
-         <path d="M22 24 Q21 15 32 14 Q43 15 42 24 L43 20 Q42 12 32 11 Q22 12 21 20 Z" fill="${rc.hair}"/>`;
-    const earL = rc.ear === "pointed"
-      ? `<path d="M19 24 L14 18 L20 30 Z" fill="${rc.skin}"/><path d="M45 24 L50 18 L44 30 Z" fill="${rc.skin}"/>`
-      : `<circle cx="19" cy="25" r="2.4" fill="${rc.skin2}"/><circle cx="45" cy="25" r="2.4" fill="${rc.skin2}"/>`;
-    let extra = "";
-    if (rc.extra === "horns")
-      extra = `<path d="M20 14 Q16 8 18 3 Q23 7 24 12 Z" fill="#3d2030"/>
-               <path d="M44 14 Q48 8 46 3 Q41 7 40 12 Z" fill="#3d2030"/>`;
-    else if (rc.extra === "tusks")
-      extra = `<path d="M27 33 L28.6 37 L30 33 Z" fill="#f2ead0"/>
-               <path d="M34 33 L35.4 37 L37 33 Z" fill="#f2ead0"/>`;
-    else if (rc.extra === "snout")
-      extra = `<path d="M26 26 Q32 24 38 26 L36 31 Q32 33 28 31 Z" fill="${rc.skin2}"/>
-               <circle cx="29" cy="28.4" r=".9" fill="#1a1410"/>
-               <circle cx="35" cy="28.4" r=".9" fill="#1a1410"/>`;
+  /* 返回内联 SVG：风格化胸像（职业装束 + 义体/头盔细节） */
+  avatar(role, name = "") {
+    const kl = this._roleLook(role);
+    const seed = this._hash(String(name) + String(role));
+    const bg = ["#241d2a", "#1d2430", "#2a2320", "#20262a"][seed % 4];
+    const glow = ["#c8443c", "#4fd0e0", "#e0559c", "#d8a23c"][seed % 4];
     let hat = "";
-    if (kl.hat === "helm")
-      hat = `<path d="M21 19 Q21 9 32 9 Q43 9 43 19 L43 21 L21 21 Z" fill="${kl.metal}"/>
-             <rect x="31" y="9" width="2" height="12" fill="#00000030"/>`;
-    else if (kl.hat === "wing")
-      hat = `<path d="M21 19 Q21 9 32 9 Q43 9 43 19 L43 21 L21 21 Z" fill="${kl.metal}"/>
-             <path d="M20 12 Q13 9 10 12 Q15 13 19 16 Z" fill="#f0ead8"/>
-             <path d="M44 12 Q51 9 54 12 Q49 13 45 16 Z" fill="#f0ead8"/>`;
-    else if (kl.hat === "point")
-      hat = `<path d="M32 2 L24 17 L40 17 Z" fill="${kl.cloth}"/>
-             <path d="M24 17 L40 17 L39 20 L25 20 Z" fill="${kl.cloth}"/>
-             <circle cx="32" cy="3" r="1.6" fill="#e8c860"/>`;
-    else if (kl.hat === "hood")
-      hat = `<path d="M20 22 Q19 8 32 7 Q45 8 44 22 L40 22 Q40 13 32 12 Q24 13 24 22 Z" fill="${kl.cloth}"/>`;
-    else if (kl.hat === "cowl")
-      hat = `<path d="M20 24 Q18 8 32 6 Q46 8 44 24 L41 24 Q42 12 32 11 Q22 12 23 24 Z" fill="${kl.cloth}"/>
-             <path d="M44 16 L48 10 L45 18 Z" fill="${kl.metal}"/>`;
-    else if (kl.hat === "feather")
-      hat = `<path d="M22 20 Q22 10 32 9 Q42 10 42 20 L40 22 L24 22 Z" fill="${kl.cloth}"/>
-             <path d="M40 12 Q50 4 54 6 Q48 10 43 15 Z" fill="#c84a5a"/>`;
-    else if (kl.hat === "wild")
-      hat = `<path d="M21 20 Q18 8 26 10 Q24 5 30 8 Q30 3 34 7 Q38 3 38 9 Q44 6 43 20 Z" fill="${rc.hair || "#5a4630"}"/>`;
-    else if (kl.hat === "circlet")
-      hat = `<path d="M22 18 Q32 14 42 18" stroke="${kl.metal}" stroke-width="2" fill="none"/>
-             <circle cx="32" cy="15.4" r="1.8" fill="#8ab8d8"/>`;
-    else if (kl.hat === "leaf")
-      hat = `<path d="M24 16 Q28 8 34 10 Q30 14 28 18 Z" fill="#6a8a4a"/>
-             <path d="M40 16 Q36 8 30 10 Q34 14 36 18 Z" fill="#5a7a3a"/>`;
-    else if (kl.hat === "band")
-      hat = `<rect x="22" y="17" width="20" height="2.4" fill="#a84a3a"/>
-             <path d="M42 18 L48 16 L44 21 Z" fill="#a84a3a"/>`;
-
+    if (kl.hat === "visor")
+      hat = `<path d="M23 23 L41 23 L41 27 L23 27 Z" fill="${kl.metal}" opacity=".92"/>`;
+    else if (kl.hat === "jack")
+      hat = `<path d="M22 21 Q32 10 42 21 L42 24 L22 24 Z" fill="${kl.cloth}"/>
+             <path d="M32 12 L32 4" stroke="${kl.metal}" stroke-width="1.6" fill="none"/>
+             <circle cx="32" cy="3" r="1.6" fill="${kl.metal}"/>`;
+    else if (kl.hat === "goggles")
+      hat = `<rect x="22" y="21" width="8" height="5" fill="${kl.metal}"/>
+             <rect x="34" y="21" width="8" height="5" fill="${kl.metal}"/>
+             <rect x="30" y="22.6" width="4" height="1.6" fill="#2a2a2a"/>`;
+    else if (kl.hat === "mask")
+      hat = `<path d="M25 29 Q32 26 39 29 L38 34 Q32 37 26 34 Z" fill="#f2f0ea"/>
+             <circle cx="29" cy="31.4" r=".9" fill="#9aa0a8"/>
+             <circle cx="35" cy="31.4" r=".9" fill="#9aa0a8"/>`;
+    else if (kl.hat === "cam")
+      hat = `<circle cx="32" cy="7" r="3.2" fill="${kl.metal}"/>
+             <circle cx="32" cy="7" r="1.3" fill="#20242c"/>`;
+    else if (kl.hat === "cap")
+      hat = `<path d="M22 20 Q22 11 32 11 Q42 11 42 20 L42 21.6 L22 21.6 Z" fill="${kl.cloth}"/>
+             <path d="M40 19 Q46 19 46 21.6 L40 21.6 Z" fill="${kl.cloth}"/>`;
+    else if (kl.hat === "suit")
+      hat = `<path d="M23 21 Q22 12 32 11 Q42 12 41 21 Q41 16 32 15 Q23 16 23 21 Z" fill="${kl.hair}"/>
+             <path d="M28 30 L32 36 L36 30 L34 46 L30 46 Z" fill="${kl.metal}" opacity=".9"/>`;
+    else if (kl.hat === "fedora")
+      hat = `<path d="M20 21 L44 21 L44 18 Q32 12 20 18 Z" fill="${kl.cloth}"/>
+             <path d="M20 21 L44 21 L44 23 L20 23 Z" fill="#00000044"/>`;
+    else if (kl.hat === "bandana")
+      hat = `<path d="M22 20 Q32 13 42 20 L42 23 L22 23 Z" fill="${kl.metal}"/>
+             <path d="M42 21 L48 26 L43 24 Z" fill="${kl.metal}"/>`;
+    else if (kl.hat === "mohawk")
+      hat = `<path d="M32 2 L29 14 L35 14 Z" fill="${kl.hair}"/>
+             <path d="M32 4 L30 14 L34 14 Z" fill="${glow}" opacity=".7"/>`;
     const svg = `<svg viewBox="0 0 64 64" class="avatar-svg" aria-hidden="true">
       <rect width="64" height="64" fill="${bg}"/>
       <circle cx="32" cy="34" r="22" fill="#ffffff08"/>
       <path d="M12 64 Q14 46 32 44 Q50 46 52 64 Z" fill="${kl.cloth}"/>
       <path d="M12 64 Q14 46 32 44 Q50 46 52 64 L52 64 Q46 52 32 51 Q18 52 12 64Z" fill="#00000022"/>
-      <circle cx="32" cy="25" r="11.5" fill="${rc.skin}"/>
-      <path d="M25 21 Q32 17.5 39 21 L39 25 Q32 22.5 25 25 Z" fill="${rc.skin2}" opacity=".55"/>
-      ${earL}${hairPath}${extra}${hat}
+      <path d="M32 44 L32 58" stroke="${glow}" stroke-width="1.2" opacity=".55"/>
+      <circle cx="32" cy="25" r="11.5" fill="${kl.skin}"/>
+      <path d="M23 22 Q22 13 32 12 Q42 13 41 22 Q41 17 32 16 Q23 17 23 22Z" fill="${kl.hair}"/>
+      <circle cx="19" cy="25" r="2.2" fill="${kl.skin}"/><circle cx="45" cy="25" r="2.2" fill="${kl.skin}"/>
+      ${hat}
       <circle cx="28" cy="26" r="1.1" fill="#241a10"/>
       <circle cx="36" cy="26" r="1.1" fill="#241a10"/>
     </svg>`;
@@ -376,19 +334,69 @@ const AvatarFX = {
   },
 };
 
-/* ───────────────────────── 升级 / 终局演出 ───────────────────────── */
+/* ───────────────────────── 改进点 / 终局演出 ───────────────────────── */
 const Flourish = {
-  levelUp(names) {
+  /* RED 没有等级：改进点（IP）到账时用同一条华彩 */
+  ipUp(names, amount) {
     AudioFX.levelup();
     const el = document.getElementById("flourish");
     if (!el) return;
     el.innerHTML = `<div class="fl-level">
-      <p class="fl-kicker">LEVEL UP</p>
-      <p class="fl-main">✦ 队伍升级 ✦</p>
-      <p class="fl-sub">${names.join(" · ")} 感到了力量的涌动</p>
+      <p class="fl-kicker">IMPROVEMENT POINTS</p>
+      <p class="fl-main">✦ 改进点 +${amount == null ? "" : amount} ✦</p>
+      <p class="fl-sub">${names.join(" · ")} 又学了点新东西</p>
     </div>`;
     el.classList.remove("hidden");
     setTimeout(() => el.classList.add("hidden"), 2600);
+  },
+
+  /* 剧本结局卡：game_over(reason=story_ended) 携带 ending/unlocked/endings_total */
+  storyEnding(ev) {
+    const el = document.getElementById("ending");
+    if (!el) return;
+    const e = ev.ending || {};
+    const unlocked = ev.unlocked || [];
+    const dice = ev.dice_stats || {};
+    const text = document.createElement("div");
+    text.className = "story-end-text";
+    String(e.text || "").split("\n").forEach(line => {
+      const p = document.createElement("p");
+      p.textContent = line;
+      text.appendChild(p);
+    });
+    el.innerHTML = `
+      <div class="end-card win story">
+        <p class="end-kicker">ENDING · ${e.rank || ""}</p>
+        <h2 class="end-title">—— ${e.title || ""} ——</h2>
+        <div class="end-rule"></div>
+      </div>`;
+    const card = el.querySelector(".end-card");
+    card.appendChild(text);
+    const meta = document.createElement("p");
+    meta.className = "end-module";
+    meta.textContent = `结局图鉴：${unlocked.length} / ${ev.endings_total ?? "?"} 已解锁`
+      + ` ｜ 掷骰 ${dice.rolls ?? 0} 次`;
+    card.appendChild(meta);
+    const quote = document.createElement("p");
+    quote.className = "end-quote";
+    quote.textContent = "换一位主角、换一条路——同一个夜晚还有别的结局。";
+    card.appendChild(quote);
+    const actions = document.createElement("div");
+    actions.className = "end-actions";
+    const btn = document.createElement("button");
+    btn.className = "btn solid";
+    btn.id = "end-lobby";
+    btn.textContent = "结局图鉴 / 再玩一次";
+    btn.addEventListener("click", async () => {
+      await jfetch("/api/reset", { method: "POST", body: "{}",
+        headers: { "Content-Type": "application/json" } });
+      location.reload();
+    });
+    actions.appendChild(btn);
+    card.appendChild(actions);
+    el.classList.remove("hidden");
+    const doom = String(e.rank || "").includes("死亡") || String(e.rank || "").includes("堕落");
+    if (doom) AudioFX.doom(); else AudioFX.victory();
   },
 
   /* 终局卡：epilogue 为 game_over 事件携带的数据 */
@@ -403,27 +411,27 @@ const Flourish = {
     const rows = party.map(p => `
       <div class="end-pc ${p.dead ? "dead" : p.down ? "down" : ""}">
         <span class="end-pc-name">${p.name}</span>
-        <span class="end-pc-class">${p.klass} · ${p.level}级</span>
+        <span class="end-pc-class">${p.role_name || p.role || ""}${p.role_rank ? " " + p.role_rank : ""}</span>
         <span class="end-pc-fate">${p.dead ? "☠ 阵亡" : p.down ? "⋯ 倒下" : "✦ 生还"}</span>
       </div>`).join("");
     el.innerHTML = `
       <div class="end-card ${wipe ? "wipe" : "win"}">
-        <p class="end-kicker">${wipe ? "THE PARTY HAS FALLEN" : "VICTORY"}</p>
-        <h2 class="end-title">${wipe ? "队伍覆没" : "冒险终幕"}</h2>
+        <p class="end-kicker">${wipe ? "THE CREW IS DOWN" : "JOB DONE"}</p>
+        <h2 class="end-title">${wipe ? "小队全灭" : "本单收工"}</h2>
         <p class="end-module">《${epi.module_title || ""}》</p>
         <div class="end-rule"></div>
         <div class="end-party">${rows}</div>
         <div class="end-stats">
           <span>掷骰 <b>${dice.rolls ?? 0}</b></span>
-          <span>大成功 <b>${dice.nat20 ?? 0}</b></span>
-          <span>大失败 <b>${dice.nat1 ?? 0}</b></span>
+          <span>暴击成功 <b>${dice.crit ?? dice.nat20 ?? 0}</b></span>
+          <span>暴击失败 <b>${dice.fumble ?? dice.nat1 ?? 0}</b></span>
           <span>检定通过 <b>${dice.passed ?? 0}</b></span>
-          <span>金币 <b>${epi.gold ?? 0}</b></span>
+          <span>欧元 <b>${epi.eurobucks ?? 0} eb</b></span>
           <span>足迹 <b>${epi.visited ?? 0}/${epi.scenes_total ?? 0}</b> 场景</span>
         </div>
         <p class="end-quote">${wipe
-          ? "剑湾的风雪掩埋了这段冒险——但歌谣会记得他们的名字。"
-          : "篝火旁，酒馆里，这段传奇将被反复传唱。"}</p>
+          ? "夜之城的雨冲掉了血迹——没人会记得这条巷子里倒下过谁。"
+          : "来世的吧台前，这一单会被反复讲起，酒钱算你的。"}</p>
         <div class="end-actions">
           <button class="btn solid" id="end-lobby">回归大厅</button>
         </div>
@@ -448,18 +456,19 @@ const Tour = {
     el.innerHTML = `
       <div class="tour-card">
         <p class="tour-kicker">HOW TO PLAY</p>
-        <h3 class="tour-title">欢迎来到跑团手记</h3>
+        <h3 class="tour-title">欢迎来到夜之城</h3>
         <div class="tour-steps">
           <p><b>① 你的角色</b>　左上「冒险队伍」中带 <i>· 你</i> 标记的角色由你掌控；
-          其余队友由 AI 或剧本代打。</p>
-          <p><b>② 行动方式</b>　探索时在底部输入任意行动或对白（如「搜索书架」「我想吓唬他」）；
-          战斗时从底部按钮选择攻击、施法等动作。</p>
-          <p><b>③ 骰子说了算</b>　一切检定由规则引擎掷骰——看到 d20 落定，命运便已揭晓。
-          天然 20 大成功，天然 1 大失败。</p>
-          <p><b>④ 接入 AI 叙事者</b>　默认离线剧本可玩；在「设置 → API 配置」填入
+          其余队友由 AI 或剧本代打。建卡时从模组的<b>预设角色</b>里挑一个即可，不用掷骰。</p>
+          <p><b>② 行动方式</b>　探索时在底部输入任意行动或对白（如「撬开卷帘门」「我想吓唬他」）；
+          战斗时从底部按钮选择射击、白刃战、擒抱等动作。PW 掉到一半就是重伤，
+          掉到 1 以下濒死。</p>
+          <p><b>③ 骰子说了算</b>　技能检定 = 1d10 + 属性 + 技能等级，必须高于难度值 DV。
+          d10 掷出 <i>10</i> 暴击成功（再掷一颗相加），掷出 <i>1</i> 暴击失败（再掷一颗相减）。</p>
+          <p><b>④ 接入 AI 叙事者</b>　默认离线模组可玩；在「设置 → API 配置」填入
           DeepSeek / GLM / Kimi 等密钥后，DM 与队友将真正开口说话。</p>
         </div>
-        <button class="btn solid" id="tour-ok">开始冒险</button>
+        <button class="btn solid" id="tour-ok">开始干活</button>
       </div>`;
     el.classList.remove("hidden");
     el.querySelector("#tour-ok").addEventListener("click", () => {
@@ -472,7 +481,7 @@ const Tour = {
 
 /* 按钮点击音（全局委托） */
 document.addEventListener("click", (e) => {
-  if (e.target.closest("button, .radio-card, .module-card, .skill-check"))
+  if (e.target.closest("button, .radio-card, .pregen-card, .companion-card, .module-card, .skill-check"))
     AudioFX.click();
 }, true);
 AudioFX.unlock();

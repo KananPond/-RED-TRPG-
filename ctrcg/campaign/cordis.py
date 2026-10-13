@@ -28,12 +28,12 @@ import re
 import shutil
 from pathlib import Path
 
-from .loader import Module
+from .loader import BUILTIN_MODULE_IDS, Module
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,48}$")
 
-# 内置模组 id（随发行版附带，禁止经 UI 删除）
-BUILTIN_IDS = {"starfall", "saltmist", "mistgate", "embergate", "blue-watch"}
+# 内置模组 id（随发行版附带，禁止经 UI 删除；唯一来源见 loader.BUILTIN_MODULE_IDS）
+BUILTIN_IDS = set(BUILTIN_MODULE_IDS)
 
 PENDING = "pending"      # 已挂载，等待依赖服务
 ACTIVE = "active"        # 副作用运行中
@@ -257,7 +257,7 @@ class Cordis:
             return None, [f"模组 id 非法：{mid}"], []
         if source == "generated":
             mid = f"generated-{mid}" if not mid.startswith("generated-") else mid
-        elif source == "imported" and mid == "starfall":
+        elif source == "imported" and mid in BUILTIN_IDS:
             return None, ["不能覆盖内置模组，请改用其他 id"], []
         data["id"] = mid
         d = self.root / mid
@@ -282,17 +282,6 @@ class Cordis:
 
 
 def default_fallback_module():
-    """modules/ 目录缺失时的兜底：直接从代码内置数据构造。"""
+    """modules/ 目录缺失时的兜底：直接从代码内置数据构造（最后手段）。"""
     from . import module_data as M
-    data = {
-        "id": "starfall", "title": M.MODULE["title"],
-        "en_title": M.MODULE["en_title"], "setting": M.MODULE["setting"],
-        "synopsis": M.MODULE["synopsis"],
-        "party_level_start": M.MODULE["party_level_start"],
-        "expected_end_level": M.MODULE["expected_end_level"],
-        "act_titles": {str(k): v for k, v in M.ACT_TITLES.items()},
-        "epilogue": M.EPILOGUE, "npcs": M.NPCS, "companions": M.COMPANIONS,
-        "encounters": M.ENCOUNTERS, "scenes": M.SCENES,
-        "custom_monsters": {},
-    }
-    return Module(data, source="builtin")
+    return Module(M.builtin_data(), source="builtin")

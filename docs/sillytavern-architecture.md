@@ -57,7 +57,7 @@ V3 的 `data` 是 V2 的超集；应用 SHOULD 忽略未知字段但不得拒绝
 | 字段 | 类型/必填 | 进提示词？ | 语义与注入位置 |
 |---|---|---|---|
 | `name` | string，必填 | **是，常驻** | 角色名是唯一必填字段，随每次生成请求发送〔doc characterdesign〕；`{{char}}` 宏的取值。V3 中若设 `nickname`，`{{char}}`/`<char>`/`<bot>` 改用 nickname〔spec V3〕 |
-| `description` | string，必填 | **是，常驻** | 角色设定/世界/外观/背景，"always included in the prompt"；任意长度任意格式〔doc characterdesign〕。渲染进 story string 的 `{{description}}` / PromptManager 的 `charDescription` marker |
+| `description` | string，必填 | **是，常驻** | 角色设定/世界/外观/身世，"always included in the prompt"；任意长度任意格式〔doc characterdesign〕。渲染进 story string 的 `{{description}}` / PromptManager 的 `charDescription` marker |
 | `personality` | string，必填 | **是，常驻** | 人格摘要，"A brief summary of the character's personality"〔doc characterdesign〕。默认模板渲染为 `{{char}}'s personality: {{personality}}`〔src power-user.js defaultStoryString；doc prompt-manager personality_format〕 |
 | `scenario` | string，必填 | **是，常驻** | 对话所处的情境与上下文〔doc characterdesign〕。默认渲染为 `Scenario: {{scenario}}`〔src power-user.js〕 |
 | `first_mes` | string，必填 | **仅一次** | 开场白，只在新会话开头出现一次（不常驻）；它定义回答的风格与长度基线——模型"更可能从第一条消息学到风格和长度约束"〔doc characterdesign〕。支持 Markdown/HTML |
@@ -303,7 +303,7 @@ budget = cap_abs 或 round(context_percent% × max_context)  # 1.11.0: Math.roun
 
 ### 6.1 语法规则〔doc macros〕
 
-- 形如 `{{macroName}}`，**大小写不敏感**；参数用 `::` 或空格（`{{roll 1d20}}` / `{{random::a::b}}`）；
+- 形如 `{{macroName}}`，**大小写不敏感**；参数用 `::` 或空格（`{{roll 1d10}}` / `{{random::a::b}}`）；
 - **嵌套宏先解析内层**（`{{getvar::{{char}}_mood}}`）；`\{\{text\}\}` 转义为字面量；
 - 条件块 `{{if cond}}...{{/if}}`（内容作为最后一个参数）；注释 `{{// 注释}}` 解析为空；
 - 旧写法：`<USER>`→`{{user}}`、`<BOT>`/`<CHAR>`→`{{char}}`、`<GROUP>`→`{{group}}`；
@@ -319,7 +319,7 @@ budget = cap_abs 或 round(context_percent% × max_context)  # 1.11.0: Math.roun
 | **聊天历史** | `{{lastMessage}}`/`{{lastMessageId}}`/`{{lastUserMessage}}`/`{{lastCharMessage}}`；`{{firstIncludedMessageId}}`（当前上下文里第一条消息的序号）；`{{firstDisplayedMessageId}}`；`{{allChatRange}}`（如 `0-{{lastMessageId}}`）；`{{summary}}`（摘要扩展最新总结） |
 | **时间日期** | `{{time}}`、`{{date}}`、`{{weekday}}`、`{{isotime}}`(HH:mm)、`{{isodate}}`(YYYY-MM-DD)、`{{time::UTC±offset}}`、`{{datetimeformat::格式}}`、`{{idleDuration}}`（距上一条用户消息的可读时长）、`{{timeDiff::左::右}}` |
 | **变量** | `{{setvar::名::值}}`/`{{getvar::名}}`/`{{addvar}}`/`{{incvar}}`/`{{decvar}}`/`{{hasvar}}`/`{{deletevar}}`；全局版 `{{setglobalvar}}` 等；简写 `{{.x}}`(局部)/`{{$x}}`(全局)；支持 `= ++ -- += -= \|\| ?? == != > >= < <=` 等运算符 |
-| **随机/骰子** | `{{random::a::b::c}}`（每次重摇）、`{{pick::a::b::c}}`（稳定）、`{{roll::1d20}}`（droll 骰语法掷骰） |
+| **随机/骰子** | `{{random::a::b::c}}`（每次重摇）、`{{pick::a::b::c}}`（稳定）、`{{roll::1d10}}`（droll 骰语法掷骰） |
 | **运行时状态** | `{{maxPrompt}}`、`{{maxContextTokens}}`、`{{maxResponseTokens}}`、`{{model}}`、`{{lastGenerationType}}`、`{{hasExtension::名}}`、`{{input}}`（当前输入框内容） |
 | **提示词模板** | `{{systemPrompt}}`、`{{defaultSystemPrompt}}`、`{{authorsNote}}`/`{{charAuthorsNote}}`/`{{defaultAuthorsNote}}`；instruct 序列 `{{instructStoryStringPrefix/Suffix}}`、`{{instructUserPrefix/Suffix}}`、`{{instructAssistantPrefix/Suffix}}`、`{{instructSeparator}}`、`{{instructStop}}` 等；`{{chatSeparator}}`、`{{chatStart}}`；reasoning 前后缀 |
 | **实用** | `{{newline}}`（可 `::n`）、`{{space}}`、`{{noop}}`→空串、`{{trim}}`→去首尾换行、`{{outlet::名}}`→取世界书 outlet 条目、`{{banned::词}}`（文本补全后端禁词）、`{{reverse::text}}` |
@@ -424,16 +424,16 @@ ST 所有"插进聊天历史某一层"的机制共用一套底层设施：**exte
 
 | # | SillyTavern 机制 | ctrcg 现状 | 差距与 AI PC 落地建议 |
 |---|---|---|---|
-| 1 | 角色卡常驻字段分层（description/personality/scenario 按固定顺序注入，§2/§3） | 无分层卡。同伴人设是模组 JSON 里的 `persona`/`voice` 两个字段（module_data.py:63-97），连同种族/职业/战术/武器/法术位**一次性烘进单条 system prompt**（agents.py:50-74,117-129）；DM 同理（agents.py:8-47） | 把每个 PC（含玩家角色）建模为 **chara_card_v3 式 dict**：description（设定/背景）、personality（性格摘要）、scenario（当前情境由引擎生成）、system_prompt/post_history_instructions 可选覆盖；组装器按 §3.2 顺序渲染，而非全部塞进 system |
+| 1 | 角色卡常驻字段分层（description/personality/scenario 按固定顺序注入，§2/§3） | 无分层卡。同伴人设是模组 JSON 里的 `persona`/`voice` 两个字段（module_data.py:55-130），连同职业/战术/武器/义体**一次性烘进单条 system prompt**（agents.py:114-144）；DM 同理（agents.py:21-82） | 把每个 PC（含玩家角色）建模为 **chara_card_v3 式 dict**：description（设定/身世）、personality（性格摘要）、scenario（当前情境由引擎生成）、system_prompt/post_history_instructions 可选覆盖；组装器按 §3.2 顺序渲染，而非全部塞进 system |
 | 2 | `first_mes` / `alternate_greetings` | 无。开局呈现来自模组场景 `intro` 文本（session.py:127-137 `enter_scene`） | AI PC 可在开局生成 greeting 并支持 swipe 换开场；落地为 `enter_scene` 后追加 PC 自我介绍工具（如 `greet`） |
 | 3 | `mes_example`（可挤出的语气示例，`<START>` 分块） | 无 | 可选：把 `voice` 扩展成 2~3 段 `<START>` 示例对话；预算紧张时整块先挤（对应 §3.5 的牺牲顺序） |
 | 4 | `system_prompt`/`post_history_instructions` 覆盖 + `{{original}}` | 无覆盖机制；模板为硬编码常量（agents.py DM_SYSTEM_TEMPLATE / PC_SYSTEM_TEMPLATE） | 把模板改为"默认提示词 + 卡片可覆盖字段"，`{{original}}` 语义照搬（PHI 放在历史之后，对 AI PC 的"回合结束前提醒"非常合适） |
 | 5 | 用户 persona（In Story String 默认 / @Depth2，§4） | 无 persona 概念：玩家是人类，无注入；同伴的 persona 属于卡内 | 引入"玩家面板 persona"（人类玩家保留）；**AI PC 模式下玩家槽位由 AI 接管**——其 persona 即卡 description，注入位置建议 In Story String 等价物（system 区），避免与同伴重复 |
-| 6 | 世界书 constant/selective 条目 + 键逻辑（§5） | **无世界书**。模组手册全量文本经 `module.handbook()` 烘进 DM system prompt（loader.py:191-199 → agents.py:27-28,43）＝"无限预算的 constant 条目"；场景/队伍/旗标快照以 user 消息注入 DM 上下文（session.py:469-474） | 引擎状态 WI 化：每场景一条 constant 条目（order 高）、剧情旗标转 selective 条目（键=旗标值）、NPC/物品条目按名触发；给 AI PC 的私有知识（如职业背景）用角色书挂载 |
+| 6 | 世界书 constant/selective 条目 + 键逻辑（§5） | **无世界书**。模组手册全量文本经 `module.handbook()` 烘进 DM system prompt（loader.py:191-199 → agents.py:27-28,43）＝"无限预算的 constant 条目"；场景/队伍/旗标快照以 user 消息注入 DM 上下文（session.py:469-474） | 引擎状态 WI 化：每场景一条 constant 条目（order 高）、剧情旗标转 selective 条目（键=旗标值）、NPC/物品条目按名触发；给 AI PC 的私有知识（如职业与街头身份）用角色书挂载 |
 | 7 | 世界书预算与丢弃顺序（constant 先、order 大者留，§5.2） | 仅全局粗略压缩（见 #12），无 WI 预算 | WI 管线自带预算；手册按幕拆条目后即可享受"按需进上下文" |
 | 8 | 按深度注入统一模型（AN/@D，§8） | 无深度注入器；一切上下文都落在**提示词尾部 user 消息**（loop.py:164-176 context_messages；session.py:469-474），最接近"depth 0 的 user 注入" | 实现统一 `Injection(depth, role, order, text)` 注册表；桌上插话、DM 任务前缀（session.py:462-477 lead/task）都迁进来 |
 | 9 | Author's Note（interval/深度/角色） | 无 AN。最接近物：`dm_turn` 的 `lead`/`input_label` 可变任务前缀（session.py:462-477）与【桌上插话】摘要 `_digest_table`（session.py:484-494） | 战斗风格、场面指令、AI PC 的"本轮目标"适合 AN 语义（depth 4、role system、每回合刷新） |
-| 10 | 宏系统（{{user}}/{{char}}/{{persona}}/{{time}}/{{roll}}…，§6） | 无宏；模板用 Python `str.format`（agents.py `{name}/{persona}/{voice}/{weapons}/{slots_hint}/{tactics}/{handbook}`；session.py 场景插值） | 实现最小宏集：`{{user}}/{{char}}/{{persona}}/{{time}}` + 扩展 `{{party}}/{{scene}}/{{flags}}`（引擎快照）；`{{roll::1d20}}` 直接桥接 `rules/dice.py`（LLM 仍不产生数值，宏由引擎解析） |
+| 10 | 宏系统（{{user}}/{{char}}/{{persona}}/{{time}}/{{roll}}…，§6） | 无宏；模板用 Python `str.format`（agents.py `{name}/{role_name}/{persona}/{voice}/{weapons}/{status}/{tactics}/{handbook}`；session.py 场景插值） | 实现最小宏集：`{{user}}/{{char}}/{{persona}}/{{time}}` + 扩展 `{{party}}/{{scene}}/{{flags}}`（引擎快照）；`{{roll::1d10}}` 直接桥接 `rules/dice.py`（LLM 仍不产生数值，宏由引擎解析） |
 | 11 | Token 预算分区（强制保留区/历史从新到旧/示例先挤，§7） | `TruncateCompactor`（loop.py:88-121）：CJK≈1字/1token 粗估（loop.py:82-85）、单条 8000 字符截断、**保留 system + 最近 8 条**、丢弃中间并插"系统注"占位（loop.py:105-111） | 已有"历史从新到旧"雏形；补齐：强制保留区（nudge/工具说明）、示例区先挤、与 WI 预算分账 |
 | 12 | 群聊轮替：talkativeness 概率 + natural/pooled + auto 5s（§9） | `TableSocial`：每次玩家输入触发一整拍——抢话窗口→DM 回应→自由反应→辩论→DM 即席回应（social.py:67-99）；反应波**全员并行决策**、出口上限 `MAX_WAVE_SPEAKERS=2`（social.py:28,102-133）、抢话排序（social.py:124）；辩论 `DEBATE_MAX_ROUNDS=2`（social.py:30,150-194）；无 talkativeness、无自动连发（节拍由玩家输入驱动） | 把"全员并行+出口上限"换成/叠加 **talkativeness 概率激活**（成员带 0~1 值）；pooled 轮替可让 AI PC 也有"还没说过话"的机会；auto 模式（如桌面冷场 N 秒后同伴接话）可选 |
 | 13 | Swap vs Join 卡片 | 每同伴**独立 Session + 独立卡**（近似 Swap；`_pc_agent_turn` session.py:1092-1114、`pc_session` session.py:86-89）；桌面可见性靠 `table_log` 摘要 `_recent`（social.py:261-269）与 DM `_digest_table` | 维持 Swap；"Join"仅用于构建"队伍共同上下文"（party 快照）；AI PC 加入同一机制即可（关键改动点） |
@@ -442,7 +442,7 @@ ST 所有"插进聊天历史某一层"的机制共用一套底层设施：**exte
 | 16 | 会话持久（chat jsonl / 消息级 include-exclude） | `Session` 事件日志 + 重放，不变量"模型可见 ⟺ 已记录"（events.py:1-70）；swipe 候选无处存放 | 日志加 `swipe` 事件类型；候选动作全量落日志再挑选，保持不变量 |
 | 17 | 生成类型门控（Triggers） | 无（单一生成类型） | 引入 `gen_type ∈ {normal, swipe, continue, impersonate}`，让世界书/AN 可按类型门控（如 swipe 时不重复注入 AN） |
 | 18 | Guard 插件（步数/超时/去重） | ST 无对应物，ctrcg 独有增强（loop.py:26-78：StepBudgetGuard 12 步、ToolTimeoutGuard 10s/交互 3600s、DuplicateCallGuard） | 保留；swipe/continue 生成同样过 guard 链 |
-| 19 | 规则数值引擎化（ST 无此概念） | 一切掷骰在引擎（tools.py 原则注释；`skill_check`/`save_roll` 等工具组，tools.py:26-88,182-211） | 保持——AI PC 的所有动作仍经 `combat_action` 工具结算（tools.py:213-293），宏/世界书只影响**叙事上下文**，不得替代引擎 |
+| 19 | 规则数值引擎化（ST 无此概念） | 一切掷骰在引擎（tools.py 原则注释；`skill_check`/`opposed_check` 等工具组） | 保持——AI PC 的所有动作仍经 `combat_action` 工具结算，宏/世界书只影响**叙事上下文**，不得替代引擎 |
 
 ### AI PC 最小落地清单（按依赖顺序）
 

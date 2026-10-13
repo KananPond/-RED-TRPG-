@@ -139,21 +139,33 @@ def _book_from(d: dict) -> "WorldInfo | None":
     return None
 
 
-def card_from_companion(comp: dict) -> CharacterCard:
-    """模组同伴 dict → 卡（非玩家 PC 的独立 Agent 用，docs/companion-npc-agents.md）。
+def _role_name(role) -> str:
+    """职业 key → 中文名（D.ROLES）；未知 key 原样返回。"""
+    key = str(role or "")
+    return (D.ROLES.get(key) or {}).get("name", key)
 
-    基础映射：persona→description、voice→personality、name→name
-    （module_data.py 同伴字段形状）；ST 扩展字段可选：mes_example /
-    first_mes / depth_prompt / system_prompt / talkativeness /
-    book（V2 世界书 dict）。未提字段留空。"""
+
+def card_from_companion(comp: dict) -> CharacterCard:
+    """模组同伴/预生成角色 dict → 卡（非玩家 PC 的独立 Agent 用，
+    docs/companion-npc-agents.md）。
+
+    基础映射：persona→description（缺省回落"职业。desc"）、
+    voice→personality、name→name（RED 模组 pregens 字段形状：
+    name/handle/role/role_rank/stats/skill_levels/persona/voice/desc）；
+    ST 扩展字段可选：mes_example / first_mes / depth_prompt /
+    system_prompt / talkativeness / book（V2 世界书 dict）。未提字段留空。"""
     comp = comp if isinstance(comp, dict) else {}
+    role = _role_name(comp.get("role"))
+    desc = str(comp.get("desc", "") or "")
+    description = str(comp.get("persona", "") or "") or (
+        f"{role}。{desc}" if role and desc else (role or desc))
     try:
         talk = float(comp.get("talkativeness", 0.5))
     except (TypeError, ValueError):
         talk = 0.5
     return CharacterCard(
         name=str(comp.get("name", "") or ""),
-        description=str(comp.get("persona", "") or ""),
+        description=description,
         personality=str(comp.get("voice", "") or ""),
         first_mes=str(comp.get("first_mes", "") or ""),
         mes_example=str(comp.get("mes_example", "") or ""),
@@ -167,16 +179,16 @@ def card_from_companion(comp: dict) -> CharacterCard:
 def card_from_npc(n: dict) -> CharacterCard:
     """模组 NPC dict → 卡（DM 控制的子智能体用，docs/companion-npc-agents.md）。
 
-    必有字段 name/race/desc（module_data NPC 形状）；description 兜底为
-    persona（若有）否则"种族。desc"。ST 扩展字段可选：persona（性格，进
-    description）以外的 goals / secret（收进 extensions 供 NPC 系统模板的
-    template_vars 槽位消费）、mes_example / first_mes / depth_prompt /
-    talkativeness / book（V2 世界书 dict）。"""
+    必有字段 name/role/desc（RED 模组 NPC 形状：中间人、帮派头目、NCPD 警察……）；
+    description 兜底为 persona（若有）否则"职业/身份。desc"。ST 扩展字段可选：
+    persona（性格，进 description）以外的 goals / secret（收进 extensions 供 NPC
+    系统模板的 template_vars 槽位消费）、mes_example / first_mes /
+    depth_prompt / talkativeness / book（V2 世界书 dict）。"""
     n = n if isinstance(n, dict) else {}
-    race = str(n.get("race", "") or "")
+    role = str(n.get("role", "") or n.get("affiliation", "") or "")
     desc = str(n.get("desc", "") or "")
     description = str(n.get("persona", "") or "") or (
-        f"{race}。{desc}" if race else desc)
+        f"{role}。{desc}" if role else desc)
     try:
         talk = float(n.get("talkativeness", 0.5))
     except (TypeError, ValueError):
@@ -195,23 +207,44 @@ def card_from_npc(n: dict) -> CharacterCard:
     )
 
 
+def card_from_dm(spec: dict, *, title: str = "") -> CharacterCard:
+    """模组 DM 块 → 卡（主持人 Agent 用，docs/battlemap-design.md §3）。
+
+    spec 为模组顶层可选 "dm" 对象：persona（DM 风格，进 description）/
+    voice（语气，进 personality）/ system_prompt（Main 覆盖，{{original}}）/
+    depth_prompt（@D 注释）/ book（V2 世界书 dict）。缺省全留空——
+    game.agents.make_dm_agent 的 DM_SYSTEM_TEMPLATE 兜底。"""
+    spec = spec if isinstance(spec, dict) else {}
+    return CharacterCard(
+        name="DM" if not title else f"DM·{title}",
+        description=str(spec.get("persona", "") or ""),
+        personality=str(spec.get("voice", "") or ""),
+        system_prompt=str(spec.get("system_prompt", "") or ""),
+        depth_prompt=str(spec.get("depth_prompt", "") or ""),
+        book=_book_from(spec.get("book")),
+    )
+
+
 def card_from_player(ch: Character, *, description: str = "", personality: str = "",
                      system_prompt: str = "", post_history_instructions: str = "",
                      mes_example: str = "", talkativeness: float = 0.5,
                      tactics: str = "") -> CharacterCard:
     """玩家 Character → 卡。name 取 ch.name；description/personality 来自建卡表单，
-    空则用引擎兜底文案：description=种族·职业·背景，personality=TACTICS 风格摘要。
+    空则用引擎兜底文案：description=职业 + 十项属性行，personality=TACTICS 职业战术摘要。
 
-    tactics 由调用方传入（game.agents.TACTICS.get(klass)）——st 层不得 import
+    tactics 由调用方传入（game.agents.TACTICS.get(role)）——st 层不得 import
     ctrcg.game.*，故不在此直接引用；缺省时给一行按职业行事的通用文案。
     """
-    race_cn = D.RACES.get(ch.race, {}).get("name", ch.race)
-    klass_cn = D.CLASSES.get(ch.klass, {}).get("name", ch.klass)
-    bg_cn = D.BACKGROUNDS.get(ch.background, {}).get("name", ch.background)
+    role_cn = _role_name(getattr(ch, "role", "")) or "边缘行者"
+    handle = str(getattr(ch, "handle", "") or "")
+    stats = getattr(ch, "stats", None) or {}
+    stat_line = " ".join(f"{D.STATS[k]['name']}{int(stats.get(k, 0))}"
+                         for k in D.STAT_ORDER if k in D.STATS)
     if not description:
-        description = f"{ch.name}，{race_cn}·{klass_cn}，{bg_cn}出身。"
+        who = f"{ch.name}（街头绰号 {handle}）" if handle else ch.name
+        description = f"{who}，{role_cn}。{stat_line}。"
     if not personality:
-        personality = tactics or f"以{klass_cn}的方式行事：尽忠职守，与队伍同进退。"
+        personality = tactics or f"以{role_cn}的方式行事：在夜之城活下去，与队伍同进退。"
     return CharacterCard(
         name=ch.name, description=description, personality=personality,
         system_prompt=system_prompt,

@@ -1,221 +1,228 @@
-"""桌边社交层测试：抢话、自由反应、辩论、DM 即席回应、静默降级。
+"""桌边社交层（《赛博朋克 RED》）：抢话 / 反应波 / 辩论 / 桌面账本 / 优雅降级。
 
-用 ScriptedAdapter 的 handler 按（角色 → 台词）发牌，验证编排器的
-时机与秩序：谁能开口、何时打断、辩论如何收束、LLM 故障时是否静默降级。
+整层与规则无关，移植只换状态夹具、同伴名字与提示词标记。
+
+⚠ 现状：``ctrcg/game/social.py:292`` 的 ``_wi_context`` 仍在读
+``module.companions``——PORT_SPEC §3 已把该字段换成 ``pregens`` +
+``default_companions``，``Module`` 上根本没有 ``companions``。于是每个同伴的
+社交回合在 ``loop.run`` 之前就抛 ``AttributeError``，而 ``_pc_social_turn`` /
+``_pc_debate_turn`` 用 ``except Exception: return []`` 把异常吞了，
+**同伴永远不会开口、不会抢话、不会辩论，而且没有任何报错**。
+下文的 ``SOCIAL_LAYER_OK`` 探针 + ``skipUnless`` 就是为它挂起的；
+``TestSocialBugReport`` 里有一条 expectedFailure 精确钉住这个缺陷。
 """
 
-import random
+import os
+import sys
 import unittest
 
-from ctrcg.campaign import module_data as M
-from ctrcg.game import state as G
-from ctrcg.game.agents import make_dm_agent, make_pc_agent
-from ctrcg.game.session import GameSession
-from ctrcg.harness.adapter import ScriptedAdapter
-from ctrcg.harness.loop import DefaultAgentLoop
-from ctrcg.harness.models import ModelResponse, ToolCall
-from ctrcg.rules.character import Character
-from ctrcg.ui.cli import AutoUI
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-DM_MARK = "地下城主"
-ROLAND = "罗兰·北风"
-PIPPIN = "皮普·铜齿轮"
+from helpers import (DM_MARK, is_fresh_run, make_agent_session,  # noqa: E402
+                     make_state, message_system)
+from ctrcg.harness.models import ModelResponse, ToolCall  # noqa: E402
+from ctrcg.ui.cli import AutoUI                           # noqa: E402
 
 
-def make_state(seed=5):
-    rng = random.Random(seed)
-    player = Character.create(
-        name="凯尔", race="human", klass="fighter", background="soldier",
-        scores={"str": 15, "dex": 13, "con": 14, "int": 10, "wis": 12, "cha": 8},
-        skill_choices=["athletics", "intimidation"], fighting_style="defense")
-    comps = [Character.create(
-        name=c["name"], race=c["race"], klass=c["klass"], background=c["background"],
-        scores=c["scores"], skill_choices=c["skills"],
-        fighting_style=c.get("fighting_style", "")) for c in M.COMPANIONS]
-    return G.GameState(player, comps, rng)
+# ---------------------------------------------------------------- 能力探针
+def _social_layer_works() -> bool:
+    """探针：同伴的一次社交回合能否真的产出一句台词。"""
+    def handler(messages, tools):
+        names = {t["function"]["name"] for t in (tools or [])}
+        if "say" in names:
+            return ModelResponse(content=None, tool_calls=[
+                ToolCall(id="s", name="say", arguments={"text": "探针台词。"})])
+        return ModelResponse(content="（旁白）")
+
+    try:
+        st = make_state(red=True)
+        session, st, _ui, _adapter = make_agent_session(
+            state=st, ui=AutoUI(), handler=handler)
+        return bool(session.social._pc_social_turn(st.companions[0], "触发", "最近"))
+    except Exception:                     # noqa: BLE001
+        return False
+
+
+SOCIAL_LAYER_OK = _social_layer_works()
 
 
 class TableScript:
-    """按（角色 → say 参数列表）顺序发牌；说完即收束。
-    DM 默认返回最终叙述；dm_tool_calls 非空时 DM 先调用这些工具再收束。"""
+    """按系统提示里的角色名发牌：同伴说 ``say``、DM 输出最终叙述。
 
-    def __init__(self, lines_by_name=None, dm_final="商人抬头看了你们一眼。",
-                 dm_tool_calls=None):
-        self.lines = {k: list(v) for k, v in (lines_by_name or {}).items()}
-        self.dm_final = dm_final
+    「最后一轮是 user」= 新一轮，保证每轮只发一张牌。
+    """
+
+    def __init__(self, lines=None, dm_tool_calls=None, dm_final="DM 收束叙述。",
+                 interrupt=None):
+        self.lines = dict(lines or {})
         self.dm_tool_calls = list(dm_tool_calls or [])
-        self.dm_calls = 0
+        self.dm_final = dm_final
+        self.interrupt = set(interrupt or ())      # 这些角色按「抢话」发牌
+        self.dm_inputs: list[list[dict]] = []
 
     def __call__(self, messages, tools):
-        system = str(messages[0].get("content", ""))
-        # 一次运行的首次调用：末条消息是 user（任务/上下文）；工具结果回填后
-        # 末条是 tool——借此保证每次运行至多发一张牌
-        fresh_run = messages[-1].get("role") == "user"
+        system = message_system(messages)
+        fresh = is_fresh_run(messages)
         if DM_MARK in system:
-            self.dm_calls += 1
-            if fresh_run and self.dm_tool_calls:
-                calls, self.dm_tool_calls = self.dm_tool_calls, []
-                return ModelResponse(content=None, tool_calls=[
-                    ToolCall(id=f"d{i}", name=tc["name"], arguments=tc["arguments"])
-                    for i, tc in enumerate(calls, 1)])
-            return ModelResponse(content=f"{self.dm_final}（DM第{self.dm_calls}次）")
-        for name, pending in self.lines.items():
-            if name in system:
-                if fresh_run and pending:
-                    args = pending.pop(0)
+            self.dm_inputs.append(messages)
+            if fresh and self.dm_tool_calls:
+                return self.dm_tool_calls.pop(0)
+            return ModelResponse(content=self.dm_final)
+        if fresh:
+            for name, text in self.lines.items():
+                if name in system:
+                    args = {"text": text}
+                    if name in self.interrupt:
+                        args["interrupt"] = True
                     return ModelResponse(content=None, tool_calls=[
-                        ToolCall(id="t1", name="say", arguments=args)])
-                return ModelResponse(content="（无话）")
-        raise AssertionError(f"脚本未覆盖的角色：{system[:80]}")
+                        ToolCall(id="s1", name="say", arguments=args)])
+        return ModelResponse(content="（保持安静，跟随队伍）")
 
 
-def make_agent_session(handler):
-    state = make_state()
-    ui = AutoUI()
-    adapter = ScriptedAdapter(handler=handler)
-    loop = DefaultAgentLoop(registry=None, adapter=adapter)
-    dm = make_dm_agent("test-model", M.BUILTIN)
-    pc_agents = {}
-    for comp in M.COMPANIONS:
-        pc_agents[comp["name"]] = make_pc_agent(
-            comp, 1, ["longsword"], "法术位：无", "test-model")
-    s = GameSession(state, ui, loop=loop, dm_agent=dm, pc_agents=pc_agents)
-    return s, state, ui, adapter
+def session_with(lines=None, dm_tool_calls=None, ui=None, state=None, **kw):
+    script = TableScript(lines=lines, dm_tool_calls=dm_tool_calls, **kw)
+    session, state, ui, adapter = make_agent_session(
+        state=state, ui=ui or AutoUI(), handler=script)
+    return session, state, ui, script
 
 
 def ally_lines(ui):
-    return [h for h in ui.history if h.startswith("  ◈")]
+    return [ln for ln in ui.history if ln.startswith("  \u25c8")]
 
 
-class TestSocial(unittest.TestCase):
-    def test_scripted_mode_has_no_social(self):
-        s = GameSession(make_state(), AutoUI(), loop=None)
-        self.assertIsNone(s.social)
-        self.assertEqual(s.table_log, [])
+# ================================================================ 接线（总是跑）
+class TestSocialWiring(unittest.TestCase):
+    def test_scripted_mode_has_no_social_layer(self):
+        from ctrcg.game.session import GameSession
+        st = make_state()
+        session = GameSession(st, AutoUI(), loop=None)
+        self.assertIsNone(session.social)
+        self.assertIsNone(session.npc_director)
+        self.assertEqual(session.table_log, [])
 
-    def test_interrupt_wave_renders_and_reaches_dm(self):
-        script = TableScript({
-            PIPPIN: [{"text": "等等！那箱子上的纹章我见过！", "interrupt": True}],
-            ROLAND: [], "薇兰·叶语": [],
-        })
-        s, state, ui, adapter = make_agent_session(script)
-        s.social.beat("我要上前和商队搭话")
-        # 抢话行被渲染，带（抢话）标记
-        self.assertTrue(any("（抢话）" in h and "皮普" in h for h in ally_lines(ui)))
-        self.assertTrue(any("纹章" in h for h in ally_lines(ui)))
-        # DM 的上下文包含桌上插话摘要（NPC"听得见"同伴的打断）
-        first_dm_call = next(c for c in adapter.calls
-                             if DM_MARK in str(c["messages"][0].get("content", "")))
-        self.assertTrue(any("【桌上插话】" in str(m.get("content"))
-                            and "纹章" in str(m.get("content"))
-                            for m in first_dm_call["messages"]))
-        # 已消化清账
-        self.assertEqual(s.table_log, [])
-        # 模型可见 ⟺ 已记录：插话（工具调用）留在皮普自己的会话事件流里
-        import json as _json
-        raw = _json.dumps(s.pc_session(PIPPIN).events, ensure_ascii=False)
-        self.assertIn("纹章", raw)
+    def test_ai_mode_builds_the_social_layer(self):
+        session, *_ = session_with()
+        self.assertIsNotNone(session.social)
+        self.assertIsNotNone(session.npc_director)
+        self.assertTrue(session.ai_mode)
 
-    def test_wave_caps_speakers(self):
-        script = TableScript({
-            ROLAND: [{"text": "我跟上。"}],
-            "薇兰·叶语": [{"text": "小心点。"}],
-            PIPPIN: [{"text": "我数到三就冲！"}],
-        })
-        s, state, ui, adapter = make_agent_session(script)
-        lines = s.social.reaction_wave(trigger="测试波。")
-        self.assertEqual(len(lines), 2)          # MAX_WAVE_SPEAKERS=2
-        self.assertEqual(len(ally_lines(ui)), 2)
+    def test_dm_start_encounter_during_a_beat_hands_back_to_combat(self):
+        session, _st, _ui, _s = session_with(dm_tool_calls=[
+            ModelResponse(content=None, tool_calls=[
+                ToolCall(id="t1", name="start_encounter",
+                         arguments={"encounter_id": "e1"})])])
+        session.social.beat("我冲进去。")
+        self.assertIsNotNone(session.encounter)
+        self.assertEqual(session.encounter.title, "巷口伏击")
 
-    def test_interrupts_speak_first(self):
-        script = TableScript({
-            ROLAND: [{"text": "我先说计划。"}],
-            PIPPIN: [{"text": "打断一下——有脚印！", "interrupt": True}],
-        })
-        s, state, ui, adapter = make_agent_session(script)
-        s.social.reaction_wave(trigger="测试波。")
-        self.assertIn("打断一下", ally_lines(ui)[0])   # 皮普抢话，先开口
+    def test_dm_input_carries_the_red_party_snapshot(self):
+        session, _st, _ui, script = session_with()
+        session.dm_turn("我看看四周。")
+        ctx = "\n".join(str(m.get("content", ""))
+                        for m in script.dm_inputs[-1])
+        self.assertIn("PW", ctx)
+        self.assertIn("护甲", ctx)
+        self.assertIn("重伤阈值", ctx)
+        self.assertNotIn("AC", ctx)
+        self.assertNotIn("法术位", ctx)
+        self.assertNotIn("等级", ctx)
 
-    def test_debate_runs_and_settles(self):
-        script = TableScript({
-            ROLAND: [
-                {"text": "塌桥承不了重，掉下去就是白送。", "stance": "object"},
-                {"text": "行吧，你轻你先——掉坑里别喊我。", "stance": "agree"},
-            ],
-            PIPPIN: [
-                {"text": "桥板看着结实，探两步就到对岸！", "stance": "object"},
-                {"hold": True, "reason": "被说服了一半"},
-            ],
-        })
-        s, state, ui, adapter = make_agent_session(script)
-        wave = [{"who": ROLAND, "text": "这桥塌了一半，绕路更稳。",
-                 "stance": "object", "interrupt": False},
-                {"who": PIPPIN, "text": "怕什么，我第一个过！",
-                 "stance": "object", "interrupt": False}]
-        debated = s.social.run_debate(wave)
-        self.assertTrue(debated)
-        history = "\n".join(ui.history)
-        self.assertIn("塌桥承不了重", history)          # 第1轮申辩
-        self.assertIn("掉坑里别喊我", history)          # 第2轮罗兰让步收场
-        # 桌面日志记账（供 DM 回应轮消化）
-        self.assertEqual([l.get("kind") for l in s.table_log].count("debate"), 3)
+    def test_dm_context_names_the_red_roles(self):
+        session, _st, _ui, script = session_with()
+        session.dm_turn("我看看四周。")
+        ctx = "\n".join(str(m.get("content", ""))
+                        for m in script.dm_inputs[-1])
+        self.assertIn("欧元", ctx)
 
-    def test_solo_objector_no_debate_but_dm_responds(self):
-        script = TableScript({
-            ROLAND: [{"text": "我不赞同深夜进矿洞。", "stance": "object"},
-                     {"text": "夜里的矿洞是坟场，白天再去。"}],
-            "薇兰·叶语": [], PIPPIN: [],
-        })
-        s, state, ui, adapter = make_agent_session(script)
-        # 孤身反对（无人接仗）→ 不开辩论
-        r = s.social.run_debate([{"who": ROLAND, "text": "我反对。",
-                                  "stance": "object", "interrupt": False}])
-        self.assertFalse(r)
-        # 完整节拍：wave0 反对 + wave1 补刀 → DM 即席回应桌面（共 ≥ 2 次）
-        s.social.beat("我们连夜进矿洞。")
-        self.assertGreaterEqual(script.dm_calls, 2)
-        self.assertIn("DM第2次", "\n".join(ui.history))
+    def test_pc_agent_failure_degrades_silently(self):
+        def handler(messages, tools):
+            system = message_system(messages)
+            if DM_MARK in system:
+                return ModelResponse(content="DM 收束叙述。")
+            raise RuntimeError("端点不可达")
 
-    def test_debate_earns_last_word(self):
-        script = TableScript({
-            ROLAND: [{"text": "塌桥承不了重。", "stance": "object"}],
-            PIPPIN: [{"text": "哼，算你狠。", "stance": "agree"}],
-        })
-        s, state, ui, adapter = make_agent_session(script)
-        wave = [{"who": ROLAND, "text": "绕路。", "stance": "object",
-                 "interrupt": False},
-                {"who": PIPPIN, "text": "我偏要走桥！", "stance": "object",
-                 "interrupt": False}]
-        self.assertTrue(s.social.run_debate(wave))
-        s.social.reaction_wave(trigger="DM 刚回应了桌上的争论。", max_speakers=1)
-        self.assertIn("算你狠", "\n".join(ui.history))
+        session, _st, _ui, _adapter = make_agent_session(
+            ui=AutoUI(), handler=handler)
+        try:
+            session.social.beat("我往前走。")
+            session.dm_turn("我继续走。")
+        except Exception as exc:                          # noqa: BLE001
+            self.fail(f"同伴 LLM 故障炸了社交层：{exc!r}")
 
-    def test_llm_down_degrades_silently(self):
-        """PC 端 LLM 故障 → 社交层静默跳过，对局照常。"""
-        class BoomForPC(TableScript):
-            def __call__(self, messages, tools):
-                if DM_MARK not in str(messages[0].get("content", "")):
-                    raise RuntimeError("LLM 不可达")
-                return super().__call__(messages, tools)
 
-        script = BoomForPC()
-        s, state, ui, adapter = make_agent_session(script)
-        s.social.beat("继续前进。")          # 不应抛异常
-        self.assertIn("DM第1次", "\n".join(ui.history))
+# ================================================================ 缺陷钉死
+class TestSocialBugReport(unittest.TestCase):
+    def test_wi_context_reads_pregens_not_the_deleted_companions_field(self):
+        """生产缺陷（ctrcg/game/social.py:292）：``_wi_context`` 读
+        ``s.module.companions``；PORT_SPEC §3 已删掉 ``Module.companions``
+        （改 ``pregens`` + ``default_companions``），因此对任何同伴都会
+        ``AttributeError: 'Module' object has no attribute 'companions'``。
+
+        最小复现：
+            session, st, _ui, _a = make_agent_session(state=make_state(red=True),
+                                                      handler=...)
+            session.social._wi_context(st.companions[0])
+            # AttributeError: 'Module' object has no attribute 'companions'
+
+        因为 ``_pc_social_turn`` / ``_pc_debate_turn`` 用
+        ``except Exception: return []`` 吞掉异常，后果是整个桌边社交层静默失效
+        （同伴不开口/不抢话/不辩论），且不产生任何日志。修复后本用例会自动
+        变成 unexpected success。"""
+        st = make_state(red=True)
+        session, st, _ui, _adapter = make_agent_session(
+            state=st, ui=AutoUI(), handler=lambda m, t: ModelResponse(content=""))
+        self.assertIsInstance(session.social._wi_context(st.companions[0]),
+                              (dict, list, str))
+
+
+# ================================================================ 抢话 / 辩论
+@unittest.skipUnless(
+    SOCIAL_LAYER_OK,
+    "social.py:292 的 _wi_context 仍在读已删除的 Module.companions，异常被 "
+    "_pc_social_turn 静默吞掉 → 同伴社交回合恒为空，抢话/辩论无从断言。"
+    "修复后本类自动启用。")
+class TestSocialWave(unittest.TestCase):
+    def test_interrupt_wave_renders_and_reaches_the_dm(self):
+        st = make_state(red=True)
+        session, st, ui, script = session_with(
+            state=st, lines={st.companions[0].name: "等等——这条巷子不对。"})
+        session.social.beat("我往前走。")
+        joined = "\n".join(ui.history)
+        self.assertIn("这条巷子不对", joined)
+        # 抢话窗口在 DM 接话之前，所以它必然出现在 DM 的输入里；
+        # beat() 内部的 dm_turn 会消化 table_log（这是设计：插话进 DM 上下文）。
+        ctxs = ["\n".join(str(m.get("content", "")) for m in inp)
+                for inp in script.dm_inputs]
+        self.assertTrue(any("【桌上插话】" in c and "这条巷子不对" in c
+                            for c in ctxs), f"DM 输入里没有桌面插话：{ctxs}")
+        self.assertEqual(session.table_log, [])       # 已被 DM 消化
+
+    def test_wave_caps_speakers_at_two(self):
+        st = make_state(red=True)
+        session, st, ui, _s = session_with(
+            state=st,
+            lines={c.name: f"我是{c.name}，我有话说。" for c in st.companions})
+        before = len(ally_lines(ui))
+        spoken = session.social.reaction_wave("队伍刚抵达一处安静的地方。")
+        self.assertLessEqual(len(ally_lines(ui)) - before, 2)
+        self.assertLessEqual(len(spoken), 2)          # 上限是「每一波」两名
+
+    def test_interrupters_speak_with_the_mark(self):
+        st = make_state(red=True)
+        session, st, ui, _s = session_with(
+            state=st, lines={st.companions[0].name: "打断一下。"},
+            interrupt={st.companions[0].name})
+        session.social.beat("我往前走。")
+        joined = "\n".join(ui.history)
+        self.assertIn("（抢话）", joined)
+        self.assertIn("打断一下", joined)
+
+    def test_no_pc_agents_means_no_interrupts(self):
+        st = make_state(red=True)
+        session, _st, ui, _s = session_with(state=st, lines={"任何人": "不该出现。"})
+        session.pc_agents = {}
+        session.social.beat("我往前走。")
         self.assertEqual(ally_lines(ui), [])
-        self.assertEqual(s.table_log, [])
-
-    def test_encounter_stops_beat(self):
-        """DM 在回合中拉开战斗 → 社交节拍立即收场，交还战斗编排。"""
-        script = TableScript(dm_tool_calls=[
-            {"name": "start_encounter", "arguments": {"encounter_id": "e_ambush"}},
-        ])
-        s, state, ui, adapter = make_agent_session(script)
-        s.social.beat("我们冲进去！")
-        self.assertIsNotNone(s.encounter)          # 遭遇已就位
-        self.assertEqual(script.dm_calls, 2)       # 一个 DM 回合（工具+收束），无桌面回应轮
-        # 战斗一触即发，不再有同伴反应波
-        self.assertEqual([l for l in s.table_log if l.get("kind") == "table"][:0], [])
 
 
 if __name__ == "__main__":

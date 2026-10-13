@@ -1,341 +1,534 @@
-"""5e 规则精确性回归测试：本次"完全规则化"修复的每一项都对应一个用例。"""
+"""规则精确性回归（《赛博朋克 RED》）。
 
-import random
+每一个用例都用 :class:`helpers.ScriptRng` 把骰子钉死，断言**精确数值**而不是
+「大致能过」。覆盖移植后容易悄悄走样的地方：瞄准射击 −8、闪避子弹的反应经济、
+生存检定门槛的累积、致命伤长期后果的叠加、状态计时的到期与再检定、
+掩体耐久的精确扣减、幸运对总值的精确贡献、暴击追加的精确算术、
+伤害/护甲/磨损的三段式结算，以及 ``rolls`` 台账的审计字段。
+
+``ScriptRng`` 已从本文件上提到 ``tests/helpers.py``（旧版在这里定义），
+本文件改为从共享夹具导入。
+"""
+
+import os
+import re
+import sys
 import unittest
 
-from ctrcg.rules import data as D
-from ctrcg.rules.character import (
-    Character, COND_GRAPPLED, COND_PARALYZED, COND_SLEEP, COND_STABLE,
-    COND_UNCONSCIOUS,
-)
-from ctrcg.rules.combat import Encounter, Monster
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from helpers import ScriptRng, make_pc                    # noqa: E402
+from test_combat import (MELEE, PISTOL, corridor, duel,   # noqa: E402
+                         make_foe)
+
+from ctrcg.rules import data as D                          # noqa: E402
+from ctrcg.rules.character import (AIMED_SHOT_PENALTY,     # noqa: E402
+                                   COND_CONTROLLED, COND_DEAD,
+                                   COND_STABILIZED, COND_UNCONSCIOUS,
+                                   Character, LOCATIONS)
+from ctrcg.rules.combat import METERS_PER_CELL, Encounter  # noqa: E402
 
 
-class ScriptRng:
-    """按脚本吐数的确定性 RNG（randint 依次取值）。"""
-
-    def __init__(self, values):
-        self.values = list(values)
-        self.i = 0
-
-    def randint(self, a, b):
-        v = self.values[self.i % len(self.values)]
-        self.i += 1
-        return max(a, min(b, v))
+def num(part: str) -> int:
+    """从 '反应+6' / '+0' / '-2（伤势）' 里取出带符号整数。"""
+    m = re.search(r"[+-]\d+", part)
+    assert m, f"审计明细里没有可解析的数值：{part!r}"
+    return int(m.group(0))
 
 
-def make_pc(name="罗兰", klass="fighter", race="human", scores=None, style="defense",
-            level=1):
-    base = {"str": 15, "dex": 13, "con": 14, "int": 10, "wis": 12, "cha": 8}
-    if scores:
-        base.update(scores)
-    skills = {"fighter": ["athletics", "intimidation"],
-              "wizard": ["arcana", "history"],
-              "bard": ["performance", "persuasion"],
-              "druid": ["nature", "medicine"], "paladin": ["athletics", "insight"],
-              "rogue": ["stealth", "acrobatics", "deception", "perception"],
-              "monk": ["acrobatics", "religion"]}[klass]
-    return Character.create(
-        name=name, race=race, klass=klass, background="soldier",
-        scores=base, skill_choices=skills, fighting_style=style, level=level)
+# ================================================================ 攻击算术
+class TestAttackArithmetic(unittest.TestCase):
+    """命中的精确加法与审计明细。"""
+
+    def test_aimed_shot_penalty_is_minus_eight(self):
+        self.assertEqual(AIMED_SHOT_PENALTY, -8)
+        pc = make_pc(weapons=[PISTOL], skills={"handgun": 6})
+        enc = duel(pc=pc, foe=make_foe(), grid=corridor(3), cells=3)
+        enc.rng = ScriptRng([9, 3, 3, 3])
+        plain = enc.attack(pc, enc.enemies[0], PISTOL)
+        enc.refresh_actions(pc)
+        enc.rng = ScriptRng([9, 3, 3, 3])
+        aimed = enc.attack(pc, enc.enemies[0], PISTOL, aimed=True)
+        self.assertEqual(plain["attack_total"], 9 + pc.skill_total("handgun"))
+        self.assertEqual(aimed["attack_total"], plain["attack_total"] - 8)
+        self.assertEqual(aimed["dv"], plain["dv"] + 8)
+
+    def test_melee_penalty_applies_to_melee_attacks(self):
+        """生产缺陷（ctrcg/rules/combat.py:497-499 与 506-515）：``attack`` 把
+        ``melee_penalty()`` 累加进局部变量 ``penalty``，但白刃战分支走的是
+        ``att.opposed_check()``（只读 ``check_penalty()``），``penalty`` 在近战
+        路径上从不被使用。于是致命伤「肌肉拉伤：近战武器攻击 −2」永远不生效，
+        而 ``Character.melee_penalty()`` / ``active_crit_effects()`` 都声称它生效。"""
+        pc = make_pc(weapons=[MELEE], skills={"melee_weapon": 8})
+        pc.apply_crit_injury(9)                             # 肌肉拉伤：近战 −2
+        self.assertEqual(pc.melee_penalty(), -2)
+        enc = duel(pc=pc, foe=make_foe(), grid=corridor(1), cells=1)
+        enc.rng = ScriptRng([9, 2])
+        melee = enc.attack(pc, enc.enemies[0], MELEE)
+        self.assertEqual(melee["attack_total"],
+                         9 + pc.skill_total("melee_weapon") - 2)
+
+    def test_melee_penalty_does_not_touch_ranged_attacks(self):
+        pc = make_pc(weapons=[MELEE, PISTOL], skills={"melee_weapon": 8,
+                                                     "handgun": 6})
+        pc.apply_crit_injury(9)                             # 肌肉拉伤：只影响近战
+        self.assertEqual(pc.melee_penalty(), -2)
+        enc = duel(pc=pc, foe=make_foe(), grid=corridor(3), cells=3)
+        enc.rng = ScriptRng([9, 3, 3, 3])
+        shot = enc.attack(pc, enc.enemies[0], PISTOL)
+        self.assertEqual(shot["attack_total"],
+                         9 + pc.skill_total("handgun"))     # 枪不受肌肉拉伤影响
+
+    def test_luck_raises_the_total_by_exactly_n(self):
+        pc = make_pc(weapons=[PISTOL], skills={"handgun": 6})   # 幸运 5
+        enc = duel(pc=pc, foe=make_foe(), grid=corridor(3), cells=3)
+        enc.rng = ScriptRng([5, 3, 3, 3])
+        base = enc.attack(pc, enc.enemies[0], PISTOL)
+        enc.refresh_actions(pc)
+        enc.rng = ScriptRng([5, 3, 3, 3])
+        lucky = enc.attack(pc, enc.enemies[0], PISTOL, luck=3)
+        self.assertEqual(lucky["attack_total"], base["attack_total"] + 3)
+        self.assertEqual(pc.luck_cur, 2)
+        entry = [r for r in enc.rolls if r["kind"] == "attack"][-1]
+        self.assertIn("+3（幸运）", entry["mods"])
+
+    def test_overspending_luck_is_capped_by_the_pool(self):
+        pc = make_pc(weapons=[PISTOL], skills={"handgun": 6}, stats={"luck": 2})
+        pc.refresh_luck()
+        enc = duel(pc=pc, foe=make_foe(), grid=corridor(3), cells=3)
+        enc.rng = ScriptRng([5, 3, 3, 3])
+        res = enc.attack(pc, enc.enemies[0], PISTOL, luck=99)
+        self.assertEqual(res["attack_total"], 5 + pc.skill_total("handgun") + 2)
+        self.assertEqual(pc.luck_cur, 0)
+
+    def test_crit_failure_arithmetic(self):
+        pc = make_pc(weapons=[PISTOL], skills={"handgun": 6})
+        enc = duel(pc=pc, foe=make_foe(), grid=corridor(3), cells=3)
+        enc.rng = ScriptRng([1, 6, 3, 3, 3])
+        res = enc.attack(pc, enc.enemies[0], PISTOL)
+        self.assertEqual(res["attack_rolls"], [1, 6])
+        self.assertEqual(res["attack_total"], 1 - 6 + 12)   # 7 < DV 13
+        self.assertFalse(res["hit"])
+
+    def test_crit_success_arithmetic(self):
+        pc = make_pc(weapons=[PISTOL], skills={"handgun": 6})
+        enc = duel(pc=pc, foe=make_foe(), grid=corridor(3), cells=3)
+        enc.rng = ScriptRng([10, 10, 3, 3, 3])
+        res = enc.attack(pc, enc.enemies[0], PISTOL)
+        self.assertEqual(res["attack_rolls"], [10, 10])     # 只追加一次
+        self.assertEqual(res["attack_total"], 10 + 10 + 12)
+
+    def test_roll_ledger_fields_and_mods_are_auditable(self):
+        pc = make_pc(weapons=[PISTOL], skills={"handgun": 6})
+        enc = duel(pc=pc, foe=make_foe(), grid=corridor(3), cells=3)
+        enc.rng = ScriptRng([8, 3, 3, 3])
+        enc.attack(pc, enc.enemies[0], PISTOL)
+        entry = enc.rolls[-1]
+        for key in ("kind", "who", "target", "weapon", "total", "rolls", "dv",
+                    "mods", "crit_success", "crit_failure"):
+            self.assertIn(key, entry)
+        mods = entry["mods"]
+        self.assertIn("反应+6", mods)
+        self.assertIn("手枪+6", mods)
+        self.assertEqual(num(mods[0]) + num(mods[1]), num(mods[2]))
+        self.assertEqual(num(mods[2]), entry["total"] - entry["rolls"][0])
+
+    def test_weapon_damage_expressions(self):
+        pc = make_pc(weapons=["medium_pistol", "medium_melee", "shotgun",
+                              "assault_rifle"])
+        self.assertEqual(pc.weapon_damage("medium_pistol"), "2d6")
+        self.assertEqual(pc.weapon_damage("medium_melee"), "2d6")
+        self.assertEqual(pc.weapon_damage("shotgun"), "5d6")
+        self.assertEqual(pc.weapon_damage("assault_rifle"), "5d6")
+        self.assertEqual(pc.weapon_damage("brawling"), "1d6")   # 徒手
+
+    def test_rof_second_shot_is_the_bonus_slot(self):
+        enc = duel(grid=corridor(3), cells=3)
+        pc = enc.allies[0]
+        self.assertTrue(enc.has_bonus(pc))
+        enc.use_bonus(pc)
+        self.assertFalse(enc.has_bonus(pc))
+        enc.refresh_actions(pc)
+        self.assertTrue(enc.has_bonus(pc))
+
+    def test_refresh_actions_resets_all_three_slots(self):
+        enc = duel(grid=corridor(3), cells=3)
+        pc = enc.allies[0]
+        pc.action_used = pc.bonus_used = pc.reaction_used = True
+        pc.turn_damage_taken = 7
+        enc.refresh_actions(pc)
+        self.assertFalse(pc.action_used or pc.bonus_used or pc.reaction_used)
+        self.assertEqual(pc.turn_damage_taken, 0)
 
 
-def duel(pc, seed=1):
-    rng = random.Random(seed)
-    enc = Encounter("t", rng=rng)
-    foe = Monster("goblin", rng)
-    enc.add(pc, "party")
-    enc.add(foe, "enemy")
-    return enc, foe, rng
+# ================================================================ 反应经济
+class TestReactionEconomy(unittest.TestCase):
+    """闪避子弹每轮一次；用掉之后只能硬吃。"""
+
+    def test_only_one_dodge_per_round_then_refresh(self):
+        pc = make_pc(weapons=[PISTOL], skills={"handgun": 6})
+        quick = make_foe()
+        quick.stats["ref"] = 8
+        quick.skill_levels["evasion"] = 6
+        enc = duel(pc=pc, foe=quick, grid=corridor(3), cells=3)
+        enc.rng = ScriptRng([5, 9])
+        self.assertTrue(enc.attack(pc, quick, PISTOL)["dodged"])
+        enc.rng = ScriptRng([8, 3, 3, 3])
+        second = enc.attack(pc, quick, PISTOL)
+        self.assertNotIn("dodged", second)
+        self.assertEqual(second["dv"], 13)
+        enc.refresh_actions(quick)                          # 新一轮：反应回来了
+        quick.reaction_used = False
+        enc.rng = ScriptRng([5, 9])
+        self.assertTrue(enc.attack(pc, quick, PISTOL)["dodged"])
+
+    def test_use_reaction_returns_false_when_spent(self):
+        enc = duel(grid=corridor(3), cells=3)
+        foe = enc.enemies[0]
+        self.assertTrue(enc.use_reaction(foe))
+        self.assertFalse(enc.use_reaction(foe))
+        enc.refresh_actions(foe)
+        self.assertTrue(enc.use_reaction(foe))
+
+    def test_dodging_is_impossible_without_ref_8(self):
+        slow = make_foe()
+        slow.stats["ref"] = 7
+        slow.skill_levels["evasion"] = 10
+        self.assertFalse(slow.can_evade_bullets())
 
 
-class TestAttackAdvantageDice(unittest.TestCase):
-    def test_monster_advantage_rolls_two_d20(self):
-        """怪物优势必须掷两次 d20（而非 +1 加值）。"""
-        m = Monster("goblin", random.Random(1))
-        m.ac_base = 15
-        enc = Encounter("t")
-        # [5, 20]：劣势取 5；优势取 20
-        r = enc._attack_d20(m, ScriptRng([5, 20]), -1)
-        self.assertEqual(r.kept[0], 5)
-        r2 = enc._attack_d20(m, ScriptRng([5, 20]), 1)
-        self.assertEqual(r2.kept[0], 20)
+# ================================================================ 生存检定
+class TestDeathSavePrecision(unittest.TestCase):
+    """门槛 10 + 累积 + 致命伤；掷出 10 自动失败；失败即死。"""
 
-    def test_monster_attack_disadvantage_misses_high_ac(self):
-        enc = Encounter("t")
-        gob = Monster("goblin", random.Random(1))
+    def test_threshold_accumulates_exactly(self):
+        c = make_pc()
+        rng = ScriptRng([1, 2, 3, 4, 5])
+        seen = []
+        for _ in range(5):
+            seen.append(c.death_save_dv())
+            c.death_save(rng)
+        self.assertEqual(seen, [10, 11, 12, 13, 14])
+
+    def test_critical_injury_bonus_is_folded_in(self):
+        c = make_pc()
+        c.apply_crit_injury(2)                              # 生存检定 +1
+        c.apply_crit_injury(4)                              # 生存检定 +1
+        self.assertEqual(c.death_save_dv(), 12)
+        c.death_save_mod = 3
+        self.assertEqual(c.death_save_dv(), 15)
+
+    def test_fixating_an_injury_removes_its_bonus(self):
+        c = make_pc()
+        c.apply_crit_injury(2)
+        self.assertEqual(c.death_save_dv(), 11)
+        c.first_aid_fix(0)
+        self.assertEqual(c.death_save_dv(), 10)
+
+    def test_success_keeps_the_character_alive(self):
+        c = make_pc()
+        c.hp_cur = 0
+        res = c.death_save(ScriptRng([7]))
+        self.assertTrue(res["ok"])
+        self.assertFalse(c.is_dead)
+        self.assertEqual(c.hp_cur, 0)                       # 门槛过了不代表回血
+        self.assertEqual(res["dv"], 10)
+
+    def test_massive_damage_deepens_the_hole_without_instant_death(self):
+        """RED「伤害超过 PW 上限」不直接判死，但生存检定的起点更难。"""
+        c = make_pc(hp=45, armor=None)
+        c.take_damage(200, ignore_armor=True)
+        self.assertEqual(c.hp_cur, -45)
+        self.assertFalse(c.is_dead)
+        self.assertIn(COND_UNCONSCIOUS, c.conditions)
+
+    def test_unconscious_and_dead_are_distinct(self):
+        c = make_pc()
+        c.hp_cur = 0
+        self.assertTrue(c.is_downed)
+        self.assertFalse(c.is_dead)
+        c.conditions.add(COND_DEAD)
+        self.assertTrue(c.is_dead)
+
+
+# ================================================================ 伤势/状态
+class TestConditionPrecision(unittest.TestCase):
+    """伤势与状态的修正必须**相加**并进审计明细。"""
+
+    def test_serious_and_controlled_stack(self):
+        c = make_pc()
+        c.hp_cur = 10                                       # 重伤 −2
+        c.conditions.add(COND_CONTROLLED)                    # 被控制 −2
+        self.assertEqual(c.check_penalty(), -4)
+        res = c.check(ScriptRng([7]), "handgun", dv=15)
+        self.assertEqual(res.total, 7 + c.skill_total("handgun") - 4)
+        self.assertIn("伤势/状态-4", res.breakdown)
+
+    def test_pain_editor_cancels_only_the_serious_penalty(self):
+        c = make_pc(cyberware=["pain_editor"])
+        c.hp_cur = 10
+        c.conditions.add(COND_CONTROLLED)
+        self.assertEqual(c.check_penalty(), -2)             # 只剩被控制的 −2
+
+    def test_crit_penalties_stack(self):
+        c = make_pc()
+        c.apply_crit_injury(11)                             # 手指粉碎 −4
+        c.apply_crit_injury(11)                             # 再来一处 −4
+        self.assertEqual(c.crit_penalty(), -8)
+        res = c.check(ScriptRng([5]), "handgun", dv=15)
+        self.assertEqual(res.total, 5 + c.skill_total("handgun") - 8)
+
+    def test_move_penalties_stack_across_injuries(self):
+        c = make_pc()
+        base = c.move_value()
+        c.apply_crit_injury(8)                              # 腿部骨折 −4
+        c.apply_crit_injury(4)                              # 肺萎陷 −2
+        self.assertEqual(c.move_value(), max(1, base - 6))
+
+    def test_timer_ticks_down_one_per_turn(self):
+        enc = duel(grid=corridor(1), cells=1)
+        pc = enc.allies[0]
+        enc.set_condition(pc, "blinded", rounds=3)
+        enc._tick_timers(pc)
+        self.assertEqual(pc.timers["blinded"]["left"], 2)
+        enc._tick_timers(pc)
+        self.assertEqual(pc.timers["blinded"]["left"], 1)
+        enc._tick_timers(pc)
+        self.assertNotIn("blinded", pc.conditions)
+        self.assertNotIn("blinded", pc.timers)
+
+    def test_save_based_timer_rerolls_each_turn_until_it_passes(self):
+        pc = make_pc(skills={"resist_torture_drugs": 0})     # 意志6 + 0 = 6
+        enc = duel(pc=pc, grid=corridor(1), cells=1)
+        enc.add_timer(pc, "毒", 3, save="resist_torture_drugs", dv=17)
+        pc.conditions.add("毒")
+        enc.rng = ScriptRng([3])                            # 3 + 6 = 9 < 17
+        enc._tick_timers(pc)
+        self.assertIn("毒", pc.conditions)
+        self.assertEqual(pc.timers["毒"]["left"], 2)
+        enc.rng = ScriptRng([10, 4])                        # 暴击成功：10+4+6=20
+        enc._tick_timers(pc)
+        self.assertNotIn("毒", pc.conditions)
+
+    def test_stabilized_is_cleared_by_new_damage(self):
+        enc = duel(grid=corridor(1), cells=1)
+        pc = enc.allies[0]
+        pc.hp_cur = 1
+        pc.conditions.add(COND_STABILIZED)
+        enc.apply_damage(pc, 5, ignore_armor=True)
+        self.assertNotIn(COND_STABILIZED, pc.conditions)
+
+    def test_rest_day_requires_stabilized(self):
+        c = make_pc()
+        c.hp_cur = 0                                    # 濒死：未稳定不恢复
+        self.assertEqual(c.rest_day(), 0)
+        c.stabilize()
+        self.assertEqual(c.rest_day(), c.stat(D.REST_HEAL_PER_DAY_STAT))
+        walking = make_pc()
+        walking.hp_cur = 20                             # 走动伤员可直接休整
+        self.assertEqual(walking.rest_day(),
+                         walking.stat(D.REST_HEAL_PER_DAY_STAT))
+
+
+# ================================================================ 致命伤
+class TestCriticalPrecision(unittest.TestCase):
+    """致命伤表的机制关键字逐条对应到角色的派生值。"""
+
+    def test_drop_items_injuries_do_not_touch_checks(self):
+        c = make_pc(weapons=["medium_pistol"])
+        c.apply_crit_injury(3)                              # 手掌切断：只是掉东西
+        self.assertTrue(c.has_crit_effect("drop_items"))
+        self.assertEqual(c.check_penalty(), 0)
+        self.assertEqual(c.move_value(), c.stat("move") * D.MOVE_FACTOR)
+
+    def test_move_hurt_injury_damages_after_a_long_move(self):
         pc = make_pc()
-        pc.armor = "chain_mail"     # AC 16
-        enc.add(pc, "party")
-        enc.add(gob, "enemy")
-        enc.rng = ScriptRng([20, 3])   # 劣势：min(20,3)=3 → 必 miss
-        pc.conditions.add(COND_UNCONSCIOUS := __import__(
-            "ctrcg.rules.character", fromlist=["COND_UNCONSCIOUS"]).COND_UNCONSCIOUS)
-        # 去掉昏迷（避免必暴干扰），只测劣势本身：用高等AC + 无自动命中
-        pc.conditions.discard(COND_UNCONSCIOUS)
-        gob.attacks = [{"weapon": "scimitar", "bonus": 0, "extra": "+0"}]
-        enc.surprised.discard(pc.name)
-        # 制造劣势：目标不可见之外的因素——直接给 PC 隐形
-        pc.conditions.add("invisible")
-        r = enc._monster_attack(gob, pc, "scimitar", enc.rng)
-        self.assertFalse(r["hit"], "劣势骰 3 对 AC16 应未命中（证明掷了两次取低）")
+        pc.hp_max = pc.hp_cur = 45
+        pc.apply_crit_injury(5)                             # 肋骨骨折：移动 >4 米再受伤
+        enc = duel(pc=pc, grid=corridor(14), cells=12)      # 敌人离得远，不会借机
+        enc.rng = ScriptRng([6])
+        out = enc.move(pc, (3, 1))                          # 6 米
+        self.assertTrue(out["ok"])
+        self.assertEqual(pc.hp_cur, 45 - 6)                 # 1d6=6，无视护甲
+        self.assertIn("额外受到", "\n".join(enc.log_lines))
 
-    def test_spell_crit_doubles_dice_not_total(self):
-        """法术暴击 = 骰数翻倍（2d10），不是 1d10 总额×2。"""
-        w = make_pc("法师", klass="wizard", level=1)
-        enc, foe, _rng = duel(w, seed=3)
-        # 攻击骰 20 暴击；伤害骰 3、7 → 2d10 合计 10（若总额翻倍只会是 6）
-        out = enc.cast(w, "fire_bolt", [foe.name], ScriptRng([20, 3, 7]))
-        self.assertIn("暴击", out["detail"])
-        self.assertIn("10 点", out["detail"])
-
-
-class TestMirrorImage(unittest.TestCase):
-    def test_high_roll_hits_duplicate(self):
-        """3 分身：d20≥6 → 分身被击碎，攻击落空。"""
-        w = make_pc("法师", klass="wizard")
-        enc, foe, _ = duel(w, seed=4)
-        w.mirror_images = 3
-        r = enc._monster_attack(foe, w, "scimitar", ScriptRng([6, 20]))
-        self.assertFalse(r["hit"])
-        self.assertEqual(w.mirror_images, 2)
-
-    def test_low_roll_hits_real_body(self):
-        w = make_pc("法师", klass="wizard")
-        enc, foe, _ = duel(w, seed=4)
-        w.mirror_images = 3
-        # d20=2 <6 → 攻击照常进行（AC 命中与否由后续骰决定：9 必 miss AC16?）
-        r = enc._monster_attack(foe, w, "scimitar", ScriptRng([2, 9, 9]))
-        self.assertEqual(w.mirror_images, 3, "未达阈值不应消耗分身")
-
-    def test_thresholds_by_image_count(self):
-        w = make_pc("法师", klass="wizard")
-        enc, foe, _ = duel(w, seed=4)
-        for images, threshold in ((3, 6), (2, 8), (1, 11)):
-            w.mirror_images = images
-            r = enc._monster_attack(foe, w, "scimitar",
-                                    ScriptRng([threshold - 1, 2, 2]))
-            self.assertEqual(w.mirror_images, images, f"{images}分身时 d20={threshold-1} 不应击碎")
-
-
-class TestHelpAndDodge(unittest.TestCase):
-    def test_help_consumed_after_one_attack(self):
+    def test_move_hurt_does_not_trigger_on_a_short_move(self):
         pc = make_pc()
-        ally = make_pc("艾拉", klass="monk")
-        enc, foe, _ = duel(pc, seed=5)
-        enc.do_help(pc, foe)          # pc 助攻
-        adv1, notes1 = enc._advantage_for(ally, foe, ranged=False)
-        self.assertIn("队友助攻", notes1)
-        adv2, notes2 = enc._advantage_for(ally, foe, ranged=False)
-        self.assertNotIn("队友助攻", notes2, "助攻优势只对下一次攻击有效")
+        pc.hp_max = pc.hp_cur = 45
+        pc.apply_crit_injury(5)
+        enc = duel(pc=pc, grid=corridor(14), cells=12)
+        enc.rng = ScriptRng([6])
+        enc.move(pc, (1, 1))                                # 只走 2 米
+        self.assertEqual(pc.hp_cur, 45)
 
-    def test_dodge_expires_at_own_turn_start(self):
+    def test_stabilized_move_hurt_is_suppressed(self):
         pc = make_pc()
-        enc, foe, _ = duel(pc, seed=6)
-        enc.do_dodge(pc)
-        self.assertIn(pc.name, enc.dodging)
-        enc.begin_turn(pc)
-        self.assertNotIn(pc.name, enc.dodging, "防御姿态只到下回合开始")
+        pc.hp_max = pc.hp_cur = 45
+        pc.apply_crit_injury(5)
+        pc.first_aid_fix(0)
+        enc = duel(pc=pc, grid=corridor(14), cells=12)
+        enc.rng = ScriptRng([6])
+        enc.move(pc, (3, 1))
+        self.assertEqual(pc.hp_cur, 45)
 
-    def test_reckless_gives_enemies_advantage(self):
-        barb = make_pc("蛮子", klass="fighter", race="human", level=2)
-        barb.feature_choices = {}   # 无关
-        # 用野蛮人测：需 2 级 reckless
-        from ctrcg.rules.character import Character as C
-        barb.klass = "barbarian"
-        enc, foe, _ = duel(barb, seed=7)
-        enc._advantage_for(barb, foe, ranged=False, reckless=True)
-        self.assertIn(barb.name, enc.reckless_until, "鲁莽攻击应留下破绽")
-        adv, notes = enc._advantage_for(foe, barb, ranged=False)
-        self.assertEqual(adv, 1, "敌人对鲁莽中的野蛮人应有优势")
-        self.assertIn("目标鲁莽", notes)
-        enc.begin_turn(barb)
-        self.assertNotIn(barb.name, enc.reckless_until)
+    def test_no_action_next_and_no_evade_are_visible_in_effects(self):
+        c = make_pc()
+        c.apply_crit_injury(10)                             # 脊柱损伤：下回合不能行动
+        self.assertTrue(c.has_crit_effect("no_action_next"))
+        leg = make_pc(stats={"ref": 8, "body": 6, "will": 6})
+        leg.apply_crit_injury(12)                           # 腿部切断：无法闪避
+        self.assertTrue(leg.has_crit_effect("no_evade"))
+        self.assertFalse(leg.can_evade_bullets())
 
-
-class TestHelplessAndDeath(unittest.TestCase):
-    def test_unconscious_melee_hit_auto_crits(self):
-        pc = make_pc()
-        enc, foe, _ = duel(pc, seed=8)
-        pc.take_damage(pc.hp_cur)   # 打到 0 → 昏迷
-        self.assertIn(COND_UNCONSCIOUS, pc.conditions)
-        foe.attacks = [{"weapon": "scimitar", "bonus": 99, "extra": "+0"}]
-        r = enc._monster_attack(foe, pc, "scimitar", random.Random(2))
-        self.assertTrue(r.get("crit"), "对昏迷目标的近战命中必须暴击")
-
-    def test_stable_does_not_roll_death_saves(self):
-        pc = make_pc()
-        pc.hp_cur = 0
-        pc.conditions.add(COND_UNCONSCIOUS)
-        pc.conditions.add(COND_STABLE)
-        self.assertEqual(pc.death_save_turn(random.Random(1)), {})
-
-    def test_damage_while_down_removes_stable(self):
-        pc = make_pc()
-        pc.hp_cur = 0
-        pc.conditions |= {COND_UNCONSCIOUS, COND_STABLE}
-        enc, foe, _ = duel(pc, seed=9)
-        enc._post_hit_effects(foe, pc, False, 3, {"damage": 3}, random.Random(1))
-        self.assertNotIn(COND_STABLE, pc.conditions, "受创后失去稳定")
-
-    def test_massive_damage_beats_relentless(self):
-        """大伤害即死优先于不屈坚韧（"not killed outright" 限制）。"""
-        pc = make_pc("半兽人", race="half_orc")
-        self.assertTrue(pc.mech().get("relentless_endurance"))
-        info = pc.take_damage(pc.hp_max + 25)
-        self.assertTrue(info.get("massive_death"), "溢出≥生命上限应立即死亡")
-        self.assertFalse(info.get("relentless"), "不屈坚韧救不了被当场杀死者")
-        self.assertIn("dead", pc.conditions)
-
-    def test_damage_at_zero_hp_instant_death(self):
-        """0HP 时再受 ≥ 生命上限的伤害 → 立即死亡（PHB Instant Death）。"""
-        pc = make_pc()
-        pc.hp_cur = 0
-        pc.conditions.add(COND_UNCONSCIOUS)
-        info = pc.take_damage(pc.hp_max + 2)
-        self.assertTrue(info.get("massive_death"))
-        self.assertIn("dead", pc.conditions)
+    def test_treatment_skills_match_the_table(self):
+        for roll, info in D.CRIT_INJURIES.items():
+            if "treatment" in info:
+                self.assertIn(info["treatment"]["skill"], D.SKILLS, roll)
+                self.assertTrue(D.DV_MIN <= info["treatment"]["dv"] <= D.DV_MAX,
+                                roll)
+            if info.get("first_aid_stabilize_dv") is not None:
+                self.assertTrue(D.DV_MIN <= info["first_aid_stabilize_dv"]
+                                <= D.DV_MAX, roll)
 
 
-class TestRestAndResources(unittest.TestCase):
-    def test_long_rest_recovers_half_hit_dice_min_one(self):
-        f1 = make_pc("新人", level=1)
-        f1.hit_dice_used = 1
-        f1.long_rest()
-        self.assertEqual(f1.hit_dice_used, 0, "1级长休至少恢复1颗生命骰")
-        f5 = make_pc("老兵", level=5)
-        f5.hit_dice_used = 5
-        f5.long_rest()
-        self.assertEqual(f5.hit_dice_used, 3, "5级长休恢复一半（向下取整）=2颗")
+# ================================================================ 掩体 / 擒抱
+class TestCoverAndGrapplePrecision(unittest.TestCase):
+    def test_cover_durability_is_exact(self):
+        pc = make_pc("甲", weapons=[PISTOL], skills={"handgun": 6})
+        foe = make_foe()
+        foe.hp_max = foe.hp_cur = 40
+        enc = duel(pc=pc, foe=foe, grid=corridor(4), cells=2)
+        enc.set_cover((2, 1), "厚混凝土")                   # 25
+        enc.rng = ScriptRng([9, 4, 4, 4])                   # 伤害 12
+        res = enc.attack(pc, foe, PISTOL)
+        self.assertEqual(res["cover"]["before"], 25)
+        self.assertEqual(res["cover"]["absorbed"], 12)
+        self.assertEqual(res["cover"]["left"], 13)
+        self.assertFalse(res["cover"]["destroyed"])
+        self.assertEqual(foe.hp_cur, 40)
 
-    def test_bard_font_of_inspiration_short_rest(self):
-        b5 = make_pc("诗人", klass="bard", level=5)
-        b5.bardic_inspiration_used = b5.bardic_total()
-        b5.short_rest(random.Random(1))
-        self.assertEqual(b5.bardic_inspiration_used, 0, "5级泉涌激励短休恢复")
-        b2 = make_pc("见习诗人", klass="bard", level=2)
-        b2.bardic_inspiration_used = b2.bardic_total()
-        b2.short_rest(random.Random(1))
-        self.assertEqual(b2.bardic_inspiration_used, b2.bardic_total(),
-                         "5级前激励仅长休恢复")
+    def test_cover_overflow_is_discarded_on_destruction(self):
+        pc = make_pc("甲", weapons=["shotgun"], skills={"shoulder_arms": 8})
+        foe = make_foe()
+        foe.hp_max = foe.hp_cur = 40
+        enc = duel(pc=pc, foe=foe, grid=corridor(4), cells=2)
+        enc.set_cover((2, 1), "薄木", hp=3)
+        enc.rng = ScriptRng([9, 6, 6, 6, 6, 6])             # 30 点，掩体只有 3
+        res = enc.attack(pc, foe, "shotgun")
+        self.assertTrue(res["cover"]["destroyed"])
+        self.assertEqual(res["damage"], 0)                  # 剩余伤害作废
+        self.assertEqual(foe.hp_cur, 40)
 
-    def test_bardic_die_tracks_granter_level(self):
-        enc = Encounter("t", rng=random.Random(1))
-        b1 = make_pc("新人诗人", klass="bard", level=1)
-        b5 = make_pc("老诗人", klass="bard", level=5)
-        ally = make_pc("战士")
-        enc.add(b1, "party"); enc.add(b5, "party"); enc.add(ally, "party")
-        enc.bardic_inspiration(b1, ally)
-        self.assertEqual(ally.bardic_die, 6)
-        ally.bardic_dice = 0
-        enc.bardic_inspiration(b5, ally)
-        self.assertEqual(ally.bardic_die, 8, "5级诗人的激励骰是d8")
+    def test_grapple_penalty_is_minus_two_for_both_sides(self):
+        pc = make_pc(skills={"brawling": 8})
+        foe = make_foe()
+        enc = duel(pc=pc, foe=foe, grid=corridor(1), cells=1)
+        enc.rng = ScriptRng([9, 2])
+        enc.grab(pc, foe)
+        self.assertEqual(D.GRAPPLE_PENALTY, -2)
+        self.assertEqual(pc.check_penalty(), -2)
+        self.assertEqual(foe.check_penalty(), -2)
 
-    def test_druid_natural_recovery_rounds_up(self):
-        d3 = make_pc("德鲁伊", klass="druid", level=3)
-        d3.slots_used = {1: 2, 2: 1}
-        d3.short_rest(random.Random(1))
-        # 等级3：预算 (3+1)//2 = 2 → 恰好恢复一个2环，1环预算不足保持已用
-        self.assertEqual(d3.slots_used.get(2, 0), 0, "2环槽位应被自然回复")
-        self.assertEqual(d3.slots_used.get(1, 0), 2, "预算不足以再恢复1环")
+    def test_choke_damage_equals_body_and_never_ablates(self):
+        pc = make_pc(skills={"brawling": 8}, stats={"body": 9})
+        foe = make_foe()
+        foe.hp_max = foe.hp_cur = 40
+        enc = duel(pc=pc, foe=foe, grid=corridor(1), cells=1)
+        pc.conditions.add(COND_CONTROLLED)
+        foe.conditions.add(COND_CONTROLLED)
+        out = enc.choke(pc, foe)
+        self.assertEqual(out["damage"], 9)
+        self.assertEqual(foe.armor_at("torso"), 7)
+        self.assertEqual(foe.hp_cur, 31)
 
+    def test_choke_ko_on_the_exact_round(self):
+        pc = make_pc(skills={"brawling": 8})
+        foe = make_foe()
+        foe.hp_max = foe.hp_cur = 99
+        enc = duel(pc=pc, foe=foe, grid=corridor(1), cells=1)
+        pc.conditions.add(COND_CONTROLLED)
+        foe.conditions.add(COND_CONTROLLED)
+        for i in range(1, D.CHOKE_KO_ROUNDS + 1):
+            enc.refresh_actions(pc)
+            out = enc.choke(pc, foe)
+            self.assertEqual(out["rounds"], i)
+        self.assertTrue(out["ko"])
+        self.assertIn(COND_UNCONSCIOUS, foe.conditions)
 
-class TestConditionsAndSaves(unittest.TestCase):
-    def test_paralyzed_auto_fails_str_dex_saves(self):
-        pc = make_pc()
-        pc.conditions.add(COND_PARALYZED)
-        for abil in ("str", "dex"):
-            r = pc.save(random.Random(1), abil, 5)
-            self.assertFalse(r["success"], f"麻痹者{abil}豁免自动失败")
-        r = pc.save(random.Random(1), "con", 5)
-        self.assertTrue("自动失败" not in r["detail"], "体质豁免照常掷骰")
-
-    def test_bless_not_added_to_ability_checks(self):
-        pc = make_pc()
-        pc.conditions.add("blessed")
-        pc.blessing_d4 = 4
-        r = pc.check(random.Random(3), "athletics", 10)
-        self.assertNotIn("祝福", r["detail"], "祝福术不加属性检定")
-
-    def test_bless_added_to_saves(self):
-        pc = make_pc()
-        pc.conditions.add("blessed")
-        pc.blessing_d4 = 4
-        results = {pc.save(random.Random(i), "wis", 25)["detail"] for i in range(30)}
-        self.assertTrue(any("祝福" in d for d in results), "祝福术加豁免")
-
-    def test_monster_save_proficiency(self):
-        duergar = Monster("duergar", random.Random(1))
-        self.assertEqual(duergar.save_bonus("con"), 4, "灰矮人体质豁免+4（含熟练）")
-        self.assertEqual(duergar.save_bonus("str"), 2, "未熟练豁免只有属性调整值")
-
-    def test_hold_person_affects_undead_humanoids(self):
-        """骷髅/丧尸类型为 humanoid，定身人类有效。"""
-        enc = Encounter("t", rng=random.Random(1))
-        sk = Monster("skeleton", random.Random(1))
-        self.assertTrue(sk.is_humanoid())
+    def test_throw_damage_equals_body_and_prones(self):
+        pc = make_pc(skills={"brawling": 8}, stats={"body": 6})
+        foe = make_foe()
+        foe.hp_max = foe.hp_cur = 40
+        enc = duel(pc=pc, foe=foe, grid=corridor(1), cells=1)
+        foe.conditions.add(COND_CONTROLLED)
+        out = enc.throw_target(pc, foe)
+        self.assertEqual(out["damage"], 6)
+        self.assertEqual(foe.hp_cur, 34)
+        self.assertEqual(foe.armor_at("torso"), 7)          # 不磨损
 
 
-class TestAttacksAndActions(unittest.TestCase):
-    def test_opportunity_attack_is_single_attack(self):
-        """借机攻击只打一次，不触发多重攻击。"""
-        pc = make_pc()
-        enc, foe, _ = duel(pc, seed=10)
-        enc.begin_turn(pc)
-        enc.begin_turn(foe)
-        foe.attacks = [{"weapon": "warhammer", "bonus": 99, "extra": "+0",
-                        "multiattack": 2}]
-        enc._register_engagement(foe, pc, ranged=False)
-        r = enc.opportunity_attack(pc, foe)
-        self.assertTrue(r["hit"])
-        detail = r["detail"]
-        self.assertEqual(detail.count("命中"), 1, "借机攻击应只有一次攻击")
+# ================================================================ 对峙
+class TestConfrontationPrecision(unittest.TestCase):
+    def test_loser_takes_the_facedown_timer(self):
+        a = make_pc("甲", stats={"cool": 8, "body": 5, "will": 5})
+        b = make_foe()
+        enc = duel(pc=a, foe=b, grid=corridor(1), cells=1)
+        enc.rng = ScriptRng([6, 5])                         # 6+8=14 vs 5+4=9
+        out = enc.confrontation(a, b)
+        self.assertEqual(out["winner"], "甲")
+        self.assertEqual(out["loser"], b.name)
+        self.assertEqual(b.timers["facedown"],
+                         {"against": "甲", "penalty": -2})
 
-    def test_follow_attack_chain(self):
-        """组合攻击（矛→噬咬）：一次动作两段攻击。"""
-        pc = make_pc()
-        enc, _, _ = duel(pc, seed=11)
-        gnoll = Monster("gnoll", random.Random(2))
-        gnoll.attacks = [{"weapon": "spear", "bonus": 99, "extra": "+0",
-                          "follow": "bite"},
-                         {"weapon": "bite", "bonus": 99, "dmg": "1d4", "extra": "+0"}]
-        enc.add(gnoll, "enemy")
-        r = enc._monster_attack(gnoll, pc, "spear", random.Random(3))
-        self.assertIn("噬咬", r["detail"], "follow 攻击应接续噬咬")
+    def test_a_tie_means_business(self):
+        a = make_pc("甲", stats={"cool": 5, "body": 5, "will": 5})
+        b = make_foe()
+        b.stats["cool"] = 5
+        b.reputation = 0
+        enc = duel(pc=a, foe=b, grid=corridor(1), cells=1)
+        enc.rng = ScriptRng([4, 4])
+        out = enc.confrontation(a, b)
+        self.assertTrue(out["tie"])
+        self.assertNotIn("facedown", b.timers)
 
-    def test_potion_feed_consumes_inventory(self):
-        pc = make_pc()
-        ally = make_pc("伤员")
-        ally.hp_cur = 0
-        ally.conditions.add(COND_UNCONSCIOUS)
-        enc, _, _ = duel(pc, seed=12)
-        enc.rng = random.Random(1)
-        pc.inventory["healing_potion"] = 2
-        r = enc.use_item(pc, "healing_potion", ally)
-        self.assertTrue(r["ok"])
-        self.assertEqual(pc.inventory["healing_potion"], 1, "喂药应消耗药水")
+    def test_reputation_is_added_to_the_roll(self):
+        a = make_pc("甲", stats={"cool": 5, "body": 5, "will": 5})
+        a.reputation = 6
+        b = make_foe()
+        enc = duel(pc=a, foe=b, grid=corridor(1), cells=1)
+        enc.rng = ScriptRng([4, 4])
+        out = enc.confrontation(a, b)
+        self.assertEqual(out["attack_total"], 4 + 5 + 6)
+        self.assertEqual(out["defense_total"], 4 + b.stat("cool"))
 
-    def test_grapple_blocks_and_escape(self):
-        pc = make_pc()
-        enc, foe, _ = duel(pc, seed=13)
-        enc.rng = ScriptRng([20, 1])   # 怪物必胜的擒抱对抗
-        enc.do_grapple(foe, pc)
-        self.assertIn(COND_GRAPPLED, pc.conditions)
-        r = enc.move_away(pc)
-        self.assertFalse(r["ok"], "被擒抱者不能移动")
-        # 必定成功的挣脱：对抗骰 [20] vs [1]
-        enc.rng = ScriptRng([20, 1, 20, 1])
-        r2 = enc.do_escape_grapple(pc)
-        self.assertTrue(r2["ok"])
-        self.assertNotIn(COND_GRAPPLED, pc.conditions)
 
-    def test_divine_smite_vs_fiend_and_crit(self):
-        p2 = make_pc("圣武", klass="paladin", level=2)
-        enc, foe, _ = duel(p2, seed=14)
-        imp = Monster("imp", random.Random(1))
-        r = enc.divine_smite(p2, imp, 1, random.Random(1), crit=True)
-        self.assertTrue(r["ok"])
-        self.assertIn("6d8", r["detail"], "1环对邪类暴击：(2+1)×2=6d8")
+# ================================================================ 距离
+class TestDistancePrecision(unittest.TestCase):
+    def test_grid_measure_is_cells_times_two(self):
+        enc = duel(grid=corridor(20), cells=7)
+        self.assertEqual(enc.measure(enc.allies[0], enc.enemies[0]),
+                         7 * METERS_PER_CELL)
+
+    def test_theater_measure_returns_the_mid_band(self):
+        enc = Encounter(entry={}, allies=[make_pc("甲")], enemies=[make_foe()])
+        self.assertEqual(enc.measure(enc.allies[0], enc.enemies[0]), 13)
+
+    def test_engagement_collapses_distance_to_one_cell(self):
+        enc = duel(grid=corridor(20), cells=7)
+        pc, foe = enc.allies[0], enc.enemies[0]
+        enc.engagement[pc.name].add(foe.name)
+        enc.engagement[foe.name].add(pc.name)
+        enc.positions.pop(foe.name)                         # 没坐标时按纠缠算
+        self.assertEqual(enc.measure(pc, foe), METERS_PER_CELL)
+
+    def test_move_value_is_body_of_movement_times_two(self):
+        c = make_pc(stats={"move": 6, "body": 5, "will": 5})
+        self.assertEqual(c.move_value(), 12)
+        c.hp_cur = 0
+        self.assertEqual(c.move_value(), max(1, 12 - 6))
+
+    def test_meters_per_cell_matches_the_spec(self):
+        self.assertEqual(METERS_PER_CELL, D.MOVE_FACTOR)
 
 
 if __name__ == "__main__":

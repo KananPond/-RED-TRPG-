@@ -2,6 +2,219 @@
 
 本项目的所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2.0.0] — 2026-10（发行 ·《赛博朋克 RED》移植）
+
+规则集整体替换：旧的 5e 规则层整体换成 **《赛博朋克 RED》（Cyberpunk RED）**，
+以 R. Talsorian Games 免费发布的**轻松模式（Easy Mode）**口径为准。舞台从旧奇幻设定
+迁到 **2045 年的夜之城**。规则层、模组体系、内置剧本、角色创建与界面词汇全部重写。
+
+### 新增（规则引擎 `ctrcg/rules/`）
+
+- **十项属性**（智力/反应/敏捷/技术/魅力/意志/幸运/机动/体格/共情）与
+  **41 项技能**（等级 0-10，其中「电子学与安防」「医疗救援」为 ×2 技能）；
+  检定加值 = 挂钩属性 + 技能等级。
+- **技能检定**：`1d10 + 属性 + 技能` 对照**难度值 DV**，**必须高于** DV
+  （平手判防守方胜）；**暴击成功**（掷出 10 追加一颗 d10 相加）与
+  **暴击失败**（掷出 1 追加一颗 d10 相减）；**幸运点**（幸运池每轮恢复满，
+  掷骰前声明，每点 +1）；辅助技能 +1、投入四倍时间 +1。
+- **难度值档位**：日常 13 / 困难 15 / 专业 17 / 英雄 21 / 不可思议 24。
+- **远程战斗**：按**射程带查难度值**（0-6/7-12/13-25/26-50/51-100/101-200/201-400/401-800 米，
+  手枪/霰弹枪/突击步枪各一列），超出射程即无法攻击；瞄准射击 -8（头部/躯干）；
+  反应 8+ 可用闪避对抗子弹（消耗反应）。
+- **白刃战**：对抗闪避并**无视防守方一半护甲**；**斗殴**一次动作打两下，
+  含**擒抱**（双方动作 -2）、**锁喉**（等于体格的无视护甲伤害，连续三轮昏迷）与
+  **投掷**（伤害 + 倒地）。
+- **护甲 SP 与磨损**：先减护甲再减 PW，挡下伤害即 **-1**；皮下护甲与护甲取高者；
+  护甲可花钱修复。
+- **致命伤**：伤害骰至少两颗且出现两个及以上 6 → 额外 5 点无视护甲伤害 +
+  **2d6 致命伤表**（12 条，效果与治疗难度全部机制化）。
+- **伤势等级**：轻伤 / 重伤（PW ≤ 上限一半，检定 -2）/ 濒死（PW < 1，检定 -4、
+  移动 -6，每回合生存检定）；**生存检定**低于门槛（10 + 累积 + 致命伤）即存活、
+  掷出 10 自动失败；**稳定**（DV 按伤势 10/13/15）、**急救固定**（当天消除一处致命伤）、
+  **治疗**（四小时永久消除，外科条目限医疗师，不能治疗自己）、
+  **休整**（每个完整休息日恢复等于体格的 PW）。
+- **掩体**（按材质给出耐久，2m × 2m 区域，耐久归零即毁）、**对峙**
+  （魅力 + 声望 + 1d10）、**义体与人性**（人性 = 共情 × 10，义体扣人性并压低共情，
+  归零即赛博精神病）、**欧元（eb）**经济与夜市场购买。
+- **成长改用改进点（IP）**：技能 = 20 × 新等级（×2 技能翻倍）、职业特殊能力 =
+  60 × 新等级；没有等级，也没有别的成长轨道，属性不可提升。
+- 战术网格单位改为 **1 格 = 2 米**，移动力 = 机动 × 2 米。
+
+### 变更
+
+- **模组 JSON 规范升至 v3**（`MODULE_SPEC.md` 版本 3.0，适用引擎 `ctrcg` ≥ 2.0）：
+  `pregens`（预设角色，取代 `companions`）、`custom_npcs`（取代 `custom_monsters`）、
+  场景 `checks`（`skill` + `dv`，取代 `skills` + `dc`）、场景 `ip`（改进点，
+  取代 `milestone` / `level_to`）、`default_companions`；
+  校验器改写为 RED 口径（41 项技能 key、DV 9-30、敌人 key、地图 1 格 = 2 米、
+  IP 总量软上限 4000）。
+- **角色创建改为选预设角色**：轻松模式不掷骰建卡，玩家从模组 `pregens` 里挑一位，
+  只给自己起街头名；终端与 Web 两条路径同步。
+- **玩家指令**：`/状态 /背包 /义体 /急救 /稳定 /休整 /购买 /存档 /退出`
+  （删除 `/短休 /长休 /喝药`）。
+- **队伍面板与 SSE 载荷**：PW/护甲 SP/伤势/幸运/人性/欧元/IP/致命伤/状态；
+  掷骰事件携带暴击、幸运点、护甲剩余与致命伤条目。
+- **Web 元数据 `/api/meta`**：改为 `stats`(10) / `skills`(41) / `roles`(10) /
+  `difficulty` / `pregens` / `weapons` / `armors`；删除 `races` / `classes` /
+  `backgrounds` / `abilities` / `dice_rule`。
+- **DM 工具面**：`skill_check(skill, dv, who, reason)` 改造，新增
+  `opposed_check` / `award_ip` / `confrontation` / `request_roll`，
+  删除 `save_roll` 与 `award_xp`；战斗动作面删除全部施法类与 5e 专属动作
+  （`cast/shove/help/dodge/hide/disengage/second_wind/...`），
+  新增 `grab/choke/throw/escape_grapple/reload/stand/stabilize/first_aid/
+  confrontation/flee`。
+- **存档**：`saves/game.json` 增加 `ruleset: "cyberpunk-red"`；旧存档（无此键或
+  值不符）读取时被拒绝并提示不兼容；`saves/` 下的 5e 旧档与日志清空。
+- **文档**：`README.md`、`MODULE_SPEC.md`、`HARNESS.md`（工具面一节）、
+  `docs/aipc-design.md`、`docs/companion-npc-agents.md`、
+  `docs/battlemap-design.md`（1 格 = 2 米、射程/AOE 口径）、
+  `docs/sillytavern-architecture.md` 全部改写为 RED 词汇。
+- **许可与归属**：移除旧的开放许可规则内容归属声明；改为声明规则文本改编自
+  R. Talsorian Games 免费发布的《Cyberpunk RED Easy Mode》与《Cyberpunk RED》
+  核心规则书，版权归 R. Talsorian Games 所有；Cyberpunk® 是 CD Projekt Red S.A.
+  的注册商标；本项目为非官方同人作品，仅供个人学习与桌边自用，不得用于商业发行。
+
+### 内置剧本（`modules/cpred-easy-mode`）
+
+- **《赛博朋克 RED：轻松模式》**（*Cyberpunk RED: Easy Mode*）——轻松模式手册本体，
+  内含手册的入门差事**「抢钱行动」**（原文 *WYSKAKUJ Z FORSY*）。
+- **三幕六场**：第一幕·来电（`south_night_city_loft` 安全屋的来电、
+  `prep_and_drive` 前往海伍德的准备）→ 第二幕·海伍德工业区（`heywood_meet` 假钞与
+  伏击、`lazlo_rescue` 营救被拷打的中间人）→ 第三幕·仓库（`warehouse_approach`
+  清除/渗透/外交/第四选项、`aftermath` 尾声与赏金，`next: null`）。
+- **两场遭遇**：`e_alley_ambush`（警察人数 = 玩家角色数 + 2，含 Leonard Houston；
+  逃走的人会在终章再次出现）与 `e_warehouse`（3 名腐败警察 + 第二回合撞窗冲进来的
+  摩托增援 `bike_ganger`）；两场都带战术地图。
+- **五名预设角色**：摇滚客 Forty（PW 40）、独行侠 Mover（45）、
+  技术师 Torch（35）、医疗师 Redtail（35）、媒体人 24/7（40）。
+  **人名一律用英文**（卡面上的街头名原名，如 `Lazlo` / `Leonard Houston`；
+  中文只用于叙述正文与类型标签）——模组、内置敌人表、兜底剧本、界面、
+  文档与测试统一口径，AI 模组生成提示词也加了这条硬性约束。
+  `default_companions = ["medtech_redtail", "solo_mover"]`。
+  前三张卡在中文版手册里数据完整（直接照录）；Redtail 与 24/7 两张卡的属性列不完整，
+  其十项属性按卡面可读约束反推（PW = 10 + 5 × ⌈(体格 + 意志力)/2⌉、
+  重伤阈值 = ⌈PW/2⌉、卡面死亡豁免项 = 体格、技能基础值 = 属性 + 等级）。
+- **改进点**：六场戏合计每人 200 IP（0 / 20 / 60 / 40 / 60 / 20）——
+  RED 的 IP 按人计，**不做队伍平摊**。
+- 角色创建同步改为「选模组 → 选预设角色 → 起名 → 选 AI 队友（默认
+  `default_companions`）」四步，不再掷骰建卡。
+
+### 移除
+
+- 全部 5e 模组目录与数据：`modules/blue-watch`、`starfall`、`saltmist`、
+  `mistgate`、`embergate`、`generated-saltmarsh-siren-song`，
+  以及 `blue-watch/story_last_watch.json`（剧情图引擎保留，不再内置剧情数据）。
+- 旧规则层的全部数据与 API：六项属性与 18 项技能、豁免、法术、升级与成长点表、
+  护甲等级、挑战等级、优势/劣势、黑暗视觉、旧货币，以及 `roll_scores`、
+  `award_xp`、`save_roll` 等工具与函数（含 `data.py` / `character.py` /
+  `dice.py` / `loader.py` 中的对应实现）。
+- 界面与文档中的旧奇幻设定表述（大陆、海岸、BG3 名单等）。
+
+## [1.8.0] — 2026-10-05
+
+剧本模式（互动剧）：自写分支剧本 · 分支选择 · 多结局（自 Godot 版移植回 demo）。
+
+### 新增
+- **剧本数据**：`modules/blue-watch/story_last_watch.json` —— 《蓝色守望 · 最后的值夜》，
+  基于原版模组世界观创作的前传互动剧（蓝色守望覆灭之夜）。35 节点、3 位可选主角
+  （各有技能面/生命值/专属选项）、6 种预设结局（真结局/光荣/灰色/堕落/沉默/死亡），
+  与正篇模组的地窖箱子严格呼应。剧本与 Godot 版共享同一份 JSON，两个引擎通用。
+- **剧情引擎**：`ctrcg/game/story.py` —— 节点图演绎（chapter/text/variants/
+  next/branch/choices/ending），选项支持显示条件（require flags/not_flags）、
+  d20+技能加值检定（骰子系统结算，前端播掷骰动画）、伤害与生命归零进入
+  death_ending；`validate_story` 图校验 + `reachable_endings` 全结局可达验证；
+  结局图鉴 `saves/story_endings.json` 持久化。
+- **Web 端**：`GET /api/stories`（剧本列表+图鉴解锁状态）、`POST /api/story/start`
+  （与跑团对局共用 UI 槽/SSE 流/`/api/answer` 应答协议，互斥开团）；
+  `AppState.snapshot()` 新增剧本模式分支（mode=story + 主角 HP）。
+- **前端**：开始页新增「❖ 剧本模式」入口与剧本页（模组卡片式剧本列表、
+  结局图鉴收集展示、主角选择）；对局界面完整复用（编年史/骰子演出/选择按钮）；
+  剧本结局卡（Flourish.storyEnding：结局名/等级/正文/图鉴进度）。
+- **终端**：`python main.py --story [--story-id ID]` —— 选剧本/选主角/演绎/结局卡。
+
+### 变更
+- 模式命名梳理：原离线「剧本模式」更名为「经典模式」（会话横幅/主页提示/帮助页），
+  与新的剧本模式（互动剧）区分；帮助页新增三种模式说明。
+
+## [1.7.1] — 2026-10-04
+
+默认剧本《蓝色守望之塔》按原版模组 PDF 全文校正：`Additional Ressources/English-TheTowerOfTheBlueWatch.pdf` 为模组本体。
+
+### 修正（modules/blue-watch/module.json 按原版 PDF 重写）
+- **译名对齐原版**：《蓝望塔》→《蓝色守望之塔》；影林→沙滕瓦尔德（Schattenwald）、
+  夏叶旅店→萨默布拉特客栈、蓝望军→蓝色守望；戈托/博托为**半身人兄弟**
+  （原误作人类）、新增矮人厨师罗加尔·艾森普法内；**灰胡子（格劳巴特）实为
+  戈托的骡子**（原误作老猎人 NPC）。
+- **结构还原原版**：第一幕修车检定（运动 DC10 / 巧手 DC5）→ 风铃伏击
+  （4 只+可增援 2 只；DC15 生存重燃提灯即驱散；每人 100 XP）→ 客栈
+  （抵达即升 2 级、盛宴、蓝色守望历史朗读、长休、赠礼：符文提灯/2 治疗药水/
+  每人半身人奶酪）→ **宿舍为非战斗遭遇**（感知排名分配：锈蚀装备/2d20 金币/
+  上锁活板门/瞥见『那造物』）→ **队长室开战**（1 队长+4 骷髅，可议价安息
+  DC15/DC12；战利品 71 金币+钥匙+日记+孔雀石+守望者之刃/之盾）→ 地窖 Boss
+  **那造物单独出战**（原多配的 2 骷髅移除；1238 金币+银铜币宝石全表+魔镜+
+  +2 长矛+2 高级治疗药水）。`expected_end_level` 3→2（原版为 1→2 级单回团）。
+- **属性块对齐原版**：风铃（心灵抗性/魅惑恐慌免疫/强光敏感）、蓝色守望者骷髅
+  （锈蚀长剑）、蓝色守望者队长（**盾击无伤害**，DC14 力量豁免否则倒地——
+  引擎新增 `dmg "0"` 无伤害攻击路径）、那造物（动作仅嗜噬面孔 2d10+4；
+  **撕裂之爪实为传奇动作**，熄光/熄灭所有光/撕裂之爪写入 encounter_note）。
+- **队长日记**（1387-05-12/05-16 两则）与蓝色守望历史逐字朗读进场景文本。
+
+### 引擎配套（最小改动）
+- `data.py`：`MONSTER_WEAPONS` 新增命名天生武器（利爪/锈蚀长剑/盾击/
+  嗜噬面孔/撕裂之爪）；`ITEMS` 新增 `watchers_shield`（拾取即装备 AC+2、
+  感知检定优势）、`magic_spear`（+2）、`halfling_cheese`（1d10 治疗）、
+  `goto_lantern`、`magic_mirror`；守望者之刃名称随原版校正。
+- `tools.py`：loot 发放支持 `shield: true` 拾取即装备（AC+2）。
+- `character.py`：`mech.check_adv` 技能检定优势键（守望者之盾的感知优势）。
+- `loader.py`：经验预算警告阈值随 `expected_end_level` 缩放（2 级团 300，
+  3 级及以上维持 900）——1→2 级单回团不再误报"预算偏少"。
+
+## [1.7.0] — 2026-10-03
+
+战术地图 + DM 独立 Agent：世界有了空间。设计文档：`docs/battlemap-design.md`。
+
+### 新增
+- **战术网格战斗**（`rules/combat.py` + `rules/data.py`，1 格 = 5 尺）：
+  `BattleGrid`（Chebyshev 距离 / Bresenham 视线 / 8 向 BFS / AOE 形状）；
+  `Encounter` 增 `positions/speed_left`——移动逐格扣移速（倒地爬行双倍、
+  起身耗半速、dash 动作翻倍、移速每轮重置），离开敌触及即借机攻击
+  （5e RAW：命中不打断移动）；远程按武器射程分档（短程/长程劣势/超长端
+  拒绝）＋视线阻挡；AOE 法术补 shape/shape_ft 元数据（锥/立方/球），
+  覆盖格内全体参战（友军照打，塑法/谨咒免伤照常）。怪物与脚本队友
+  启发式走位（逼近/后撤），全程确定性。
+- **地图数据层**（`game/state.py` + `campaign/loader.py`）：场景可选
+  `map` 声明（底图/网格/障碍/落点/初始棋子/合成图 crop）、遭遇可选
+  `spawns` 布点、模组级 `tokens` 图标库与 `dm` 卡块；校验器同步扩展
+  （资产路径安全/坐标界内/crop 越界/spawns 引用）。`GameState.map`
+  随存档持久化（旧档无此键 → None）。
+- **Web 地图面板**：第三列可折叠面板——底图（含合成图分幅裁剪）、
+  可开关网格线、棋子三级回退（模组 Token PNG → AvatarFX 过程头像 →
+  彩色圆点）、位置变化 CSS 平滑滑动；SSE 新事件 `map`（全量快照
+  latest-wins，历史重放零成本重建）；`/api/asset/<模组>/<路径>` 资产路由
+  （路径净化 + 扩展名白名单）；玩家回合**点图落子**（`ask_map_move`
+  阻塞应答 + `/api/command` 探索期移动意图转 DM）；终端 `/地图` 文字态势。
+- **DM 独立 Agent 升级**（aipc-design §P1 落地）：`make_dm_agent` 上
+  SillyTavern 组装线（模组顶层 `dm` 块：persona/voice/system_prompt/
+  depth_prompt/book 可扩展，蓝望塔注入哥特恐怖演出基调）；每轮世界书
+  "加餐"（engine WI + 模组书按本轮文本扫描）；`harness.loop.run` 新增
+  `post_build` 钩子，DM depth_prompt 与 @D 世界书条目真按深度注入；
+  DM 新工具 `map_update`（place/move/remove/label，探索/社交期空间权威，
+  战斗期归引擎）。
+- **参战者位置感知**：同伴/AIPC 战斗上下文注入 ASCII 战况图 + 剩余移速；
+  NPC 子智能体上下文附地图态势（只感知不改动）；玩家战斗菜单新增
+  "移动（战术走位）/冲刺"；`combat_action` 工具新增 `move/dash`。
+- **blue-watch 全场景配图**：原版地图 JPG（土路 20×15 / 旅店大堂与塔一层、
+  宿舍、地窖分幅裁剪）+ 9 枚棋子 Token PNG 入 `modules/blue-watch/assets/`；
+  三场遭遇配置 spawns；五场景障碍/落点/图标齐备。
+
+### 变更
+- **双模式铁律**：场景无 `map` 声明 ⇔ 战斗回退剧场模式，1.6.0 行为与
+  304 项既有测试逐字节保留；同模组可逐场景混合。
+- `enter_scene` 按场景声明换图布子；`launch_encounter` 布怪推初始阵型；
+  战斗中每回合把 `Encounter.positions` 写回地图棋子（击倒即时撤子），
+  战后怪物棋子撤下、队伍位置写回。
+- 网格模式下脚本 AI 的敌方目标改为"最近者优先"（剧场模式保持最弱者优先）。
+
 ## [1.6.0] — 2026-10-03
 
 SillyTavern 架构推广：非玩家 PC = 独立 Agent，NPC = DM 控制的子智能体；

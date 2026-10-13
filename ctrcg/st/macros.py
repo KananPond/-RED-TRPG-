@@ -10,6 +10,8 @@
 支持宏（最小集）：{{user}} {{char}} {{persona}} {{description}} {{personality}}
 {{scenario}} {{party}} {{scene}} {{flags}} {{time}} {{isotime}} {{isodate}}
 {{random::…}} {{pick::…}} {{roll::XdY+Z}} {{newline}} {{space}} {{noop}}。
+扩展宏：MacroContext.extra 里的同名键按名渲染（调用方可放 RED 口径的
+{{eb}}（欧元）/{{role}}（职业）/{{hp}}（PW）等），未提供时按未识别宏原样保留。
 
 宏展开是纯字符串运算（零 token）；{{roll}} 桥接引擎骰（rules.dice.roll，
 rng=对局 rng，同 seed 可复现）——宏骰只是叙事佐料，永不进入结算路径。
@@ -91,7 +93,7 @@ def _resolve(body: str, ctx: MacroContext, rng: random.Random,
     name = parts[0].strip().lower()
     args = [p.strip() for p in parts[1:]]
     if name not in _KNOWN and " " in parts[0]:
-        # 空格分参回退（{{roll 1d20}} / {{random a b}}，§6.1 允许空格或 ::）
+        # 空格分参回退（{{roll 1d10}} / {{random a b}}，§6.1 允许空格或 ::）
         head = parts[0].split()
         name, args = head[0].strip().lower(), [p.strip() for p in head[1:]] + args
     if name == "user":
@@ -140,6 +142,8 @@ def _resolve(body: str, ctx: MacroContext, rng: random.Random,
             return str(dice_roll(rng, expr).total), pick_seq   # 引擎桥：同 seed 确定
         except ValueError:
             return None, pick_seq                  # 非法表达式原样保留
+    if name in ctx.extra:                          # 扩展宏（{{eb}}/{{role}}/{{hp}}…）
+        return str(ctx.extra.get(name, "") or ""), pick_seq
     return None, pick_seq                          # 未识别：原样保留
 
 

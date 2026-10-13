@@ -196,8 +196,9 @@ def engine_worldinfo(state) -> WorldInfo:
 
     - 当前场景：constant 条目（id/地点/intro 摘要，order 高）；
     - 剧情旗标：每条旗标一个 selective 条目（键=旗标键与其值），内容=值；
-    - 模组 NPC：键=NPC 名，content=desc（module.npcs）；
-    - 场景 skills 检定项：键=技能中文名，content=DC 与成功描述摘要。
+    - 模组 NPC：键=NPC 名，content=desc（module.npcs，RED 形状 name/role/desc）；
+    - 场景 checks 检定项：键=技能中文名（D.SKILLS 的 RED 名），content=难度值 DV
+      与成功描述摘要（旧字段 skills/dc 仍兼容读取）。
 
     预算内 constant 场景条目最先入选（§5.2 丢弃顺序第 1 条）；
     其余按 order 降序尝试：旗标(500) → 场景检定(400) → NPC(300)。
@@ -211,15 +212,16 @@ def engine_worldinfo(state) -> WorldInfo:
             keys=[],
             content=f"【当前场景】{scene.get('id', '')}：{scene.get('location', '')}\n{intro}",
             constant=True, order=1000, comment=f"scene:{scene.get('id', '')}"))
-        for sk in scene.get("skills") or []:
+        for sk in (scene.get("checks") or scene.get("skills") or []):
             if not isinstance(sk, dict):
                 continue
             skill_key = str(sk.get("skill", ""))
             name = D.SKILLS.get(skill_key, {}).get("name", skill_key)
             success = str(sk.get("success", "")).replace("\n", " ")[:80]
+            dv = sk.get("dv", sk.get("dc", "?"))
             entries.append(WLEntry(
                 keys=[str(name)],
-                content=f"本场景可进行{name}检定（DC {sk.get('dc', '?')}）：{success}",
+                content=f"本场景可进行{name}检定（DV {dv}）：{success}",
                 order=400, comment=f"skill:{skill_key}"))
     for k, v in (getattr(state, "flags", {}) or {}).items():
         entries.append(WLEntry(
@@ -230,9 +232,9 @@ def engine_worldinfo(state) -> WorldInfo:
         n = n if isinstance(n, dict) else {}
         name = str(n.get("name", nid))
         desc = str(n.get("desc", ""))
-        race = str(n.get("race", "?"))
+        role = str(n.get("role", "") or n.get("affiliation", "") or "?")
         entries.append(WLEntry(
-            keys=[name], content=f"{name}（{race}）：{desc}",
+            keys=[name], content=f"{name}（{role}）：{desc}",
             order=300, comment=f"npc:{nid}"))
     return WorldInfo(entries=entries)
 

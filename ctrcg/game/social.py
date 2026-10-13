@@ -38,22 +38,24 @@ RECENT_LINES = 6
 SOCIAL_TASK = """【桌边】
 {recent}
 【此刻】{trigger}
-你是 {name}。此刻不是你的战斗回合，桌边在说话。
+你是 {name}（{role}）。此刻不是你的战斗回合，桌边在说话。
 - say：开口说话。text=台词；to=对谁说（同伴名/NPC名/DM，可空）；
   interrupt=true 表示你抢过话头或打断正在说话的人；stance 可选
   agree（赞同）/ object（反对）/ question（追问）。
 - hold：此刻不说话（真实的人大部分时候在听）。
-台词 1~2 句中文，符合你的人设与语气，可以带动作或情绪，但不要替玩家或 DM 说话。
+台词 1~2 句中文，符合你的人设与语气——2045 年夜之城的边缘行者，
+可以带动作或情绪，也可以提欧元、义体、中间人与街头规矩，但不要替玩家或 DM 说话。
 最多调用一次工具，说完即止；没有好台词就 hold，别硬找话说。"""
 
 DEBATE_TASK = """【辩论】焦点：{topic}
 【目前为止桌上的话】
 {transcript}
-你是 {name}，轮到你表态：
+你是 {name}（{role}），轮到你表态：
 - say：继续申辩、反驳或让步。text=台词；to=对谁；
   interrupt=true 表示抢过话头；stance=object 表示仍反对 / agree 表示被说服。
 - hold：不争了（说服了对方、被说服、或懒得再争）。
-台词 1~2 句中文，符合人设，就事论事，不要重复自己已说过的话。
+台词 1~2 句中文，符合人设，就事论事，不要重复自己已说过的话；
+夜之城的规矩是没人能轻易说服谁，但每一句都要有分量。
 最多调用一次工具。"""
 
 
@@ -148,7 +150,8 @@ class TableSocial:
         session = self.session.pc_session(pc.name)
         bucket: list[dict] = []
         reg = self._social_registry(pc, bucket)
-        task = SOCIAL_TASK.format(recent=recent, trigger=trigger, name=pc.name)
+        task = SOCIAL_TASK.format(recent=recent, trigger=trigger, name=pc.name,
+                                  role=pc.role_name)
         try:
             result = self.loop.run(agent, session, task,
                                    context_messages=self._wi_context(pc),
@@ -226,7 +229,8 @@ class TableSocial:
         session = self.session.pc_session(pc.name)
         bucket: list[dict] = []
         reg = self._social_registry(pc, bucket)
-        task = DEBATE_TASK.format(topic=topic, transcript=trans, name=pc.name)
+        task = DEBATE_TASK.format(topic=topic, transcript=trans, name=pc.name,
+                                  role=pc.role_name)
         try:
             result = self.loop.run(agent, session, task,
                                    context_messages=self._wi_context(pc),
@@ -280,13 +284,24 @@ class TableSocial:
         """同伴独立 Agent 的世界情报上下文（SillyTavern World Info 通路）。
 
         引擎世界书（当前场景/旗标/在桌面上被点名的 NPC）与该同伴卡上的
-        角色书（模组 companions[].book，card_from_companion）合并，按桌面
+        角色书（模组 pregens[].book，card_from_companion）合并，按桌面
         窗口扫描激活；无激活内容时不注入（省 token）。世界书只影响叙事
         上下文，永不进入结算路径。"""
         s = self.session
         wi = engine_worldinfo(s.state)
-        comp = next((c for c in s.module.companions
-                     if isinstance(c, dict) and c.get("name") == pc.name), None)
+        # PORT_SPEC §3：模组队友住在 pregens 里（旧的 companions 数组已废弃）
+        comp = None
+        pregens = getattr(s.module, "pregens", {}) or {}
+        for key, pg in pregens.items():
+            if not isinstance(pg, dict):
+                continue
+            if pg.get("name") == pc.name or pg.get("handle") == pc.name \
+                    or str(key) == getattr(pc, "source_key", ""):
+                comp = pg
+                break
+        if comp is None:
+            comp = next((c for c in getattr(s.module, "companions", []) or []
+                         if isinstance(c, dict) and c.get("name") == pc.name), None)
         if comp:
             book = card_from_companion(comp).book
             if book is not None:

@@ -1,6 +1,6 @@
 # 非玩家 PC（独立 Agent）与 NPC（DM 控制的子智能体）
 
-版本：1.0（对应 ctrcg 1.6.0）　上游参照：`.reference/SillyTavern`（浅克隆源码，gitignored）
+版本：1.1（对应 ctrcg 2.0 ·《赛博朋克 RED》口径）　上游参照：`_local/reference/SillyTavern`（浅克隆源码，gitignored）
 
 本设计把〔AI PC 设计（docs/aipc-design.md）〕建成的 SillyTavern 式提示词栈
 （`ctrcg/st/`：角色卡 / persona / 宏 / 世界书 / 组装 / 深度注入）推广到
@@ -12,7 +12,7 @@
 | **同伴（非玩家 PC）** | **独立 Agent**（`make_pc_agent` + 社交层） | 各自独立决策，编排器只管时机 | `pc:<同伴名>`（战斗/桌边共用） |
 | **NPC** | **DM 控制的子智能体**（`NPCDirector`） | DM 用 `npc_dialogue` 工具按需拉起，随时可用 `speak_as_npc` 覆盖 | `npc:<id>`（跨回合持久） |
 
-ST 源码对照（克隆于 `.reference/SillyTavern`，仅作机制参照，不引入代码依赖）：
+ST 源码对照（克隆于 `_local/reference/SillyTavern`，仅作机制参照，不引入代码依赖）：
 角色卡字段 → `src/character-card-parser.js`、`public/char-data.js`；
 群聊多角色 → `public/scripts/group-chats.js`；用户 persona →
 `public/scripts/personas.js`；世界书 → `public/scripts/world-info.js`。
@@ -89,11 +89,11 @@ DM Agent ── npc_dialogue(npc, instruction) ──▶ NPCDirector.dialogue()
 
 ### 2.2 模组 NPC 字段扩展
 
-`npcs{}` 条目在必有字段 `name/race/desc` 之外，接受可选 ST 扩展：
+`npcs{}` 条目在必有字段 `name/desc`（`role` 建议写）之外，接受可选 ST 扩展：
 `persona`（性格，进 description）、`voice`（语气）、`goals`、`secret`、
 `mes_example`、`first_mes`、`depth_prompt`、`talkativeness`、`book`。
-最简形状（name/race/desc）行为不变；`card_from_npc` 兜底
-description = persona 或"种族。desc"。
+最简形状（name/desc）行为不变；`card_from_npc` 兜底
+description = persona 或"职业。desc"。
 
 ### 2.3 降级矩阵（绝不阻塞对局）
 
@@ -112,29 +112,31 @@ description = persona 或"种族。desc"。
   （重要对话交给子智能体、过场用 speak_as_npc）。
 - 用量计量：挂在 `npc:<id>` agent 名下（模型取 dm_agent.model）。
 
-## 3. 默认剧本《蓝望塔》（The Tower of the Blue Watch）
+## 3. 内置模组、兜底数据与默认 id
 
-- `modules/blue-watch/module.json`：**改编自 InternalRockStudio 的原版冒险
-  《The Blue Watch Tower》**（素材位于 `Additional Ressources/`：指挥官信件、
-  怪物数据 JSON、四张地图、物品卡）。三幕五场景（影林土路 → 夏叶旅店 →
-  蓝望塔一层/宿舍/地窖）、3 遭遇 + **4 种原版自定义怪物**（风铃妖 CR1/8 /
-  蓝望骷髅卫兵 CR1/4 / 蓝望队长 CR1/2 / 『那造物』Die Kreatur CR4，
-  CR-XP 与 SRD 一致，校验零警告）；蓝望之刃（+1 魔法长剑）按物品卡加入
-  引擎物品表（`watchers_blade`）。离线 demo 全流程可通关
-  （`python main.py --module blue-watch --demo --seed 7`）。
-- NPC 子智能体的示范字段放在指挥官拉库斯身上：`persona/voice` 取自信件
-  文风，`goals/secret` 源自信件的关键事实（他压下了"箱子是活的"的报告）。
-  模组同伴缺省 → 引擎默认三人组；ST 扩展字段（book/mes_example）的机制
-  示范见 `tests/test_npc_agent.py` 的模组夹具。
-- 默认 id 切换：`main.DEFAULT_MODULE_ID = "blue-watch"`（CLI）与 web `AppState.start`
-  默认一致；`blue-watch` 加入 `BUILTIN_IDS`（不可卸载/删除，embergate 一并补齐）；
-  默认剧本目录缺失时回退代码内置的 starfall（`default_fallback_module`），
-  游戏永不硬失败。旧存档的 module_id 兜底仍指向 starfall（读档兼容）。
+- `modules/cpred-easy-mode/module.json`：**唯一内置剧本《赛博朋克 RED：轻松模式》**
+  （*Cyberpunk RED: Easy Mode*）——轻松模式手册本体，内含入门差事**「抢钱行动」**
+  （原文 *WYSKAKUJ Z FORSY*）：三幕六场（来电 → 海伍德工业区 → 仓库），
+  两场遭遇（`e_alley_ambush` / `e_warehouse`）、两张战术地图、五张预设角色卡
+  （摇滚客 Forty / 独行侠 Mover / 技术师 Torch / 医疗师 Redtail / 媒体人 24/7）
+  与合计 200 IP 的成长节点。
+- **兜底剧本**（`ctrcg/campaign/module_data.py`）：两幕的"卡布奇夜市 → 海伍德工业区
+  废弃仓库"，只在 `modules/` 目录缺失、模组文件损坏或存档引用的模组 id 无法解析时
+  启用（`cordis.default_fallback_module()`），保证游戏永不硬失败。
+  导出名与旧版保持一致（`MODULE/COMPANIONS/NPCS/ENCOUNTERS/SCENES/EPILOGUE/
+  ACT_TITLES/BUILTIN`），内容已是 RED 口径（十项属性 / 41 项技能 / DV / PW / SP /
+  IP / 欧元 eb）。
+- 默认 id：`main.DEFAULT_MODULE_ID = "cpred-easy-mode"`（CLI）与 web `AppState.start`
+  默认一致；`cpred-easy-mode` 属于 `BUILTIN_IDS`（不可卸载/删除）。
+- NPC 子智能体的示范字段：内置模组的中间人 **Lazlo**带 `persona`/`voice`/`secret`
+  （secret = 行程是谁卖的）；兜底剧本的中间人 **Marlo**带 `persona`/`voice`。
+  模组未定义预设角色时回退到引擎默认两名预设角色（独行侠 Vera / 医疗师 Kay）；
+  ST 扩展字段（`book`/`mes_example`）的机制示范见 `tests/test_npc_agent.py` 的模组夹具。
 
 ## 4. 测试
 
-`tests/test_npc_agent.py`（17 用例，全离线 ScriptedAdapter）：
+`tests/test_npc_agent.py`（全离线 ScriptedAdapter）：
 NPC 子代理的工具注册/委派渲染/持久记忆/未知 NPC/LLM 降级/剧本模式不可用/
 ST 字段进系统提示/台词回流 DM 上下文；同伴卡的 mes_example+宏渲染/book
-往返/最简兜底/社交 WI 上下文注入与激活；蓝望塔校验零警告、内置保护、
-默认 id 与缺失回退。全仓 304 用例通过。
+往返/最简兜底/社交 WI 上下文注入与激活；内置模组《赛博朋克 RED：轻松模式》
+校验零警告、内置保护（不可删除）、默认 id 与缺失回退。

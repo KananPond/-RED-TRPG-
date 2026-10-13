@@ -1,13 +1,20 @@
-/* 星坠矿脉的阴影 —— 前端逻辑（无框架依赖） */
+/* 赛博朋克 RED —— 前端逻辑（无框架依赖） */
 "use strict";
 
 const $ = (s) => document.querySelector(s);
 const S = { lastId: 0, es: null, meta: null, started: false, ask: null, live: false,
-            module: "starfall", provider: "deepseek",
-            levels: null, gold: null, aipc: null,
-            aipcGame: false, over: false };
-const ABILITY_CN = { str: "力量", dex: "敏捷", con: "体质", int: "智力", wis: "感知", cha: "魅力" };
+            module: "cpred-easy-mode", provider: "deepseek",
+            ip: null, eurobucks: null, aipc: null,
+            aipcGame: false, over: false,
+            map: null, mapKey: null, mapMove: false, mapFold: false };
+/* 十项属性（赛博朋克 RED） */
+const STAT_CN = { int: "智力", ref: "反应", dex: "敏捷", tech: "技术", cool: "魅力",
+                  will: "意志力", luck: "幸运", move: "机动", body: "体格", emp: "共情" };
+/* 伤势等级 → 中文（引擎下发 key） */
+const WOUND_CN = { healthy: "完好", light: "轻伤", serious: "重伤", mortal: "濒死" };
 const SOURCE_CN = { builtin: "内置", generated: "AI 生成", imported: "导入" };
+/* 伤害性状态（队伍面板标红） */
+const BAD_CONDS = "被控制恐惧昏迷死亡倒地中毒";
 
 async function jfetch(url, opts) {
   const r = await fetch(url, opts);
@@ -22,10 +29,12 @@ function showView(name) {
   if (name === "new") {
     ensureMeta().then(() => {
       renderModuleList();
-      if (!S._formBuilt) { S._formBuilt = true; buildCreateForm(); }
+      if (!S._formBuilt) { S._formBuilt = true; rebuildCreateForm(); }
     });
   }
+  if (name === "story") renderStoryList();
   if (name === "saves") renderSaves();
+  if (name === "help") renderRulebook();
   if (name === "settings") { renderSettings(); renderUsage(); renderSoundSettings(); }
 }
 document.querySelectorAll(".home-btn").forEach(b =>
@@ -46,19 +55,24 @@ async function renderModuleList() {
   if (!meta) return;
   const box = $("#module-list");
   box.innerHTML = "";
+  const usable = (meta.modules || []).filter(m => !m.broken);
+  if (!usable.some(m => m.id === S.module) && usable.length) S.module = usable[0].id;
   meta.modules.forEach(m => {
     const card = document.createElement("div");
     card.className = "module-card" + (m.id === S.module ? " on" : "") + (m.broken ? " broken" : "");
+    const pregens = m.pregens || [];
     card.innerHTML = `
       <div class="mc-head"><b>${m.broken ? m.id : m.title}</b>
         <span class="src src-${m.source || "imported"}">${SOURCE_CN[m.source] || "导入"}</span></div>
       <small>${m.broken ? "加载失败：" + (m.errors || []).join("；")
-        : `${m.acts} 幕 · ${m.scenes} 场景 · ${m.encounters} 场遭遇`}</small>`;
+        : `${m.acts} 幕 · ${m.scenes} 场景 · ${m.encounters} 场遭遇 · ${pregens.length} 个预设角色`}</small>`;
     if (!m.broken) {
       card.addEventListener("click", () => {
+        const changed = S.module !== m.id;
         S.module = m.id;
         [...box.children].forEach(c => c.classList.remove("on"));
         card.classList.add("on");
+        if (changed && S._formBuilt) rebuildCreateForm();
       });
     }
     box.appendChild(card);
@@ -66,12 +80,99 @@ async function renderModuleList() {
   // 已存 llm 配置提示
   $("#home-status").textContent = meta.llm.llm_active
     ? `已接入 ${providerName(meta, meta.llm.provider)} · ${meta.llm.model}`
-    : "未接入 LLM —— 将以剧本模式运行（设置中可配置）";
+    : "未接入 LLM —— 经典模式离线可玩；剧本模式（互动剧）无需 LLM";
 }
 
 function providerName(meta, key) {
   const p = (meta.providers || []).find(p => p.key === key);
   return p ? p.name : key;
+}
+
+/* ═══════════ 帮助页的规则速览（数据全部来自 /api/meta 的 RED 数据面） ═══════════ */
+async function renderRulebook() {
+  const meta = await ensureMeta();
+  const box = $("#rulebook");
+  if (!meta || !box || box.dataset.done) return;
+  box.dataset.done = "1";
+  const dv = (meta.difficulty || []).map(d =>
+    `<span><b>${d.dv}</b> ${d.name}</span>`).join("");
+  const roles = (meta.roles || []).map(r =>
+    `<p class="cy-line"><b>${r.name}</b>（${r.nickname || r.en}）· 特殊能力「${r.ability}」—— ${r.desc}</p>`)
+    .join("");
+  const weapons = (meta.weapons || []).map(w =>
+    `${w.name}（${w.dmg}${w.rof > 1 ? ` · LA${w.rof}` : ""}）`).join("、");
+  const armors = (meta.armors || []).map(a => `${a.name} SP${a.sp}`).join("、");
+  const cyber = (meta.cyberware || []).map(c =>
+    `${c.name}（人性 −${c.humanity}，${c.cost} eb）`).join("、");
+  const gear = (meta.gear || []).map(g => `${g.name}（${g.cost} eb）`).join("、");
+  const wounds = (meta.wounds || []).map(w =>
+    `${w.name}${w.check_penalty ? `（检定 ${w.check_penalty}）` : ""}`).join(" / ");
+  box.innerHTML = `
+    <h3>难度值 DV（PT）</h3>
+    <p class="rule-dv">${dv}</p>
+    <h3>十个职业</h3>
+    ${roles}
+    <h3>项目表</h3>
+    <p class="hint">伤害 / 攻击次数：${weapons}</p>
+    <p class="hint">护甲 SP：${armors}</p>
+    <p class="hint">义体（扣人性）：${cyber}</p>
+    <p class="hint">常见装备：${gear}</p>
+    <p class="hint">伤势等级：${wounds}；重伤阈值 = PW 上限 ÷ 2（向上取整）。</p>`;
+}
+
+/* ═══════════ 剧本模式（互动剧）：剧本列表 / 选角 / 开始 ═══════════ */
+async function renderStoryList() {
+  const box = $("#story-list");
+  box.innerHTML = '<p class="hint">正在读取…</p>';
+  const r = await jfetch("/api/stories");
+  if (!r.ok) { box.innerHTML = '<p class="hint">剧本读取失败。</p>'; return; }
+  box.innerHTML = "";
+  if ((r.body.errors || []).length) {
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.style.color = "#8c3030";
+    p.textContent = "部分剧本文件损坏已跳过：" + r.body.errors.join("；");
+    box.appendChild(p);
+  }
+  if (!(r.body.stories || []).length) {
+    box.innerHTML = '<p class="hint">还没有剧本（modules/&lt;模组&gt;/story_*.json）。</p>';
+    return;
+  }
+  r.body.stories.forEach(story => {
+    const card = document.createElement("div");
+    card.className = "module-card story-card";
+    const unlocked = story.unlocked || [];
+    const chips = (story.endings || []).map(e => {
+      const hit = unlocked.includes(e.id);
+      return `<span class="story-end ${hit ? "got" : ""}">${hit ? e.title : "？？？"}</span>`;
+    }).join("");
+    card.innerHTML = `
+      <div class="mc-head"><b>《${story.title}》</b>
+        <small>${story.en_title || ""}</small></div>
+      <p class="story-syn">${story.synopsis}</p>
+      <p class="story-gallery">结局图鉴 ${unlocked.length} / ${story.endings_total}　${chips}</p>
+      <p class="side-label">选择你的主角</p>
+      <div class="hero-row"></div>`;
+    const row = card.querySelector(".hero-row");
+    (story.heroes || []).forEach(h => {
+      const b = document.createElement("button");
+      b.className = "radio-card hero-card";
+      b.innerHTML = `<b>${h.name}</b><small>${h.title} · PW ${h.hp}</small>
+        <span class="hint">${h.desc}</span>`;
+      b.addEventListener("click", () => startStory(story.story_id, h.index));
+      row.appendChild(b);
+    });
+    box.appendChild(card);
+  });
+}
+
+async function startStory(storyId, heroIndex) {
+  const r = await jfetch("/api/story/start", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ story_id: storyId, hero_index: heroIndex }),
+  });
+  if (!r.ok) { alert(r.body.error || "剧本开局失败"); return; }
+  enterGame();
 }
 
 $("#btn-gen-module").addEventListener("click", () => {
@@ -361,54 +462,98 @@ function addSpeech(kind, ev) {
   d.append(medal, box);
 }
 function diceFaces(ev) {
-  /* 骰面徽章：优势/劣势标出保留骰与弃骰；幸运重骰时最后一颗生效 */
+  /* 骰面徽章：《赛博朋克 RED》只有一颗 d10；暴击成功/失败各追加一颗（已计入总和） */
   const rolls = Array.isArray(ev.rolls) ? ev.rolls : [];
+  const first = (typeof ev.d10 === "number") ? ev.d10 : null;
+  const extra = rolls.length > 1;
   return rolls.map((v, i) => {
-    const kept = (ev.adv === 1 || ev.adv === -1) && rolls.length === 2
-      ? v === ev.d20
-      : i === rolls.length - 1;
-    return `<b class="face${kept ? "" : " drop"}">${v}</b>`;
+    if (extra && i > 0) {
+      const kind = ev.crit_success ? "crit-add" : ev.crit_failure ? "fumble-add" : "drop";
+      return `<b class="face ${kind}">${v}</b>`;
+    }
+    const cls = ev.crit_success ? "crit" : ev.crit_failure ? "fumble" : "";
+    const val = (first !== null && i === 0) ? first : v;
+    return `<b class="face ${cls}">${val}</b>`;
   }).join("");
+}
+
+/* 引擎有时下发 key（武器/技能），有时下发中文标签 —— 统一成中文显示 */
+function labelCn(label) {
+  const s = String(label || "");
+  if (!s || !S.meta) return s;
+  const w = (S.meta.weapons || []).find(x => x.key === s);
+  if (w) return w.name;
+  const sk = (S.meta.skills || []).find(x => x.key === s);
+  if (sk) return sk.name;
+  return s;
+}
+
+function modText(v) {  if (typeof v === "number") return (v >= 0 ? "+" : "−") + Math.abs(v);
+  const s = String(v == null ? "" : v);
+  if (s === "" || s === "—") return "—";
+  return /^[+−-]/.test(s) ? s.replace(/^-/, "−") : "+" + s;
+}
+
+function modValue(v) {
+  if (typeof v === "number") return v;
+  const n = Number(String(v == null ? "" : v).replace(/[^0-9.+-−]/g, "").replace("−", "-"));
+  return Number.isFinite(n) ? n : 0;
 }
 
 function addDice(ev) {
   const d = addItem("dice " + (ev.success ? "ok" : "fail"));
   const mods = Array.isArray(ev.mods) ? ev.mods : [];
   const verdict = `<span class="d-verdict">${ev.success ? "成功" : "失败"}</span>`;
+  const face = (typeof ev.d10 === "number") ? ev.d10 : "?";
+  const cnLabel = labelCn(ev.label);
   const head = `
-    <svg class="d20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1 2.5 6.7 12 23l9.5-16.3L12 1z"/></svg>
+    <svg class="d10" viewBox="0 0 24 24"><path d="M12 1 3 6.2v11.6L12 23l9-5.2V6.2L12 1z"/></svg>
     <span class="d-who">${ev.who}</span>`;
   if (!mods.length) {          // 引擎旧格式/自动失败：退回单行简报
     d.innerHTML = `<div class="dc-top">${head}
-      <span class="d-label">${ev.label || "检定"} DC${ev.dc}</span>
+      <span class="d-label">${cnLabel || "检定"}${ev.dv != null ? " DV" + ev.dv : ""}</span>
       <span class="d-detail">${ev.detail}</span>${verdict}</div>`;
     if (ev.context) d.title = ev.context;
     return;
   }
-  const abil = mods[0][0] || "";
+  const first = mods[0][0] || "";
   const title = ev.kind === "save"
-    ? `${ev.label || abil + "豁免"}（${abil}）`
-    : `${ev.label || "检定"}检定（${abil}）`;
-  const advBadge = ev.adv === 1 ? '<span class="d-adv">优势</span>'
-    : ev.adv === -1 ? '<span class="d-adv">劣势</span>' : "";
-  const modSum = mods.reduce((s, m) => s + (Number(m[1]) || 0), 0);
+    ? `${cnLabel || "生存检定"}（${mods[0][0] || ""}）`
+    : `${cnLabel || "检定"}检定（${first}）`;
+  const badges = [
+    ev.crit_success ? '<span class="d-adv crit">暴击成功</span>' : "",
+    ev.crit_failure ? '<span class="d-adv fumble">暴击失败</span>' : "",
+    ev.luck_spent ? `<span class="d-adv">幸运 ${ev.luck_spent}</span>` : "",
+  ].join("");
+  const modSum = mods.reduce((s, m) => s + modValue(m[1]), 0);
   const modsHtml = mods.map(m =>
-    `<b class="mod">${m[0]} ${m[1] >= 0 ? "+" : "−"}${Math.abs(m[1])}</b>`).join("");
+    `<b class="mod">${m[0]} ${modText(m[1])}</b>`).join("");
   const sumText = modSum
-    ? `${ev.d20} ${modSum > 0 ? "+" : "−"} ${Math.abs(modSum)} = <b>${ev.total}</b>`
+    ? `${face} ${modSum > 0 ? "+" : "−"} ${Math.abs(modSum)} = <b>${ev.total}</b>`
     : `<b>${ev.total}</b>`;
   d.innerHTML = `
     <div class="dc-top">${head}
-      <span class="d-label">${title}</span>${advBadge}${verdict}</div>
+      <span class="d-label">${title}</span>${badges}${verdict}</div>
     <div class="dc-break">
       <span class="dc-part"><label>骰面</label>${diceFaces(ev) || "?"}</span>
       <span class="dc-part"><label>调整</label>${modsHtml || "<b class='mod'>—</b>"}</span>
-      <span class="dc-part"><label>合计</label><span class="dc-sum">${sumText}</span><i>vs DC ${ev.dc}</i></span>
+      <span class="dc-part"><label>合计</label><span class="dc-sum">${sumText}</span><i>vs DV ${ev.dv}</i></span>
     </div>`;
   d.title = [ev.context, "引擎掷骰：" + ev.detail].filter(Boolean).join("　·　");
 }
 function addSystem(ev) {
   addItem("system-note").textContent = ev.text;
+}
+function addCrit(ev) {
+  const d = addItem("crit-note");
+  const head = document.createElement("p");
+  head.className = "cn-head";
+  head.textContent = `致命伤 · ${ev.who || ""}${ev.roll ? `（2d6 = ${ev.roll}）` : ""}｜${ev.name || ""}`;
+  d.appendChild(head);
+  const body = document.createElement("p");
+  body.className = "cn-text";
+  body.textContent = ev.text || "";
+  d.appendChild(body);
 }
 function addBoard(ev) {
   const d = addItem("board");
@@ -421,7 +566,8 @@ function addBoard(ev) {
       d.appendChild(r);
       continue;
     }
-    const m = line.match(/^([◆◇])\s(.+?): HP (\d+)\/(\d+), AC (\d+)(?:\s\[(.+?)\])?(?:（(.+?)）)?$/);
+    // 引擎 board() 行：`◆ 名字: PW n/n, SP n [重伤|濒死|已死亡] [致命伤×n]`
+    const m = line.match(/^([◆・◇])\s(.+?): PW (\d+)\/(\d+), SP (\d+)(?:\s(.*))?$/);
     if (!m) {
       const l = document.createElement("div");
       l.textContent = line;
@@ -429,7 +575,7 @@ function addBoard(ev) {
       d.appendChild(l);
       continue;
     }
-    const [, mark, name, cur, max, ac, conds, state] = m;
+    const [, mark, name, cur, max, sp, rest] = m;
     const row = document.createElement("div");
     row.className = "board-unit";
     const pct = Math.max(0, Math.min(100, (cur / max) * 100));
@@ -438,10 +584,126 @@ function addBoard(ev) {
       <span class="bu-mark ${mark === "◆" ? "ally" : "foe"}">${mark}</span>
       <span class="bu-name">${name}</span>
       <span class="hpbar"><i style="width:${pct}%; background:${color}"></i></span>
-      <span class="bu-ac">AC ${ac} · ${cur}/${max}${conds ? " · " + conds : ""}${state ? " · " + state : ""}</span>`;
+      <span class="bu-sp">SP ${sp} · PW ${cur}/${max}${rest ? " · " + rest : ""}</span>`;
     d.appendChild(row);
   }
 }
+
+/* ═══════════ 战术地图（docs/battlemap-design.md §4/§5） ═══════════ */
+function renderMap(ev) {
+  const panel = $("#map-panel");
+  if (!ev || !ev.grid) {                   // 本局无地图 / 新流等待首帧
+    S.map = null; S.mapKey = null; S.mapMove = false;
+    panel.classList.add("hidden");
+    return;
+  }
+  S.map = ev;
+  const cw = ev.grid[0], chh = ev.grid[1];
+  const key = [ev.label, ev.image, cw, chh, S.moduleId || "",
+               JSON.stringify(ev.crop || null)].join("|");
+  const rebuild = key !== S.mapKey;
+  S.mapKey = key;
+  panel.classList.remove("hidden");
+  panel.classList.toggle("folded", S.mapFold);
+  $("#map-label").textContent = "战术地图 · " + (ev.label || "");
+  $("#map-viewport").style.aspectRatio = cw + " / " + chh;
+  const bg = $("#map-bg");
+  if (rebuild) {
+    if (ev.image && S.moduleId) {
+      bg.src = assetUrl(ev.image);
+      bg.classList.remove("hidden");
+      const ig = ev.image_grid || ev.grid;
+      const crop = ev.crop || [0, 0, ig[0], ig[1]];
+      // 裁剪显示：图比视口大 image_grid/crop 倍，负偏移露出目标分幅
+      bg.style.width = (ig[0] / crop[2] * 100) + "%";
+      bg.style.height = (ig[1] / crop[3] * 100) + "%";
+      bg.style.left = (-crop[0] / crop[2] * 100) + "%";
+      bg.style.top = (-crop[1] / crop[3] * 100) + "%";
+    } else {
+      bg.removeAttribute("src");
+      bg.classList.add("hidden");
+    }
+    $("#map-gridlines").style.backgroundImage =
+      `repeating-linear-gradient(to right, transparent 0, transparent calc(100%/${cw} - 1px), rgba(16,12,6,.3) calc(100%/${cw} - 1px), rgba(16,12,6,.3) calc(100%/${cw})),` +
+      `repeating-linear-gradient(to bottom, transparent 0, transparent calc(100%/${chh} - 1px), rgba(16,12,6,.3) calc(100%/${chh} - 1px), rgba(16,12,6,.3) calc(100%/${chh}))`;
+  }
+  renderTokens(ev, cw, chh, rebuild);
+}
+
+function renderTokens(ev, cw, chh, rebuild) {
+  const layer = $("#map-tokens");
+  const party = {};
+  (S._party || []).forEach(p => { party[p.name] = p; });
+  const seen = new Set();
+  for (const [tid, t] of Object.entries(ev.tokens || {})) {
+    seen.add(cssId(tid));
+    const domId = "tok-" + cssId(tid);
+    let el = document.getElementById(domId);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = domId;
+      el.className = "token tk-" + (t.kind || "prop");
+      el.innerHTML = tokenFace(t, party);
+      layer.appendChild(el);
+    } else if (rebuild) {
+      el.innerHTML = tokenFace(t, party);
+    }
+    el.style.width = (150 / cw) + "%";
+    el.style.height = (150 / chh) + "%";
+    el.style.left = ((t.cell[0] + 0.5) * 100 / cw) + "%";
+    el.style.top = ((t.cell[1] + 0.5) * 100 / chh) + "%";
+    el.title = t.name;
+  }
+  [...layer.children].forEach(el => {
+    if (!seen.has(el.id.slice(4))) el.remove();
+  });
+}
+
+function tokenFace(t, party) {
+  if (t.icon && S.moduleId) {
+    return `<img class="tok-img" src="${assetUrl(t.icon)}" alt="" draggable="false">`;
+  }
+  if (t.kind === "pc") {
+    const p = party[t.name];
+    return AvatarFX.avatar(p ? (p.role || p.role_name) : "", p ? p.name : t.name);
+  }
+  const colors = { npc: "#77874f", monster: "#8c3030", prop: "#a08b58" };
+  return `<span class="tok-dot" style="background:${colors[t.kind] || "#a08b58"}">${(t.name || "?").slice(0, 1)}</span>`;
+}
+
+function assetUrl(rel) {
+  return "/api/asset/" + S.moduleId + "/"
+    + String(rel).split("/").map(encodeURIComponent).join("/");
+}
+function cssId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => "x" + c.charCodeAt(0)); }
+
+/* 点图落子（map_move pending 时点击 = 提交坐标应答）；
+   AI 代打局的探索期点击 → 旁听指令 "map:move x,y"（转 DM 裁定） */
+$("#map-viewport").addEventListener("click", (e) => {
+  if (!S.map || S.over) return;
+  const rect = $("#map-viewport").getBoundingClientRect();
+  const cw = S.map.grid[0], chh = S.map.grid[1];
+  const x = Math.floor((e.clientX - rect.left) / rect.width * cw);
+  const y = Math.floor((e.clientY - rect.top) / rect.height * chh);
+  if (x < 0 || y < 0 || x >= cw || y >= chh) return;
+  if (S.mapMove) {
+    submitAnswer({ text: x + "," + y }, null);
+    return;
+  }
+  if (S.aipcGame && S.started && !S.ask) {
+    jfetch("/api/command", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: `map:move ${x},${y}` }),
+    });
+  }
+});
+$("#btn-map-grid").addEventListener("click", () =>
+  $("#map-gridlines").classList.toggle("hidden"));
+$("#btn-map-fold").addEventListener("click", () => {
+  S.mapFold = !S.mapFold;
+  $("#map-panel").classList.toggle("folded", S.mapFold);
+  $("#btn-map-fold").textContent = S.mapFold ? "》" : "《";
+});
 
 /* ═══════════ 等待输入 ═══════════ */
 let hideTimer = null;
@@ -465,7 +727,7 @@ function showAsk(ev) {
   const box = $("#choices"), form = $("#ask-form"), hint = $("#idle-hint");
   hint.style.display = "none";
   if (ev.kind === "roll") {
-    // 轮到玩家掷骰：专用的 d20 掷骰按钮，点击才落骰
+    // 轮到玩家掷骰：专用的 d10 掷骰按钮，点击才落骰
     form.classList.add("hidden");
     box.classList.remove("hidden");
     box.innerHTML = "";
@@ -479,8 +741,8 @@ function showAsk(ev) {
     btn.className = "roll-btn";
     btn.innerHTML = `
       <svg class="roll-die" viewBox="0 0 24 24" aria-hidden="true">
-        <path class="die-body" d="M12 1 2.5 6.7 12 23l9.5-16.3L12 1z"/>
-        <path class="die-inner" d="M12 5.2 6.6 8.6 12 17l5.4-8.4L12 5.2z"/>
+        <path class="die-body" d="M12 1 3 6.2v11.6L12 23l9-5.2V6.2L12 1z"/>
+        <path class="die-inner" d="M12 4 6 7.5v9L12 20l6-3.5v-9L12 4z"/>
       </svg><span>掷 骰 子</span>`;
     btn.addEventListener("click", () => submitAnswer({ index: 0 }, btn));
     panel.append(prompt, btn);
@@ -501,9 +763,13 @@ function showAsk(ev) {
       box.appendChild(b);
     });
   } else {
+    if (ev.kind === "map_move") {
+      S.mapMove = true;                    // 点图落子模式（docs/battlemap-design.md §5）
+      $("#map-move-hint").classList.remove("hidden");
+    }
     box.classList.add("hidden");
     form.classList.remove("hidden");
-    $("#ask-box").placeholder = ev.prompt + "（回车提交）";
+    $("#ask-box").placeholder = ev.prompt + "（点击地图落子，或输入 x,y 回车）";
     $("#ask-box").focus();
   }
 }
@@ -513,6 +779,8 @@ async function submitAnswer(payload, btn, keepOpen) {
     body: JSON.stringify(payload),
   });
   if (!r.ok) { console.warn(r.body.error); return; }
+  S.mapMove = false;
+  $("#map-move-hint").classList.add("hidden");
   if (btn) {
     btn.classList.add("chosen");
     [...btn.parentElement.children].forEach(b => { b.style.pointerEvents = "none"; });
@@ -537,8 +805,8 @@ $("#ask-form").addEventListener("submit", (e) => {
   const text = box.value.trim();
   if (!text) return;
   if (S.ask) {
-    if (S.ask.kind !== "input") return;    // 选择/掷骰 pending 走按钮，不走文本框
-    submitAnswer({ text }, null, S.aipcGame);
+    if (S.ask.kind !== "input" && S.ask.kind !== "map_move") return;
+    submitAnswer({ text }, null, false);
   } else if (S.aipcGame && S.started && !S.over) {
     submitAnswer({ text }, null, true);    // 无 pending：服务端转投旁听指令槽
   } else return;
@@ -577,16 +845,20 @@ function route(ev) {
     case "dice":
       addDice(ev);
       if (S.live) DiceFX.play({ kind: ev.label && deathLike(ev.label) ? "death" : "check",
-                                who: ev.who, label: ev.label, dc: ev.dc,
-                                d20: ev.d20, rolls: ev.rolls, adv: ev.adv,
+                                who: ev.who, label: labelCn(ev.label), dv: ev.dv,
+                                d10: ev.d10, rolls: ev.rolls,
+                                crit_success: ev.crit_success,
+                                crit_failure: ev.crit_failure,
                                 total: ev.total, mods: ev.mods,
                                 success: ev.success });
       break;
     case "roll":
-      if (S.live) DiceFX.play(ev);
+      if (S.live) DiceFX.play(Object.assign({}, ev, { label: labelCn(ev.label) }));
       break;
+    case "crit": addCrit(ev); break;
     case "system": addSystem(ev); break;
     case "board": addBoard(ev); break;
+    case "map": renderMap(ev); break;
     case "ask": showAsk(ev); break;
     case "choice_made": markRemoteChoice(ev); break;
     case "game_over": onGameOver(ev); break;
@@ -596,16 +868,19 @@ function resetForNewStream() {
   chron().innerHTML = "";
   S.lastId = 0;
   S.live = false;          // 重放完成（ready 事件）后才恢复特效
-  S.levels = null;
-  S.gold = null;
+  S.ip = null;
+  S.eurobucks = null;
   S.over = false;          // 新流 = 新对局，旁听输入框恢复可用
+  S.map = null; S.mapKey = null; S.mapMove = false;
+  $("#map-panel").classList.add("hidden");
+  $("#map-move-hint").classList.add("hidden");
   $("#ending").classList.add("hidden");
   $("#flourish").classList.add("hidden");
   // 若页面仍停在开始页（他处开团/外部驱动），自动跟随进入对局
   if (!S.started) enterGame();
 }
 function deathLike(label) {
-  return String(label || "").includes("死亡豁免");
+  return String(label || "").includes("生存检定");
 }
 function markRemoteChoice(ev) {
   cancelHide();
@@ -622,6 +897,12 @@ function onGameOver(ev) {
   $("#ask-form").classList.add("hidden");
   $("#choices").classList.add("hidden");
   $("#idle-hint").style.display = "";
+  if (ev.reason === "story_ended" && ev.ending) {
+    if (S.live) Flourish.storyEnding(ev);
+    else addSystem({ text: `—— 达成结局「${ev.ending.title}」（${ev.ending.rank}） ——` });
+    refreshState();
+    return;
+  }
   if (ev.reason === "ended" && ev.epilogue) {
     if (S.live) Flourish.ending(ev);
     else addSystem({ text: "—— 本次冒险落下帷幕。 ——" });
@@ -651,19 +932,41 @@ async function refreshState() {
     connectSSE();
   }
   if (st.generation !== undefined) S.gen = st.generation;
-  // 模式徽标（AI 接入与否 + AI 代打）；requested=开关已开但本局降级为人类操控
+  // 模式徽标（剧本互动剧 / AI 接入与否 + AI 代打）；requested=开关已开但本局降级
   const aipcOn = !!(st.aipc && st.aipc.enabled);
   S.aipcGame = aipcOn;                     // enabled=控制器已挂载（server snapshot）
   const badge = $("#mode-badge");
-  badge.textContent = (st.llm_active ? `AI 模式 · ${st.model || ""}` : "剧本模式")
-    + (aipcOn ? " · AI 代打" : "");
-  badge.classList.toggle("ai", !!st.llm_active);
+  badge.textContent = st.mode === "story" ? "剧本模式 · 互动剧"
+    : (st.llm_active ? `AI 模式 · ${st.model || ""}` : "经典模式")
+      + (aipcOn ? " · AI 代打" : "");
+  badge.classList.toggle("ai", st.mode !== "story" && !!st.llm_active);
   updateAskForm();                         // 旁听指令常驻输入框按需显隐
-  setScene({ act: st.act, title: st.act_title, location: st.location });
-  $("#gold-chip").textContent = st.gold + " 金币";
-  // 金币变动音（仅 live 推进时）
-  if (S.live && S.gold !== null && st.gold > S.gold) AudioFX.coin();
-  S.gold = st.gold;
+  if (st.mode === "story" && st.story) {
+    // 剧本模式：章节卡显示剧本名（无幕结构），欧元/地图不适用
+    $("#scene-act").textContent = "❖ 剧本 · " + st.story.title;
+    $("#scene-loc").textContent = "互动剧 · 你的选择决定走向";
+    $("#scene-crumb").textContent = st.story.title;
+  } else {
+    setScene({ act: st.act, title: st.act_title, location: st.location });
+  }
+  S.moduleId = st.module_id;
+  // 剧本模式：主角以伪队伍卡呈现（无 SP/职业，PW 来自快照）
+  const stParty = st.mode === "story" && st.story ? [{
+    name: st.story.hero.name, role: "", role_name: st.story.hero.title,
+    role_rank: 0, hp_cur: st.story.hero.hp, hp_max: st.story.hero.hp_max,
+    hp: st.story.hero.hp, sp: null, luck_cur: null, luck_max: null,
+    humanity_cur: null, humanity_max: null, ip: null,
+    conditions: [], crit_injuries: [], cyberware: [], is_player: true,
+  }] : (st.party || []);
+  S._party = stParty;
+  const eddies = st.eurobucks;
+  if (eddies != null) $("#eb-chip").textContent = eddies + " eb";
+  const ips = stParty.reduce((s, pc) => s + (Number(pc.ip) || 0), 0);
+  $("#ip-chip").textContent = ips + " IP";
+  if (st.map) renderMap(st.map);           // 快照兜底（SSE map 事件之外的首帧）
+  // 欧元变动音（仅 live 推进时）
+  if (S.live && S.eurobucks !== null && eddies != null && eddies > S.eurobucks) AudioFX.coin();
+  S.eurobucks = eddies;
   if (st.module_title) {
     $("#brand-title").textContent = st.module_title;
     document.title = st.module_title + " · CTRCG 跑团手记";
@@ -673,43 +976,117 @@ async function refreshState() {
   if (!keys.length) $("#flag-list").innerHTML = '<p class="side-empty">尚无记录</p>';
   keys.forEach(([k, v]) => {
     const p = document.createElement("p");
-    p.style.cssText = "font-size:12px;color:#a89a76;margin:4px 0";
+    p.className = "cy-line";
     p.textContent = `· ${k}：${v}`;
     $("#flag-list").appendChild(p);
   });
-  // 队伍升级检测（对比上次快照）
-  const nowLevels = {};
-  st.party.forEach(pc => { nowLevels[pc.name] = pc.level; });
-  if (S.live && S.levels) {
-    const ups = st.party.filter(pc => S.levels[pc.name]
-                                      && pc.level > S.levels[pc.name]).map(pc => pc.name);
-    if (ups.length) Flourish.levelUp(ups);
+  // 义体与人性面板
+  renderCyberPanel(stParty);
+  // 致命伤面板
+  renderCritPanel(stParty);
+  renderPartyPanel(stParty, aipcOn);
+  // 改进点到账检测（RED 没有等级）：与上次快照比总 IP
+  const nowIp = {};
+  stParty.forEach(pc => { nowIp[pc.name] = Number(pc.ip) || 0; });
+  if (S.live && S.ip) {
+    const gains = stParty.filter(pc => S.ip[pc.name] != null
+                                       && nowIp[pc.name] > S.ip[pc.name])
+                         .map(pc => pc.name);
+    if (gains.length) {
+      const delta = gains.reduce((s, n) => s + (nowIp[n] - S.ip[n]), 0);
+      Flourish.ipUp(gains, delta);
+    }
   }
-  S.levels = nowLevels;
+  S.ip = nowIp;
+}
+
+function woundChip(pc) {
+  const key = pc.wound || "healthy";
+  const label = pc.wound_name || WOUND_CN[key] || "";
+  const cls = pc.hp_cur < 1 ? "mortal" : key;
+  return label ? `<span class="wound-chip ${cls}">${label}</span>` : "";
+}
+
+function renderPartyPanel(stParty, aipcOn) {
   const list = $("#party-list");
   list.innerHTML = "";
-  st.party.forEach(pc => {
+  stParty.forEach(pc => {
     const d = document.createElement("div");
-    d.className = "pc" + (pc.hp <= 0 ? " pc-down" : "");
-    const pct = Math.max(0, (pc.hp / pc.hp_max) * 100);
+    const down = (pc.hp_cur != null ? pc.hp_cur : pc.hp) < 1;
+    d.className = "pc" + (down ? " pc-down" : "");
+    const cur = (pc.hp_cur != null) ? pc.hp_cur : pc.hp;
+    const pct = Math.max(0, Math.min(100, (cur / pc.hp_max) * 100));
     const color = pct > 55 ? "#77874f" : pct > 25 ? "#b08a3e" : "#a04840";
-    const slots = Object.entries(pc.slots || {}).filter(([, n]) => n > 0)
-      .map(([lv, n]) => lv + "环×" + n).join(" ") || "";
+    const name = pc.handle ? `${pc.name}（${pc.handle}）` : pc.name;
+    const roleLabel = pc.role_name || pc.role || "";
+    // SP 护甲条：以当前躯干 SP 与满值对比（磨损后可见缺口）
+    let spHtml = "";
+    if (pc.sp != null) {
+      const maxSp = Math.max(pc.sp, 1);
+      const boxes = Array.from({ length: maxSp }, (_, i) =>
+        `<i class="${i < pc.sp ? "" : "off"}"></i>`).join("");
+      spHtml = `<span class="sp-strip" title="${pc.armor_name || ""}">SP ${pc.sp}${boxes}</span>`;
+    }
+    // 幸运池
+    let luckHtml = "";
+    if (pc.luck_max != null) {
+      const n = Math.max(pc.luck_max, 0);
+      const pips = Array.from({ length: n }, (_, i) =>
+        `<i class="${i < pc.luck_cur ? "" : "off"}"></i>`).join("");
+      luckHtml = `<span class="luck-pips" title="幸运池">${pips}<span>${pc.luck_cur}/${pc.luck_max}</span></span>`;
+    }
+    // 人性
+    let humHtml = "";
+    if (pc.humanity_max != null && pc.humanity_max > 0) {
+      const hp = Math.max(0, Math.min(100, (pc.humanity_cur / pc.humanity_max) * 100));
+      humHtml = `<span class="humanity-bar ${hp <= 30 ? "low" : ""}" title="人性">
+        <span class="hb"><i style="width:${hp}%"></i></span>人性 ${pc.humanity_cur}/${pc.humanity_max}</span>`;
+    }
+    const crits = (pc.crit_injuries || []).map(c =>
+      `<span class="tag crit">${c}</span>`).join("");
+    const conds = (pc.conditions || []).map(c =>
+      `<span class="tag ${BAD_CONDS.includes(c[0]) ? "bad" : ""}">${c}</span>`).join("");
+    const tags = (crits + conds)
+      ? `<div class="tag-row">${crits}${conds}</div>` : "";
+    const eddiesOwn = (pc.eurobucks != null && !pc.is_player)
+      ? `<span class="pc-money" title="随身欧元">${pc.eurobucks} eb</span>` : "";
     d.innerHTML = `
-      <div class="medal">${AvatarFX.avatar(pc.race, pc.klass_key || pc.klass, pc.name)}</div>
+      <div class="medal">${AvatarFX.avatar(pc.role || pc.role_name, pc.name)}</div>
       <div>
-        <div class="pc-name"><span>${pc.name}</span><span class="pc-klass">${pc.level}级${pc.klass}${pc.is_player ? (aipcOn ? " · 你 · AI 代打" : " · 你") : ""}</span></div>
+        <div class="pc-name"><span>${name}</span>
+          <span class="pc-role">${roleLabel}${pc.role_rank ? " " + pc.role_rank : ""}${
+            pc.is_player ? (aipcOn ? " · 你 · AI 代打" : " · 你") : " · 队友"}</span></div>
         <div class="pc-line2">
           <span class="hpbar"><i style="width:${pct}%; background:${color}"></i></span>
-          <span class="pc-hpnum">${pc.hp}/${pc.hp_max}</span>
-          <span class="pc-ac">AC${pc.ac}</span>
+          <span class="pc-hpnum">PW ${cur}/${pc.hp_max}</span>
+          ${woundChip(pc)}
         </div>
-        ${slots ? `<div class="pc-klass" style="margin-top:3px">法术位 ${slots}</div>` : ""}
+        <div class="pc-sub">${spHtml}${luckHtml}${humHtml}${eddiesOwn}
+          <span class="pc-thresh" title="重伤阈值（PW 低于或等于此值即为重伤）">重伤线 ${pc.seriously_wounded ?? "–"}</span></div>
       </div>
-      ${pc.conditions.length ? `<div class="tag-row">${pc.conditions.map(c =>
-        `<span class="tag ${"中毒恐惧昏迷死亡倒地".includes(c[0]) ? "bad" : ""}">${c}</span>`).join("")}</div>` : ""}`;
+      ${tags}`;
     list.appendChild(d);
   });
+}
+
+function renderCyberPanel(stParty) {
+  const box = $("#cyber-list");
+  const rows = [];
+  stParty.forEach(pc => {
+    (pc.cyberware || []).forEach(cw => rows.push(`${pc.name}：${cw}`));
+  });
+  if (!rows.length) { box.innerHTML = '<p class="side-empty">尚无植入</p>'; return; }
+  box.innerHTML = rows.map(t => `<p class="cy-line">· ${t}</p>`).join("");
+}
+
+function renderCritPanel(stParty) {
+  const box = $("#crit-list");
+  const rows = [];
+  stParty.forEach(pc => {
+    (pc.crit_injuries || []).forEach(c => rows.push(`${pc.name}：${c}`));
+  });
+  if (!rows.length) { box.innerHTML = '<p class="side-empty">完好无损</p>'; return; }
+  box.innerHTML = rows.map(t => `<p class="cy-line"><em>· ${t}</em></p>`).join("");
 }
 function setScene(ev) {
   $("#scene-act").textContent = `第${ev.act}幕 · ${String(ev.title).replace(/^第.幕：/, "")}`;
@@ -717,57 +1094,80 @@ function setScene(ev) {
   $("#scene-crumb").textContent = ev.location;
 }
 
-/* ═══════════ 角色创建表单 ═══════════ */
-async function rollScores() {
-  const r = await fetch("/api/roll_scores").then(r => r.json()).catch(() => null);
-  return (r && Array.isArray(r.scores) && r.scores.length === 6)
-    ? r.scores : [15, 14, 13, 12, 10, 8];
+/* ═══════════ 角色创建表单（《赛博朋克 RED》：选预设角色，不掷骰） ═══════════ */
+function moduleInfo(id) {
+  return (S.meta.modules || []).find(m => m.id === id && !m.broken) || null;
 }
 
-async function buildCreateForm() {
+function pregenList(moduleId) {
+  const m = moduleInfo(moduleId);
+  return (m && m.pregens) ? m.pregens : [];
+}
+
+function pregenDefaults(moduleId) {
+  const m = moduleInfo(moduleId);
+  return (m && m.default_companions) ? m.default_companions.slice() : [];
+}
+
+function fmtMoney(v) {
+  return (Number(v) || 0).toLocaleString("en-US") + " eb";
+}
+
+function skillLine(pg) {
+  const all = pg.skills || {};
+  const keys = Object.keys(all).sort((a, b) => all[b] - all[a]);
+  const list = keys.slice(0, 12).map(k => {
+    const s = (S.meta.skills || []).find(x => x.key === k) || {};
+    const stat = s.stat ? (STAT_CN[s.stat] || s.stat) : "";
+    const total = (pg.stats && s.stat) ? (pg.stats[s.stat] || 0) + all[k] : all[k];
+    return `${s.name || k} ${total}（${stat}${pg.stats ? pg.stats[s.stat] : ""}+${all[k]}）`;
+  });
+  if (keys.length > 12) list.push(`…共 ${keys.length} 项`);
+  return list.join("、") || "—";
+}
+
+function statGrid(pg) {
+  const order = (S.meta.stats || []).map(s => s.key);
+  return `<div class="stat-grid">${order.map(k => `
+    <div><label>${STAT_CN[k] || k}</label><b>${(pg.stats || {})[k] ?? "–"}</b></div>`).join("")}</div>`;
+}
+
+/* 重建建卡表单（切换模组时也要重建：预设角色随模组变化） */
+async function rebuildCreateForm() {
   const meta = await ensureMeta();
+  if (!meta) return;
   const f = $("#create-form");
-  const rolled = await rollScores();
-  const rec0 = meta.recommended["fighter"];
-  const order0 = Object.keys(rec0).sort((a, b) => rec0[b] - rec0[a]);
-  const form = S.form = { race: meta.races[0].key, klass: "fighter",
-                          background: meta.backgrounds[0].key, ability_mode: "auto",
-                          skills: [], fighting_style: "defense",
-                          rolled, bonus2: order0[0], bonus1: order0[1] };
+  const pregens = pregenList(S.module);
+  if (!pregens.length) {
+    f.innerHTML = `<p class="hint">模组《${S.module}》没有预设角色（pregens），
+      无法建卡。请在 <code>modules/${S.module}/module.json</code> 里定义 pregens，
+      或改选其他模组。</p>`;
+    return;
+  }
+  const form = S.form = {
+    module: S.module,
+    pc: pregens[0].key,
+    name: pregens[0].name || "",
+    companions: pregenDefaults(S.module).filter(k => k !== pregens[0].key
+                                                     && pregens.some(p => p.key === k)),
+  };
   f.innerHTML = `
-    <div class="field"><label>姓名</label>
-      <input type="text" id="c-name" placeholder="给角色起个名字（留空则称「无名者」）" maxlength="16"></div>
-    <div class="field"><label>种族（博德之门3 全种族）</label>
-      <div class="card-row" id="c-race"></div></div>
-    <div class="field"><label>职业</label><div class="card-row" id="c-klass"></div></div>
-    <div class="field"><label>背景</label>
-      <select id="c-bg">${meta.backgrounds.map(b =>
-        `<option value="${b.key}">${b.name} —— ${b.desc}</option>`).join("")}</select></div>
-    <div class="field"><label>种族加值（BG3：任意两项属性 +2/+1）</label>
-      <div class="bonus-row">
-        <select id="c-b2" title="+2 的属性"></select>
-        <select id="c-b1" title="+1 的属性"></select>
-      </div>
-      <div class="hint">默认按职业推荐；可自行改为任意两项不同属性。</div></div>
-    <div class="field"><label>能力值（掷骰法：4d6 去最低 × 6）</label>
-      <div class="dice-row" id="c-dice"></div>
-      <div class="seg"><button type="button" id="ab-rec" class="on">按职业推荐分配</button>
-      <button type="button" id="ab-man">手动分配</button>
-      <button type="button" id="ab-reroll">重掷骰子</button></div>
-      <div id="c-manual" class="hidden abil-grid" style="margin-top:10px"></div>
-      <div class="hint" id="ab-view"></div></div>
-    <div class="field"><label>职业技能 <span id="skill-count"></span></label>
-      <div class="skill-list" id="c-skills"></div>
-      <div class="hint">背景技能自动获得；<span id="race-skill-hint"></span></div></div>
-    <div class="field" id="style-field"><label>战斗风格</label>
-      <div class="card-row" id="c-style"></div></div>
+    <div class="field"><label>预设角色（模组预设 · 数值已定，不掷骰）</label>
+      <div class="pregen-list" id="c-pregens"></div></div>
+    <div class="field"><label>角色卡 <span id="c-pc-name"></span></label>
+      <div id="c-sheet"></div></div>
+    <div class="field"><label>你的名字 / 街头绰号</label>
+      <input type="text" id="c-name" maxlength="16"
+        placeholder="留空则沿用预设角色的名字"></div>
+    <div class="field"><label>AI 队友（其余预设角色，可多选）</label>
+      <div class="companion-list" id="c-companions"></div>
+      <div class="hint">未选任何人时本局独自行动；队友由 AI 代打。</div></div>
     <div class="field"><label>角色简介（可选 · AI 代打时的行为依据）</label>
       <textarea id="c-desc" rows="3" maxlength="2000"
-        placeholder="来历、动机、行事倾向……留空则由种族·职业·背景自动概括"></textarea></div>
+        placeholder="来历、动机、行事倾向……留空则由职业与预设人设自动概括"></textarea></div>
     <div class="field"><label>说话语气（可选）</label>
       <textarea id="c-voice" rows="2" maxlength="2000"
-        placeholder="如：低沉寡言，句句带刺；或热情外向，爱讲挖矿段子"></textarea></div>
-    <p class="hint" style="margin-top:14px">同行伙伴由 AI 代打；若模组定义了自己的队友，以模组为准。</p>
+        placeholder="如：话少，开口就是价码；或满嘴街头黑话，爱拿义体开玩笑"></textarea></div>
     <button class="big-btn" id="c-start">开始冒险</button>
     <p class="hint" id="form-error" style="color:#8c3030"></p>`;
   wireForm();
@@ -775,131 +1175,68 @@ async function buildCreateForm() {
 
 function wireForm() {
   const meta = S.meta, form = S.form;
-  const raceRow = $("#c-race"), klassRow = $("#c-klass"), styleRow = $("#c-style");
-  const raceInfo = () => meta.races.find(r => r.key === form.race) || {};
-  const recOrder = () => {
-    const rec = meta.recommended[form.klass];
-    return Object.keys(rec).sort((a, b) => rec[b] - rec[a]);
-  };
-  const renderDice = () => {
-    $("#c-dice").innerHTML = form.rolled.map(v =>
-      `<span class="die">${v}</span>`).join("");
-  };
-  const renderBonus = () => {
-    const opts = (sel, other) => {
-      sel.innerHTML = meta.abilities.map(a =>
-        `<option value="${a.key}" ${a.key === other ? "disabled" : ""}>${a.name}</option>`).join("");
-    };
-    const b2 = $("#c-b2"), b1 = $("#c-b1");
-    opts(b2, form.bonus1); opts(b1, form.bonus2);
-    b2.value = form.bonus2; b1.value = form.bonus1;
-    b2.onchange = () => { form.bonus2 = b2.value;
-      if (form.bonus1 === form.bonus2) form.bonus1 = recOrder().find(k => k !== form.bonus2);
-      renderBonus(); };
-    b1.onchange = () => { form.bonus1 = b1.value;
-      if (form.bonus2 === form.bonus1) form.bonus2 = recOrder().find(k => k !== form.bonus1);
-      renderBonus(); };
-  };
-  const renderRace = () => {
-    raceRow.innerHTML = meta.races.map(r => `
-      <div class="radio-card ${r.key === form.race ? "on" : ""}" data-k="${r.key}">
-        <b>${r.family === r.name ? r.name : r.family + "·" + r.name}</b><small>${(r.traits[0] || "").slice(0, 14)}</small></div>`).join("");
-    [...raceRow.children].forEach(c => c.onclick = () => {
-      form.race = c.dataset.k; renderRace(); renderSkills();
+  const pcCard = () => pregenList(form.module).find(p => p.key === form.pc) || {};
+
+  const renderPregens = () => {
+    const box = $("#c-pregens");
+    box.innerHTML = pregenList(form.module).map(pg => `
+      <div class="pregen-card ${pg.key === form.pc ? "on" : ""}" data-k="${pg.key}">
+        <b>${pg.name}</b>${pg.handle ? `<span class="pg-handle">${pg.handle}</span>` : ""}
+        <span class="pg-role">${pg.role_name} ${pg.role_rank}${pg.role_ability ? " · " + pg.role_ability : ""}</span>
+        <span class="pg-line">PW ${pg.hp} · 护甲 SP ${pg.sp}${pg.armor_name ? "（" + pg.armor_name + "）" : ""}</span>
+      </div>`).join("");
+    [...box.children].forEach(c => c.onclick = () => {
+      const key = c.dataset.k;
+      const pg = pregenList(form.module).find(p => p.key === key) || {};
+      form.pc = key;
+      form.name = pg.name || "";
+      const nameBox = $("#c-name");
+      if (nameBox) nameBox.value = "";
+      renderPregens(); renderSheet(); renderCompanions();
     });
   };
-  const renderKlass = () => {
-    klassRow.innerHTML = meta.classes.map(k => `
-      <div class="radio-card ${k.key === form.klass ? "on" : ""}" data-k="${k.key}">
-        <b>${k.name}</b><small>生命骰 d${k.hit_die}<br>${k.skill_count} 项技能</small></div>`).join("");
-    [...klassRow.children].forEach(c => c.onclick = () => {
-      form.klass = c.dataset.k; form.skills = [];
-      form.bonus2 = recOrder()[0]; form.bonus1 = recOrder()[1];
-      $("#c-bg").value = meta.backgrounds[0].key;
-      form.background = meta.backgrounds[0].key;
-      renderKlass(); renderSkills(); renderStyle(); renderBonus(); renderAbilView();
+
+  const renderSheet = () => {
+    const pg = pcCard();
+    $("#c-pc-name").textContent = pg.name
+      ? `（${pg.name}${pg.handle ? " · " + pg.handle : ""}）` : "";
+    const facts = [
+      `职业 ${pg.role_name || ""} ${pg.role_rank || ""}`,
+      pg.role_ability ? `特殊能力 ${pg.role_ability}` : "",
+      `PW ${pg.hp}`,
+      `重伤阈值 ${pg.seriously_wounded}`,
+      `幸运 ${pg.luck}`,
+      `人性 ${pg.humanity}`,
+      pg.sp ? `护甲 SP ${pg.sp}${pg.armor_name ? "（" + pg.armor_name + "）" : ""}` : "",
+      fmtMoney(pg.eurobucks),
+    ].filter(Boolean);
+    $("#c-sheet").innerHTML = `
+      <div class="pg-facts">${facts.map(t => `<span>${t}</span>`).join("")}</div>
+      ${statGrid(pg)}
+      <p class="hint" style="margin-top:10px">技能：${skillLine(pg)}</p>
+      ${(pg.weapons || []).length ? `<p class="hint">武器：${pg.weapons.join("、")}</p>` : ""}
+      ${(pg.cyberware || []).length ? `<p class="hint">义体：${pg.cyberware.join("、")}</p>` : ""}
+      ${(pg.gear || []).length ? `<p class="hint">装备：${pg.gear.join("、")}</p>` : ""}
+      ${pg.desc ? `<p class="hint">${pg.desc}</p>` : ""}`;
+  };
+
+  const renderCompanions = () => {
+    const rest = pregenList(form.module).filter(p => p.key !== form.pc);
+    const box = $("#c-companions");
+    box.innerHTML = rest.map(pg => `
+      <div class="companion-card ${form.companions.includes(pg.key) ? "on" : ""}"
+           data-k="${pg.key}"><b>${pg.name}</b>
+        <small>${pg.role_name} ${pg.role_rank} · PW ${pg.hp} · SP ${pg.sp}</small></div>`).join("");
+    [...box.children].forEach(c => c.onclick = () => {
+      const key = c.dataset.k;
+      if (form.companions.includes(key)) form.companions = form.companions.filter(k => k !== key);
+      else form.companions.push(key);
+      renderCompanions();
     });
   };
-  const renderStyle = () => {
-    $("#style-field").style.display = form.klass === "fighter" ? "" : "none";
-    styleRow.innerHTML = meta.styles.map(s => `
-      <div class="radio-card ${s.key === form.fighting_style ? "on" : ""}" data-k="${s.key}">
-        <b>${s.name.split("（")[0]}</b><small>${s.name.split("（")[1] || ""}</small></div>`).join("");
-    [...styleRow.children].forEach(c => c.onclick = () => {
-      form.fighting_style = c.dataset.k; renderStyle();
-    });
-  };
-  const renderSkills = () => {
-    const klass = meta.classes.find(k => k.key === form.klass);
-    const extra = (raceInfo().skills || 0);
-    const limit = klass.skill_count + extra;
-    $("#skill-count").textContent = `（选 ${limit} 项，已选 ${form.skills.length}）`;
-    $("#race-skill-hint").textContent = extra ? "该种族额外 +1 项自选技能。" : "";
-    const chosenBg = meta.backgrounds.find(b => b.key === form.background);
-    $("#c-skills").innerHTML = "";
-    klass.skill_choices.forEach(key => {
-      const chip = document.createElement("label");
-      chip.className = "skill-check" + (form.skills.includes(key) ? " on" : "");
-      chip.textContent = skillName(key);
-      chip.onclick = (e) => {
-        e.preventDefault();
-        if (form.skills.includes(key)) form.skills = form.skills.filter(k => k !== key);
-        else if (form.skills.length < limit) form.skills.push(key);
-        renderSkills();
-      };
-      $("#c-skills").appendChild(chip);
-    });
-    if (chosenBg) {
-      const hint = $("#c-skills").nextElementSibling;
-      if (hint && hint.classList.contains("hint"))
-        hint.textContent = "背景技能：" + chosenBg.skills.map(k => skillName(k)).join("、");
-    }
-  };
-  const renderAbilView = () => {
-    if (form.ability_mode === "auto") {
-      $("#ab-view").textContent = "掷骰结果将按推荐优先级自动分配：" +
-        recOrder().map(k => ABILITY_CN[k]).join("→");
-      return;
-    }
-    $("#ab-view").textContent = "把六个掷骰结果分配到六项属性。";
-  };
-  const renderManual = () => {
-    const grid = $("#c-manual");
-    grid.classList.toggle("hidden", form.ability_mode !== "manual");
-    if (form.ability_mode !== "manual") { renderAbilView(); return; }
-    grid.innerHTML = meta.abilities.map(a => `
-      <div><label>${ABILITY_CN[a.key]}</label>
-      <select data-k="${a.key}"><option value="">–</option>
-      ${[...form.rolled].sort((a, b) => b - a).map(v => `<option>${v}</option>`).join("")}
-      </select></div>`).join("");
-    [...grid.querySelectorAll("select")].forEach(sel => sel.onchange = enforcePool);
-    enforcePool();
-    renderAbilView();
-  };
-  const enforcePool = () => {
-    const selects = [...$("#c-manual").querySelectorAll("select")];
-    const vals = selects.map(s => s.value);
-    selects.forEach((sel, idx) => {
-      [...sel.options].forEach(o => {
-        const used = vals.filter((v, i) => v === o.value && i !== idx).length;
-        const cap = form.rolled.filter(v => String(v) === o.value).length;
-        o.disabled = o.value !== "" && used >= cap && sel.value !== o.value;
-      });
-    });
-  };
-  $("#ab-rec").onclick = () => { form.ability_mode = "auto";
-    $("#ab-rec").classList.add("on"); $("#ab-man").classList.remove("on"); renderManual(); };
-  $("#ab-man").onclick = () => { form.ability_mode = "manual";
-    $("#ab-man").classList.add("on"); $("#ab-rec").classList.remove("on"); renderManual(); };
-  $("#ab-reroll").onclick = async () => {
-    form.rolled = await rollScores();
-    if (form.ability_mode === "manual") { [...$("#c-manual").querySelectorAll("select")].forEach(s => s.value = ""); }
-    renderDice(); renderManual();
-  };
-  $("#c-bg").onchange = (e) => { form.background = e.target.value; renderSkills(); };
+
   $("#c-start").onclick = submitCreate;
-  renderRace(); renderKlass(); renderStyle(); renderSkills();
-  renderDice(); renderBonus(); renderAbilView();
+  renderPregens(); renderSheet(); renderCompanions();
 }
 
 function skillName(key) {
@@ -910,28 +1247,21 @@ async function submitCreate() {
   const err = $("#form-error");
   err.textContent = "";
   const form = S.form;
-  const scores = {};
-  if (form.ability_mode === "auto") {
-    const rec = S.meta.recommended[form.klass];
-    const order = Object.keys(rec).sort((a, b) => rec[b] - rec[a]);
-    const vals = [...form.rolled].sort((a, b) => b - a);
-    order.forEach((k, i) => scores[k] = vals[i]);
-  } else {
-    [...$("#c-manual").querySelectorAll("select")].forEach(s => scores[s.dataset.k] = Number(s.value));
-    if (Object.values(scores).some(v => !v)) { err.textContent = "请完成六项属性的手动分配。"; return; }
-  }
-  if (form.bonus2 === form.bonus1) { err.textContent = "+2 与 +1 必须分配给不同的属性。"; return; }
+  if (!form || !form.pc) { err.textContent = "请选择一个预设角色。"; return; }
+  const pg = pregenList(form.module).find(p => p.key === form.pc) || {};
+  const typed = ($("#c-name").value || "").trim();
+  const name = typed || pg.name || "";
+  if (!name) { err.textContent = "请填写名字（预设角色没有名字时必填）。"; return; }
   const payload = {
-    name: $("#c-name").value.trim(),
-    race: form.race, klass: form.klass, background: form.background,
-    ability_mode: "rolled", rolled: form.rolled, scores,
-    bonus2: form.bonus2, bonus1: form.bonus1,
-    skills: form.skills,
-    fighting_style: form.fighting_style, module_id: S.module,
-    // AI PC（aipc-design §3.3/§4.2）：开关取设置页持久化偏好；人设作 PC 角色卡素材
+    module_id: form.module,
+    pregen: form.pc,
+    name: name,
+    companions: form.companions.slice(),
+    // AI PC（aipc-design §3.3/§4.2）：开关取设置页持久化偏好；人设作 PC 角色卡素材；
+    // 留空时回落到预设角色卡自带的人设与语气
     aipc_enabled: !!(S.aipc && S.aipc.enabled),
-    description: ($("#c-desc") ? $("#c-desc").value.trim() : ""),
-    personality: ($("#c-voice") ? $("#c-voice").value.trim() : ""),
+    description: ($("#c-desc") ? $("#c-desc").value.trim() : "") || pg.desc || "",
+    personality: ($("#c-voice") ? $("#c-voice").value.trim() : "") || pg.voice || "",
   };
   await startGame(payload);
 }
@@ -964,7 +1294,7 @@ $("#btn-reset").addEventListener("click", async () => {
   await jfetch("/api/reset", { method: "POST", body: "{}",
     headers: { "Content-Type": "application/json" } });
   S.es && S.es.close(); S.es = null; S.lastId = 0; S.started = false;
-  S.live = false; S.levels = null; S.gold = null;
+  S.live = false; S.ip = null; S.eurobucks = null;
   location.reload();
 });
 
@@ -972,6 +1302,14 @@ $("#btn-reset").addEventListener("click", async () => {
 (async function boot() {
   // AI PC 开关偏好预取：建卡提交体始终携带当前开关状态（免先访问设置页）
   jfetch("/api/settings/aipc").then(r => { if (r.ok) S.aipc = r.body; }).catch(() => {});
+  // 规则集自检：服务端必须提供《赛博朋克 RED》数据面
+  ensureMeta().then(m => {
+    if (m && m.ruleset && m.ruleset !== "cyberpunk-red") {
+      console.warn("规则集不是 cyberpunk-red：", m.ruleset);
+      const el = $("#home-status");
+      if (el) el.textContent = `⚠ 服务端规则集为 ${m.ruleset}，本前端按赛博朋克 RED 渲染。`;
+    }
+  });
   const r = await jfetch("/api/state");
   if (r.body && r.body.started) {
     enterGame();          // 断线/刷新后回到对局

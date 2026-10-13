@@ -27,13 +27,17 @@ from ..st import (Injection, MacroContext, Persona, CharacterCard,
 from .agents import make_aipc_agent
 
 # 面向世界的探索行动（触达世界状态，DM 需要回应其后果）
-_WORLD_ACTS = {"rest_short", "rest_long", "drink_potion", "buy"}
-_ACT_DESC = {"rest_short": "一次短休", "rest_long": "一次长休",
-             "drink_potion": "喝药水", "buy": "一次采购"}
+# 取值面 = PORT_SPEC §7：rest_day / first_aid / stabilize / buy / repair_armor
+# （save / state / inventory 是纯 UI 行动，不需要 DM 回应）
+_WORLD_ACTS = {"rest_day", "first_aid", "stabilize", "buy", "repair_armor"}
+_ACT_DESC = {"rest_day": "一次休整（恢复 PW）", "first_aid": "一次急救固定（处理致命伤）",
+             "stabilize": "一次稳定（把人从濒死拉回来）", "buy": "一次采购",
+             "repair_armor": "一次护甲维护"}
 
 EXPLORE_LEAD = ("以 {name} 的身份行动：先考虑要不要说话，再行动。"
                 "用 explore_intent 声明你的行动意图（引擎会交给 DM 推进），"
-                "闲聊用 say，休整买药等用 explore_act。")
+                "闲聊用 say，休整（rest_day）、急救（first_aid）、稳定（stabilize）、"
+                "采购（buy）、修甲（repair_armor）用 explore_act。")
 
 # 探索 beat 的单拍步数上限（同 social 层：小步数防空转，design §7.5）
 EXPLORE_MAX_STEPS = 4

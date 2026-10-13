@@ -33,9 +33,9 @@
 > loop.py:184 过滤静默吞掉 explore_act）；④aipc 偏好改独立端点 `/api/settings/aipc`
 > （apply_llm_settings 缺密钥早退 server.py:167-168 不落盘，rev2 的测试前提不成立）；
 > ⑤战斗救援能力缺口如实声明（combat_action 的 use_item 无 target、枚举无 stabilize，
-> tools.py:257-258）；⑥pyproject.toml packages 补 `ctrcg.st`；⑦升级选择静默
-> （原"system_line 通知"不实）、术士龙脉 HP 补差抽公共 fixup（character.py:864-865
-> 不补而 session.py:260-262 补）、assemble_system 增 template_vars（模板实有 9 个
+> tools.py:257-258）；⑥pyproject.toml packages 补 `ctrcg.st`；⑦改进点花费静默
+> （原"system_line 通知"不实）、创建/读档两条路径的卡面数值补差抽成公共 fixup
+> （此前一条路径补、另一条不补）、assemble_system 增 template_vars（模板实有 9 个
 > 占位符）、`_post_beat` 内部重取 scene（session.py:454）、战斗期 say 不进 table_log
 > 的措辞收敛（§2.3 vs §2.5）。
 
@@ -95,7 +95,7 @@ inject_at_depth, fit_to_budget, split_examples`。
 @dataclass
 class CharacterCard:
     name: str
-    description: str = ""            # 常驻：设定/背景/外观（§2.2）
+    description: str = ""            # 常驻：设定/身世/外观（§2.2）
     personality: str = ""            # 常驻：性格摘要
     scenario: str = ""               # 常驻：情境；AI PC 下由引擎每场景重写（§11 #1）
     first_mes: str = ""              # 一次性：开场白
@@ -120,7 +120,7 @@ def card_from_player(ch: Character, *, description: str = "", personality: str =
                      system_prompt: str = "", post_history_instructions: str = "",
                      mes_example: str = "", talkativeness: float = 0.5) -> CharacterCard:
     """玩家 Character → 卡。name 取 ch.name；description/personality 来自建卡表单
-    （空则用引擎兜底文案：种族·职业·背景 + TACTICS 风格摘要）。"""
+    （空则用引擎兜底文案：职业·街头身份 + TACTICS 风格摘要）。"""
 
 @dataclass
 class Persona:
@@ -159,7 +159,7 @@ def render(text: str, ctx: MacroContext, *, rng: random.Random | None = None,
     - persona：{{persona}}；字段：{{description}} {{personality}} {{scenario}}（取 ctx.extra）
     - 时间：{{time}} {{isotime}}(HH:mm) {{isodate}}(YYYY-MM-DD)
     - 随机：{{random::a::b::…}}（每次重摇，rng）、{{pick::a::b::…}}（按 (user,char,位置) 散列稳定）、
-            {{roll::1d20+3}}（**引擎桥**：rules.dice.roll(rng, expr)，rng=对局 rng）
+            {{roll::1d10+3}}（**引擎桥**：rules.dice.roll(rng, expr)，rng=对局 rng）
     - 快照：{{party}} {{scene}} {{flags}}
     - 实用：{{newline}} {{space}} {{noop}}
     """
@@ -167,7 +167,7 @@ def render(text: str, ctx: MacroContext, *, rng: random.Random | None = None,
 
 `{{roll}}` 的审计说明：宏替换发生在**组装期**，替换结果随每回合 context 消息进入
 `session.log_message`（loop.py:170-173），保持"模型可见 ⟺ 已记录"（events.py:1-5）。
-宏骰只是叙事佐料（如"掷出 14 的先攻直觉"），**不进入任何结算路径**；结算骰一律在
+宏骰只是叙事佐料（如"掷出 7 的先攻直觉"），**不进入任何结算路径**；结算骰一律在
 工具/引擎内完成。所有宏展开无 token 成本（纯字符串）。
 
 ### 1.3 `ctrcg/st/worldinfo.py` —— 世界书（P1）
@@ -217,7 +217,7 @@ def engine_worldinfo(state) -> WorldInfo:
     - 当前场景：constant 条目（id/地点/intro 摘要，order 高）；
     - 剧情旗标：每条旗标一个 selective 条目（键=旗标键与其值），内容=值描述；
     - 模组 NPC：键=NPC 名，content=desc（loader.npcs）；
-    - 场景 skills 未做项：键=技能中文名。
+    - 场景 checks 未做项：键=技能中文名。
     预算内全部 constant 场景条目最先入选（§5.2 丢弃顺序第 1 条）。"""
 
 def scan(wi: WorldInfo, window: str, *, budget_tokens: int, rng: random.Random) -> WIResult:
@@ -404,8 +404,9 @@ def _aipc_say(self, who: Character, text: str, to: str = "") -> dict:
     return {"ok": True, "note": "已说出口，桌边都听见了。"}
 
 def _tool_explore_act(self, kind: str, item: str = "") -> dict:
-    # rest_short → harness_session.party_short_rest()；rest_long → party_long_rest()
-    # drink_potion → drink_potion_out_of_combat()；buy → buy_good(item)（仅 scene.shop）
+    # rest_day → 休整一天（每个完整休息日恢复等于体格的 PW，须已被稳定）
+    # stabilize/first_aid(target,index) → Encounter.stabilize_action / first_aid_fix
+    # repair_armor → 花欧元把护甲 SP 修回满值；buy → buy_good(item)（仅 scene.shop）
     # save → G.save_game(...)；state/inventory → ui.raw(...)。
     # 全部毫秒级完成；不在 ToolTimeoutGuard.INTERACTIVE_TOOLS（loop.py:40）内，无超时风险。
 ```
@@ -414,15 +415,15 @@ def _tool_explore_act(self, kind: str, item: str = "") -> dict:
 AI 在工具分发内调它会被 10s 工具超时砍断（loop.py:53-56），人类旁听调它则阻塞游戏线程，
 两者都不可接受。把定价/扣款/库存逻辑从 `open_shop` 抽成
 `GameSession.buy_good(key) -> dict`（校验 scene.shop、SHOP_GOODS 价目
-（session.py:35-40）、金币是否足够，写入库存、autosave、返回 {ok/note}）；
+（session.py:35-40）、欧元是否足够，写入库存、autosave、返回 {ok/note}）；
 `open_shop` 的菜单循环改为调用 `buy_good`（人类路径行为不变）；AI 的
 `explore_act(kind="buy", item=…)` 只走 `buy_good`。
 
-`_tool_skill_check/_tool_save`（tools.py:97-117）不新增玩家分支——掷骰本身仍是引擎
+`_tool_skill_check/_tool_opposed_check`（tools.py:97-117）不新增玩家分支——掷骰本身仍是引擎
 结算，AI PC 不参与（铁律）；只把 `_ask_player_roll`（tools.py:90-95）的人类按钮门控
 改为：`if member is self.state.player and hasattr(self.ui, "ask_roll") \
 and not (self.harness_session and self.harness_session.aipc):`。
-AI PC 模式下玩家的检定/豁免与同伴一样自动落骰，`ui.check_line` 照常播骰动画。
+AI PC 模式下玩家的技能检定与对抗检定与同伴一样自动落骰，`ui.check_line` 照常播骰动画。
 
 ### 2.4 探索 free_input（session.py:411-460 `ai_explore_turns`）
 
@@ -430,7 +431,7 @@ AI PC 模式下玩家的检定/豁免与同伴一样自动落骰，`ui.check_lin
 
 ```python
 def ai_explore_turns(self, scene: dict) -> str:
-    self.ui.system_line("输入行动或对白；/状态 /背包 /短休 /长休 /喝药 /购买 /保存 /退出 为指令。")
+    self.ui.system_line("输入行动或对白；/状态 /背包 /义体 /急救 /稳定 /休整 /购买 /存档 /退出 为指令。")
     while True:
         if self.aipc is not None:
             cmd = self.aipc.poll_command(0.4)      # 人类旁听指令（非阻塞，§2.8）
@@ -458,7 +459,7 @@ def ai_explore_turns(self, scene: dict) -> str:
 1. `reg = self._registry(explore=True)`（say / explore_intent / explore_act）；
 2. task = `build_context_block(lead="以 {name} 的身份行动：先考虑要不要说话，再行动。"
    "用 explore_intent 声明你的行动意图（引擎会交给 DM 推进），闲聊用 say，"
-   "休整买药等用 explore_act。", scene=…, party=…, flags=…, table=_digest_table 前的 table_log,
+   "休整、急救、购买等用 explore_act。", scene=…, party=…, flags=…, table=_digest_table 前的 table_log,
    last_narration=self._last_narration)`；
 3. `result = loop.run(agent, aipc_session, task, context_messages=…, registry=reg,
    guard_dup=DuplicateCallGuard())` → `session._record_usage(agent, result)`（记账，§7.2）；
@@ -469,7 +470,7 @@ def ai_explore_turns(self, scene: dict) -> str:
      会把它们与意图一并消化，同伴的 `_recent`（social.py:261-269）同样可见；
    - 无 intent 但有 say → 取最后一句 say 的台词作为节拍输入：`social.beat(台词)`
      （人类模式"说话即输入"，AI 模式语义对齐：同伴可反应、DM/NPC 会接话）；
-   - 无 intent/say 但有**面向世界**的 explore_act（rest_short/rest_long/drink_potion/buy）
+   - 无 intent/say 但有**面向世界**的 explore_act（rest_day/stabilize/first_aid/repair_armor/buy）
      → `dm_turn(f"（{玩家名} 刚完成了{动作描述}。）")` 让世界回应；
    - 全程无工具（纯文本收束），或只有 save/state/inventory 这类纯 UI 行动 →
      以 `dm_turn(f"（{玩家名} 按兵不动。）")` 兜底推进，防止无限空转；
@@ -536,16 +537,16 @@ AI PC 会开启一场自己永远无法发言的辩论。必须把 by_name 改�
 `_pc_debate_turn` 与 `_social_agent` 按 `pc_agents[pc.name]` 取 agent
 （social.py:137,222-225），玩家与同伴共用，无需再改。
 
-### 2.7 检定/豁免掷骰（tools.py:90-117）
+### 2.7 技能/对抗检定掷骰（tools.py:90-117）
 
 见 §2.3：`_ask_player_roll` 门控后，AI PC 模式下 DM 发起的 `skill_check(玩家,…)`/
-`save_roll(玩家,…)` 自动落骰（引擎结算不变），不再阻塞等待人类点击。
+`opposed_check(玩家,…)` 自动落骰（引擎结算不变），不再阻塞等待人类点击。
 webui 的 `ask_roll`（webui.py:134-140）在 AI PC 对局中不会被调用；人类仍能从骰子动画
 （`ui.check_line`）看到结果。其余 UI 无 `ask_roll` 属性的路径本就自动落骰。
 
 > 按深度注入接线取舍：P0 的注入全部经 `build_context_block`（= depth 0 的 user 注入，
 > 现状最接近物，〔ST 规格 §11 #8〕）；`inject_at_depth` 真插桩需要给
-> `DefaultAgentLoop.run` 加可选 kwarg（如 `post_build: Callable[[list[dict]], list[dict]]`，
+> **（1.7.0 已落地）** `DefaultAgentLoop.run` 加可选 kwarg（如 `post_build: Callable[[list[dict]], list[dict]]`，
 > loop.py:160-166 追加参数、默认 None，向后兼容）——列入 P1，届时 AN/WI@D 才能落在
 > 历史中段。
 
@@ -556,23 +557,25 @@ webui 的 `ask_roll`（webui.py:134-140）在 AI PC 对局中不会被调用；�
 | `ui.free_input`（session.py:414，探索主输入） | `AIPCController.explore_beat()`（§2.4） |
 | `ui.choose` 战斗菜单（session.py:689/699 及全部子菜单 L750-1027） | `companion_turn → _pc_agent_turn → combat_action 工具`（§2.5） |
 | `ui.free_input` 战斗说话（session.py:869——实为自由输入，非 choose） | agent 回合内 `say` 工具（PC_SYSTEM_TEMPLATE 已提示，agents.py:71） |
-| `ui.choose` 施法额外目标（session.py:1071 free_input） | 不触达（AI PC 走 `cast` 工具，tools.py:233-235 支持逗号多目标） |
+| `ui.choose` 攻击目标选择（session.py:1071 free_input） | 不触达（AI PC 走 `combat_action` 的 `target` 字段） |
 | `open_shop` 的 `ui.choose` 菜单（session.py:1311-1329；AI 的 explore_act("buy") 与人类旁听 /购买 都会触及） | AI：`explore_act(kind="buy", item=…)` 只走非交互 `buy_good`（§2.3），毫秒级、无工具超时；人类旁听 /购买：`system_line` 列货单与价目（只读、不阻塞），购买决策归 AI PC |
-| `ui.choose` 反应询问（session.py:554） | 恒不触发反应（`return None`，与同伴现状一致——combat.py:1420-1423 使引擎自动规则分支在 AI 模式不可达，§2.6） |
+| `ui.choose` 反应询问（闪避子弹/借机攻击，session.py:554） | 恒不触发询问（`return None`，与同伴现状一致——RED 的反应由引擎按规则自动结算，不再回头问玩家，§2.6） |
 | `ui.ask_roll` 掷骰按钮（tools.py:94 → webui.py:134） | 门控跳过，自动落骰（§2.7） |
-| `ui.choose` 短休生命骰（session.py:1280-1284） | `spend_dice=None`（character.py:662-666 自动花到回满/骰尽，与同伴同款，零 LLM） |
-| `ui.choose` 升级 ASI/专长/流派（session.py:184-283） | `apply_default_choices()`（session.py:168-169 同伴路径；character.py:835） |
+| `ui.choose` 建卡表单（挑选预设角色） | 不触达（AI PC 开局直接采用模组 `pregens` 里的预设角色卡） |
+| `ui.choose` 改进点（IP）花费菜单（session.py:184-283） | 默认策略自动花完（先升职业特殊能力、再补主用技能，零 LLM） |
 | `ui.free_input`（webui.py:142 人类唯一自由输入） | 保留为**旁听指令**通道（见下） |
 
-**已知能力缺口（如实声明）**：`combat_action` 的 `use_item` 分支不接收 target
-（tools.py:257-258 只调 `enc.use_item(pc, item)`），action 枚举亦无 `stabilize`——
-人类战斗菜单的"喂药（救起倒地队友）/医疗包/稳定伤势"（session.py:717-722、835-867；
-引擎能力存在：`enc.use_item(c, item, target)` 与 `enc.stabilize`）未暴露给 LLM 决策面。
-AI PC（与同伴现状完全相同）无法经 LLM 决策救援倒地队友，只能依赖启发式兜底
-（`_scripted_pc_turn` 的喂药/稳定分支 session.py:1157-1170 自动执行）。P0 不扩
-combat_action schema——那会改变 AI 模式下同伴收到的工具面，破坏"开关关闭零变化"；
+**已知能力缺口（如实声明）**：RED 的动作面已经把救援能力交给 LLM——
+`combat_action` 的 `stabilize(target)`（技术 + 急救/医疗救援对抗难度值，把濒死者的
+PW 拉回 1）与 `first_aid(target,index)`（急救固定一处致命伤，当天不再受影响）都接收
+target，`flee`（脱离战斗）也在枚举里。仍然缺的是 `use_item`：它不接收 target
+（tools.py 只调 `enc.use_item(pc, item)`），因此"把急救包/医疗包递给倒地队友"
+仍需人类战斗菜单操作（引擎能力存在：`enc.use_item(c, item, target)`）。
+AI PC（与同伴现状完全相同）在这条路径上只能依赖启发式兜底
+（`_scripted_pc_turn` 的救援分支自动执行）。P0 不扩 combat_action schema——
+那会改变 AI 模式下同伴收到的工具面，破坏"开关关闭零变化"；
 P2 可在 AI PC 专属 registry 上 dispose 原 `combat_action` 并注册加宽版
-（use_item 加 target、新增 stabilize），仅 AI PC 生效。
+（`use_item` 加 target），仅 AI PC 生效。
 
 **旁听指令**（AI PC 模式下人类保留的唯一入口，P0 必做——/退出 与降级需要它）：
 - `WebUI` 新增：`pending` 之外维护 `self._command: str | None`（锁内读写）；
@@ -584,33 +587,29 @@ P2 可在 AI PC 专属 registry 上 dispose 原 `combat_action` 并注册加宽�
 - 战斗进行中不 poll（回合编排是同步循环）；人类中断战斗只能用既有的"放弃本局"
   （`#btn-reset` → `/api/reset` → `ui.abort()`，server.py:250-256）。
 
-### 2.9 升级选择（session.py:164-172）
+### 2.9 改进点（IP）花费（session.py `resolve_pending_choices`）
 
 ```python
-def _resolve_level_up_choices(self, c: Character) -> None:
-    if not c.pending_feature_choices():
+def _resolve_member_ip(self, c: Character) -> None:
+    if c.ip <= 0 or c.is_dead:
         return
-    if c is not self.state.player:
-        c.apply_default_choices()
+    if c is not self.state.player or self.aipc is not None:
+        self._auto_spend_ip(c)         # 同伴 / AI 代打的玩家：默认策略
         return
-    if self.aipc is not None:              # 新增一行
-        c.apply_default_choices()
-        return
-    for need in c.pending_feature_choices():
-        self._ask_feature_choice(c, need)
+    self._ask_ip_choice(c)             # 人类玩家：ui.choose 菜单
 ```
 
-同伴默认选择逻辑（character.py:835-879）无任何 UI 调用，同伴路径今天也不打印摘要
-——AI PC 升级选择同样**静默**，人类从侧栏队伍快照（等级/法术位变化）感知。
-P2：让 AI PC 在卡人设口吻下从选项中挑选（1-step 循环 +
-`choose_feature` 工具，结果仍走 `fc[…]` 赋值，数值面零新增）。
+RED 没有等级系统，成长只有两条路：技能（20 × 新等级，×2 技能翻倍）与
+职业特殊能力（60 × 新等级），属性不可提升。默认策略（`_auto_spend_ip`）无任何 UI 调用：
+先把职业能力顶上去，再补主用技能（枪械/近战/闪避/潜行/感知/急救/医疗救援/运动/说服）。
+AI PC 的花费同样**静默**，人类从侧栏队伍快照（技能与职业能力变化）感知。
+P2：让 AI PC 在卡人设口吻下挑选优先提升的技能（1-step 循环 +
+`spend_ip` 工具，结果仍由引擎 `raise_skill`/`raise_role` 落账，数值面零新增）。
 
-**既有双路径不一致的收敛（术士龙脉 HP）**：`origin=draconic` 的 HP 补差只在交互路径
-（session.py:260-262 `c.hp_max += c.level; c.hp_cur = c.hp_max`），而
-apply_default_choices 的 origin 分支（character.py:864-865）不补——AI PC 术士走
-默认选择会少 +level HP。P0 把补差抽成 `_apply_origin_fixup(c)`，交互分支与 aipc
-分支共用（交互路径=代码平移、行为不变；同伴仍直接走 apply_default_choices、
-不经过该函数，行为不变）。
+**既有双路径不一致的收敛（卡面数值补差）**：某些创建期补差此前只在交互路径生效，
+AI PC 走默认策略时不补，两条路径结果不一致。P0 把补差抽成公共 helper
+（`_apply_*_fixup(c)`），交互分支与 aipc 分支共用（交互路径=代码平移、行为不变；
+同伴仍直接走默认策略、不经过该函数，行为不变）。
 
 ---
 
@@ -655,7 +654,7 @@ data["aipc"] = {
   `description / personality / mes_example / system_prompt`（各 ≤2000 字符，纯文本），
   `card_from_player(ch, …)` 组卡；AI PC 开关 `aipc_enabled` 亦随 start spec 传入。
 - **终端建卡**：P0 不加交互项（`create_player_console` 不动），终端玩家用环境变量
-  `CTRCG_AIPC=1` 开启 + 兜底卡（card_from_player 的默认文案：种族·职业·背景 + TACTICS）
+  `CTRCG_AIPC=1` 开启 + 兜底卡（card_from_player 的默认文案：职业·街头身份 + TACTICS）
   （终端模式无旁听指令，/退出 走 Ctrl+C，见 §2.1 poll_command）。
 - **同伴**：`card_from_companion(module.companions[i])` 仅 P1 世界书挂载时消费；
   P0 同伴提示词构造路径不动（make_pc_agent，agents.py:117-129 原样保留）。
@@ -719,27 +718,27 @@ data["aipc"] = {
 新增 `tests/test_aipc.py`，全部沿用 test_game.py / test_social.py 的既有手法：
 `ScriptedAdapter(script=[ModelResponse(...)])` 或 handler 按 system prompt 中的名字发牌
 （test_social.py:38-69 的 `TableScript` 模式）。基座 fixture 复用 test_game.make_state
-（凯尔 + 默认三人组）。
+（Kyle + 默认三人组）。
 
 | 测试 | 断言要点 |
 |---|---|
 | `test_aipc_off_zero_change` | 不 attach 的 AI 模式对局：`player_combat_turn` 仍走 `ui.choose`（AutoUI 脚本计数）、`social.reaction_wave` speakers=3 同伴、`_ask_player_roll` 仍触发 `_RollGateUI.rolls_asked`、存档无 `aipc` 键时 `enabled=False` |
 | `test_aipc_explore_takeover` | script=[`explore_intent{"text":"检查箱子"}`, 收束] → `dm_turn` 收到含"检查箱子"的输入；`ui.free_input` 从未被调（AutoUI 打桩） |
-| `test_aipc_explore_act` | script=[`explore_act{"kind":"rest_short"}`] → 全队 HP 走 `short_rest` 结算、无 LLM 参与数值 |
+| `test_aipc_explore_act` | script=[`explore_act{"kind":"rest_day"}`] → 全队 PW 走休整结算（每个完整休息日恢复等于体格的 PW）、无 LLM 参与数值 |
 | `test_aipc_tools_schema_full` | 探索 beat 的 `adapter.calls[-1]["tools"]` 含 explore_act、战斗回合含 combat_action（守护 Agent.tool_names=[] 的全量下发——registry.py:53-56 空列表语义；若误用 agents.py:128 的列表，schema 过滤会静默吞掉 explore_act） |
-| `test_aipc_no_tool_keeps_moving` | script=[纯文本] → `dm_turn("（凯尔 按兵不动。）")` 被调用，探索循环不空转 |
-| `test_aipc_combat_takeover` | script=[`combat_action{"action":"attack","weapon":"longsword"}`] → `enc.log` 有攻击行、`AutoUI.choose` 计数为 0；`tool_trace` 命中 combat_action |
+| `test_aipc_no_tool_keeps_moving` | script=[纯文本] → `dm_turn("（Kyle 按兵不动。）")` 被调用，探索循环不空转 |
+| `test_aipc_combat_takeover` | script=[`combat_action{"action":"attack","weapon":"very_heavy_pistol"}`] → `enc.log` 有攻击行、`AutoUI.choose` 计数为 0；`tool_trace` 命中 combat_action |
 | `test_aipc_combat_fallback` | BoomAdapter → `companion_turn` 落 `_scripted_pc_turn`，`enc.log` 增长（同 test_game.py:159-183 手法） |
-| `test_aipc_roll_gate_bypassed` | aipc 开启时 `tools._tool_skill_check("凯尔",…)` → `_RollGateUI.rolls_asked == []` 且结果含 total（引擎结算） |
-| `test_aipc_reaction_no_menu` | aipc 开启时 `_reaction_prompt(玩家, {"reaction":"shield"})` 返回 None 且不触 ui.choose——战斗中恒不触发反应（combat.py:1420-1423 `bool(None)=False`，与同伴现状一致；测试只守护"不弹人类菜单"，不声称"自动触发"）；关闭时走 ui.choose |
-| `test_aipc_short_rest_no_prompt` | aipc 开启时 `party_short_rest()` 不调 `ui.choose`，玩家生命骰按 None 策略花掉 |
-| `test_aipc_level_up_defaults` | 4 级战士 pending ASI → `feature_choices["asi"]` 为同伴默认值，无 ui.choose |
-| `test_aipc_in_social_wave` | TableScript 给凯尔发 say 牌 → `reaction_wave` 返回含玩家行、`table_log` 记账、DM 上下文含其插话；抢话排序含玩家 |
+| `test_aipc_roll_gate_bypassed` | aipc 开启时 `tools._tool_skill_check("Kyle",…)` → `_RollGateUI.rolls_asked == []` 且结果含 total（引擎结算） |
+| `test_aipc_reaction_no_menu` | aipc 开启时 `_reaction_prompt(玩家, {"reaction":"evade"})` 返回 None 且不触 ui.choose——战斗中恒不弹人类菜单（与同伴现状一致；测试只守护"不弹菜单"，不声称"自动触发"）；关闭时走 ui.choose |
+| `test_aipc_rest_day_no_prompt` | aipc 开启时休整不调 `ui.choose`，玩家的 PW 恢复与同伴走同一条引擎结算路径 |
+| `test_aipc_ip_defaults` | 同伴带着改进点（IP）入场 → 走默认花费策略（先升职业能力、再补主用技能），无 ui.choose |
+| `test_aipc_in_social_wave` | TableScript 给Kyle发 say 牌 → `reaction_wave` 返回含玩家行、`table_log` 记账、DM 上下文含其插话；抢话排序含玩家 |
 | `test_debate_player_can_speak` | 玩家 stance=object 进辩论后 `_debate_round` 给玩家发牌（by_name 修复的回归测试）：玩家第二轮仍能申辩或 agree 退出；修复前玩家首轮即被"淘汰"（social.py:198-204 发牌过滤、social.py:180-181 conceded 判定） |
 | `test_aipc_say_reaches_table` | explore beat 仅发 `say{"text":"…纹章…","to":"商人"}` → `table_log` 出现 kind=table 行、后续 DM 上下文含【桌上插话】与该句（`_digest_table` 消化）；say-only 节拍触发 `social.beat(台词)` 而非"按兵不动"兜底 |
-| `test_aipc_buy_noninteractive` | 商店场景 script=[`explore_act{"kind":"buy","item":"healing_potion"}`] → 金币按 SHOP_GOODS 价目扣减、库存 +1、全程零 ui.choose、无工具超时；非商店场景或金币不足返回 ok=False |
+| `test_aipc_buy_noninteractive` | 商店场景 script=[`explore_act{"kind":"buy","item":"first_aid_kit"}`] → 欧元按 SHOP_GOODS 价目扣减、库存 +1、全程零 ui.choose、无工具超时；非商店场景或欧元不足返回 ok=False |
 | `test_aipc_llm_down_explore_hands_back` | BoomAdapter + aipc → `explore_beat()` 返回 False，循环回到 `ui.free_input`，system 行提示降级 |
-| `test_macros_render` | `{{user}}/{{char}}`、嵌套 `{{upper::{{char}}}}` 式两层、`\{\{x\}\}` 转义、未识别宏原样保留、`{{roll::1d20}}` 同 seed 确定 |
+| `test_macros_render` | `{{user}}/{{char}}`、嵌套 `{{upper::{{char}}}}` 式两层、`\{\{x\}\}` 转义、未识别宏原样保留、`{{roll::1d10}}` 同 seed 确定 |
 | `test_assemble_system_order` | system 分段顺序 = main→wiBefore→persona→description→personality→scenario→wiAfter→examples；`card.system_prompt` 覆盖 main 且 `{{original}}` 展开 |
 | `test_fit_to_budget_sacrifice` | 预算不足时示例块先整块消失、常驻字段保留（§7 牺牲顺序） |
 | `test_worldinfo_scan` | constant 先入选；order 大者保留、小者丢；AND_ANY/NOT_ANY 副键逻辑；CJK 子串命中、ASCII 全词不误中（"king" 不中 "liking"）；预算即停不回删 |
@@ -772,7 +771,7 @@ data["aipc"] = {
 
 | 文件 | 改动 |
 |---|---|
-| `ctrcg/game/session.py` | `__init__` 增加 `self.aipc=None` 属性（构造后由 attach 赋值）；`ai_explore_turns` 三段化 + `_handle_explore_command`/`_post_beat` 抽取（`_post_beat` 内部按 scene_id 重取 scene（session.py:454）、返回 "end" 并向上传播，session.py:459-460）；从 `open_shop` 抽出非交互 `buy_good(key)`（§2.3）；抽 `_apply_origin_fixup(c)` 供交互与 aipc 升级分支共用（§2.9）；`player_combat_turn` 顶部分支（§2.5）；`_reaction_prompt` 玩家分支门控（§2.6）；`party_short_rest` 玩家骰分支（§2.8 表）；`_resolve_level_up_choices` 玩家分支（§2.9）；`enter_scene` 末尾 `aipc.refresh()`（§2.2） |
+| `ctrcg/game/session.py` | `__init__` 增加 `self.aipc=None` 属性（构造后由 attach 赋值）；`ai_explore_turns` 三段化 + `_handle_explore_command`/`_post_beat` 抽取（`_post_beat` 内部按 scene_id 重取 scene（session.py:454）、返回 "end" 并向上传播，session.py:459-460）；从 `open_shop` 抽出非交互 `buy_good(key)`（§2.3）；抽卡面数值补差 helper 供交互路径与 aipc 花费分支共用（§2.9）；`player_combat_turn` 顶部分支（§2.5）；`_reaction_prompt` 玩家分支门控（§2.6）；休整/修甲的玩家分支（§2.8 表）；`resolve_pending_choices` 的玩家分支（§2.9）；`enter_scene` 末尾 `aipc.refresh()`（§2.2） |
 | `ctrcg/game/tools.py` | `_ask_player_roll` 门控加 aipc 条件（§2.3）；新增 `register_aipc_tools`（say 带桌面记账、explore_intent、explore_act 含非交互 buy）+ `_aipc_say`/`_tool_explore_act` |
 | `ctrcg/game/social.py` | `reaction_wave` speakers 改 `party() ∩ pc_agents`（§2.6）；**`_debate_round` 的 `by_name` 从 `state.companions` 改为 `party() ∩ pc_agents` 查找**（否则玩家被邀请进辩论却永远无法发言、首轮即"被说服"，social.py:198-204）；`beat` trigger 文案参数化（默认值不变）；talkativeness 钩子留 P2 |
 | `ctrcg/game/state.py` | `GameState` 三个新字段；`save_game`/`load_game` 的 `aipc` 块（§3.1/§3.2） |
@@ -838,7 +837,7 @@ data["aipc"] = {
   None（§2.1）→ `build_session` 降级为无 aipc 并 system 提示；存档照常。
 - **玩家死亡**：combat 分支内 `companion_turn` 只在 `enc.alive(c)` 后调用；
   TPK 判定（session.py:643-646）不经过 AI PC，语义不变。
-- **野变/昏迷/濒死**：全部数值面在引擎，AI PC 仅"决策输入"，与同伴同权。
+- **昏迷/濒死/被控制**：全部数值面在引擎，AI PC 仅"决策输入"，与同伴同权。
 - **循环卫生**：探索 beat 最多 4 步（StepBudgetGuard(4)，同 social loop）；单拍内无
   工具收束即兜底 dm_turn（§2.4，无跨拍计数），DuplicateCallGuard 抑制重复
   explore_intent。
@@ -862,7 +861,7 @@ data["aipc"] = {
 - **P2**：swipe 行动候选（每回合 2 候选，`Session.log` 增 `swipe` 事件存候选+选中，
   UI 左右切换；LLM 故障/省时降级单候选）；talkativeness 数值化（`reaction_wave`
   概率激活，roll < talkativeness 才进决策；空波随机补 1 人，〔ST 规格 §9〕）；
-  AI PC 反应/短休/升级的 LLM 决策化；开场 `first_mes` + `alternate_greetings`
+  AI PC 的休整/急救固定/购买/改进点花费的 LLM 决策化；开场 `first_mes` + `alternate_greetings`
   swipe 换开场。
 - **不做**：PNG/charx 角色卡导入导出、向量检索世界书、群聊 auto 模式定时器、
   Continue 续写、Impersonate、消息级 include-exclude、`{{setvar}}` 系变量宏

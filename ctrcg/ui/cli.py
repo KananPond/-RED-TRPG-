@@ -41,7 +41,9 @@ class ConsoleUI:
     def check_line(self, result: dict, context: str = "") -> dict:
         verdict = "成功" if result.get("success") else "失败"
         label = result.get("check") or result.get("save") or ""
-        self._out(f"  🎲 {result['who']} {label}检定（DC{result['dc']}）"
+        who = result.get("who", "")
+        dv = result.get("dv", result.get("dc"))
+        self._out(f"  🎲 {who} {label}检定（DV{dv}）"
                   f"{result.get('detail', '')} → {verdict}"
                   + (f"（{context}）" if context else ""))
         return result
@@ -52,13 +54,15 @@ class ConsoleUI:
     def roll_event(self, ev: dict) -> None:
         """战斗骰子事件：终端下并入日志行（WebUI 会播放动画）。"""
         kind = ev.get("kind", "roll")
-        d = ev.get("d20")
+        d = ev.get("d10")
         if d is None:
             return
-        tag = {"attack": "攻击", "save": "豁免", "death": "死亡豁免",
+        tag = {"attack": "攻击", "save": "生存检定", "death": "生存检定",
                "check": "检定"}.get(kind, "")
         self._out(f"  🎲 {ev.get('who', '')} {ev.get('label', '') or tag}"
-                  f"：d20={d}（共 {ev.get('total', '?')}）")
+                  f"：d10={d}（共 {ev.get('total', '?')}"
+                  + (f" vs DV {ev['dv']}" if ev.get("dv") is not None else "")
+                  + "）")
 
     def system_line(self, text: str) -> dict:
         self._out(f"\n✦ {text}")
@@ -72,6 +76,21 @@ class ConsoleUI:
         self._out(f"  第{act}幕 · {act_title.replace(f'第{act}幕：', '')}")
         self._out(f"  ◈ 场景：{location}")
         self._out("=" * 62)
+
+    def map_update(self, brief: dict | None) -> None:
+        """战术地图：终端只记录快照（/地图 指令查看），不刷屏。"""
+        self.last_map = brief
+
+    def map_lines(self) -> list[str]:
+        """当前地图的文本态势（/地图 指令用）。"""
+        m = getattr(self, "last_map", None)
+        if not m or not m.get("grid"):
+            return ["（本局没有战术地图。）"]
+        out = [f"—— {m['label']}（{m['grid'][0]}×{m['grid'][1]} 格，1格=2米）——"]
+        for t in m.get("tokens", {}).values():
+            x, y = t["cell"]
+            out.append(f"  ◈ {t['name']}（{t['kind']}）@ ({x},{y})")
+        return out
 
     def status_board(self, lines: list[str]) -> None:
         self.last_status = list(lines)
@@ -103,9 +122,13 @@ class AutoUI(ConsoleUI):
 
     def _own_hp(self, name: str) -> tuple[int, int] | None:
         for ln in self.last_status:
-            if ln.strip().startswith("◆") and name in ln and "HP" in ln:
+            if not ln.strip().startswith("◆") or name not in ln:
+                continue
+            for tag in ("PW", "HP"):
+                if tag not in ln:
+                    continue
                 try:
-                    seg = ln.split("HP")[1].split(",")[0].strip()
+                    seg = ln.split(tag, 1)[1].split(",")[0].strip()
                     cur, mx = seg.split("/")
                     return int(cur), int(mx)
                 except (ValueError, IndexError):
@@ -116,13 +139,13 @@ class AutoUI(ConsoleUI):
         if prompt != getattr(self, "last_prompt", None):
             self.last_prompt = prompt
             self.rested = False
-        # 战斗自保：残血优先回气（每场一次），再喝药
+        # 战斗自保：残血优先其他手段（止痛/回气），再喝药
         if self.mode == "combat" and "攻击" in " ".join(options):
-            hp = self._own_hp("凯尔")
+            hp = self._own_hp("Forty")
             if hp and hp[0] < hp[1] * 0.5:
                 if not getattr(self, "sw_used", False):
                     for i, opt in enumerate(options):
-                        if "回气" in opt:
+                        if "回气" in opt or "痛觉" in opt:
                             self.sw_used = True
                             return i
                 for i, opt in enumerate(options):
@@ -131,18 +154,18 @@ class AutoUI(ConsoleUI):
         # 探索：每个场景先休整一次再推进
         if self.mode == "explore" and not getattr(self, "rested", False):
             for i, opt in enumerate(options):
-                if "队伍长休" in opt:
+                if "长休" in opt or "休整" in opt:
                     self.rested = True
                     return i
-        # 队友倒地：优先喂药救起，其次稳定伤势
+        # 队友倒地：优先喂药救起，其次稳定伤势/急救固定
         for i, opt in enumerate(options):
             if "喂药" in opt:
                 return i
         for i, opt in enumerate(options):
-            if "稳定" in opt:
+            if "稳定" in opt or "急救" in opt:
                 return i
         # 优先级：攻击 > 前进/前往 > 检定 > 其余第一项
-        for key in ("攻击", "前进", "前往", "调查", "施展", "帮助", "喝", "继续"):
+        for key in ("攻击", "前进", "前往", "调查", "开火", "购买", "喝", "继续"):
             for i, opt in enumerate(options):
                 if key in opt:
                     return i
@@ -151,5 +174,5 @@ class AutoUI(ConsoleUI):
     def free_input(self, prompt: str) -> str:
         self.turn_count += 1
         if self.mode == "combat":
-            return "攻击最近的敌人！"
-        return "继续前进，留意四周。"
+            return "用最好的武器攻击最近的敌人！"
+        return "继续前进，留神掩体与枪口。"

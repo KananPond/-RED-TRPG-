@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DND · 星坠矿脉的阴影 · CTRCG 跑团手记</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23b08a3e' d='M12 1L2 6.5 12 23l10-16.5L12 1z'/%3E%3C/svg%3E">
+<title>CPRED · 赛博朋克 RED · CTRCG 跑团手记</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23c8443c' d='M12 1 3 6.2v11.6L12 23l9-5.2V6.2L12 1z'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -15,12 +15,15 @@
   <!-- 主页 -->
   <section id="view-home" class="start-view">
     <div class="home-head">
-      <p class="home-kicker">CTRCG 跑团手记 · 被遗忘的大陆</p>
-      <h1 class="dnd-logo" aria-label="DND">D<span class="dnd-n">N</span>D</h1>
-      <p class="home-sub">单 人 A I 跑 团 · D&amp;D 5e</p>
+      <p class="home-kicker">CTRCG 跑团手记 · 夜之城 2045</p>
+      <h1 class="brand-logo" aria-label="CYBERPUNK RED">CYBERPUNK <span class="brand-x">RED</span></h1>
+      <p class="home-sub">单 人 A I 跑 团 · 赛 博 朋 克 R E D</p>
       <p class="home-rule"><span>◆</span></p>
     </div>
     <nav class="home-menu">
+      <button class="home-btn" data-view="story">
+        <span class="hb-icon">❖</span><b>剧本模式</b><small>互动剧 · 分支选择 · 多结局</small>
+      </button>
       <button class="home-btn" data-view="new">
         <span class="hb-icon">✶</span><b>新的冒险</b><small>选择模组 · 创建角色</small>
       </button>
@@ -70,6 +73,15 @@
     <div id="create-form"></div>
   </section>
 
+  <!-- 剧本模式（互动剧） -->
+  <section id="view-story" class="start-view panel hidden">
+    <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
+      <h2 class="panel-title">剧本模式 · 互动剧</h2><span class="panel-nav-sp"></span></div>
+    <p class="hint">自写分支剧本：你的选择决定走向；检定由规则引擎掷骰，PW 归零即进入死亡结局。
+    结局图鉴记录你达成的每一种结局。</p>
+    <div id="story-list"><p class="hint">正在读取…</p></div>
+  </section>
+
   <!-- 存档 -->
   <section id="view-saves" class="start-view panel hidden">
     <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
@@ -82,16 +94,29 @@
     <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
       <h2 class="panel-title">帮助</h2><span class="panel-nav-sp"></span></div>
     <div class="help-body">
+      <h3>模式</h3>
+      <p>· <b>剧本模式（互动剧）</b>：自写分支剧本（随模组分发）。选择主角后由你的选择决定走向，
+      检定由规则引擎掷骰，PW 归零即死亡结局；结局图鉴记录进度。<br>
+      · <b>AI 模式</b>：DM 与队友由 AI Agent 扮演。直接输入行动或对白，DM 裁决后由规则引擎执行。<br>
+      · <b>经典模式（离线）</b>：未接入 LLM 时按模组数据推进，规则引擎代管剧情与队友。</p>
       <h3>玩法</h3>
-      <p>你控制自己创建的角色；DM 与其他队友由 AI Agent 扮演。探索时直接输入行动或对白
-      （AI 模式），或按菜单选择（剧本模式）；战斗按回合从底部按钮选择动作。
-      指令：<code>/状态 /背包 /短休 /长休 /保存 /退出</code>。</p>
-      <h3>规则速查（D&amp;D 5e）</h3>
-      <p>· d20 + 调整值 vs DC；优势与劣势同时存在时互相抵消。<br>
-      · 命中 AC 造成伤害，天然 20 暴击（伤害骰翻倍），天然 1 必失。<br>
-      · 0 HP 进入死亡豁免：3 次成功稳定、3 次失败身亡，伤害会自动记一次失败。<br>
-      · 专注法术受创需体质豁免；黑暗中无黑暗视觉攻击劣势（记得带火把）。<br>
-      · 里程碑升级：关键剧情后全队升级（模组内定义）。</p>
+      <p>建卡不掷骰：从模组的<b>预设角色</b>（职业、十项属性、技能与装备都已定好）里挑一个，
+      填上你的名字或街头绰号，再点几名预设角色作为 AI 队友同行。<br>
+      探索时直接输入行动或对白（AI 模式），或按菜单选择（经典模式）；战斗按回合从底部按钮选择动作。
+      指令：<code>/状态 /背包 /义体 /急救 /稳定 /休整 /购买 /存档 /退出</code>。</p>
+      <h3>规则速查（赛博朋克 RED · 轻松模式）</h3>
+      <p>· 技能检定 = <b>1d10 + 属性 + 技能等级</b>，必须<b>高于</b>难度值 DV（PT）才算成功；平手时防守方获胜。
+      难度值五档：13 日常 / 15 困难 / 17 专业 / 21 英雄 / 24 不可思议。<br>
+      · 掷出 <b>10</b> 暴击成功（再掷一颗 d10 相加），掷出 <b>1</b> 暴击失败（再掷一颗 d10 相减）。
+      没有优势/劣势：可投入幸运点（每点 +1）、辅助技能 +1、投入四倍时间 +1。<br>
+      · PW（生命值）= 10 + 5 × ⌈(体格 + 意志力) ÷ 2⌉；PW 掉到一半即<b>重伤</b>（所有检定 -2），掉到 1 以下<b>濒死</b>（-4，移动 -6）。<br>
+      · 伤害先扣护甲 SP（每次挡下伤害后 SP -1，即磨损），再扣 PW；白刃战无视一半护甲。
+      伤害骰出现两个 6 即触发<b>致命伤</b>（2d6 表，附加无视护甲的伤害）。<br>
+      · 濒死时每回合开始掷生存检定（1d10，低于门槛 10 + 累积 + 致命伤才活下来，掷出 10 自动失败）；
+      <code>/稳定</code> 可把门槛归零，<code>/休整</code> 每个完整休息日恢复等于体格的 PW。<br>
+      · 成长用<b>改进点 IP</b>（没有等级与经验值）：技能 = 20 × 新等级（×2 技能翻倍），
+      职业特殊能力 = 60 × 新等级；属性不可提升。货币是<b>欧元（eb）</b>。<br>
+      · 义体（cyberware）提供强化，但每件都扣<b>人性</b>；人性上限 = 共情 × 10。</p>
       <h3>接入 DeepSeek / GLM / Kimi / MiniMax</h3>
       <p>到「设置 → API 配置」选择供应商并填入密钥即可；也支持环境变量方式
       （<code>CTRCG_LLM_API_KEY</code> 或供应商官方变量如 <code>DEEPSEEK_API_KEY</code>）。
@@ -99,9 +124,11 @@
       <h3>自己写模组</h3>
       <p>每个模组是一个自包含 JSON 文件：<code>modules/&lt;id&gt;/module.json</code>，
       放入后即可被加载。完整规范见项目内 <code>docs/MODULE_SPEC.md</code>，
-      内置模组 <code>modules/starfall/module.json</code> 就是现成模板；
+      内置模组 <code>modules/cpred-easy-mode/module.json</code> 就是现成模板
+      （含 <code>pregens</code> 预设角色与 <code>default_companions</code>）；
       也可在「新的冒险」页用 AI 一键生成。</p>
     </div>
+    <div id="rulebook" class="help-body"></div>
   </section>
 
   <!-- 设置 -->
@@ -151,7 +178,7 @@
         </label>
         <button class="btn ghost" id="snd-test" style="width:auto;padding:7px 14px">试听</button>
       </div>
-      <div class="hint">骰子、命中、升级与终局各有音效；设置保存在本浏览器。</div>
+      <div class="hint">骰子、命中、暴击、改进点与终局各有音效；设置保存在本浏览器。</div>
     </div>
 
     <div class="divider"></div>
@@ -170,16 +197,17 @@
 <div id="app" class="hidden">
   <header id="topbar">
     <div class="brand">
-      <svg class="d20" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1 2.5 6.7 12 23l9.5-16.3L12 1zm0 2.3 6.9 3.9L12 19.6 5.1 7.2 12 3.3z"/><path d="M12 5.2 6.6 8.6 12 17l5.4-8.4L12 5.2z" opacity=".55"/></svg>
+      <svg class="d10" viewBox="0 0 24 24" aria-hidden="true"><path class="die-body" d="M12 1 3 6.2v11.6L12 23l9-5.2V6.2L12 1z"/><path class="die-inner" d="M12 4 6 7.5v9L12 20l6-3.5v-9L12 4z"/></svg>
       <div class="brand-text">
-        <span class="brand-title" id="brand-title">星坠矿脉的阴影</span>
-        <span class="brand-sub" id="brand-sub">Shadows over the Starfall Mine</span>
+        <span class="brand-title" id="brand-title">赛博朋克 RED：轻松模式</span>
+        <span class="brand-sub" id="brand-sub">Cyberpunk RED · Easy Mode</span>
       </div>
     </div>
     <div class="top-right">
       <span class="top-crumb" id="scene-crumb"></span>
       <span class="badge" id="mode-badge"></span>
-      <span class="gold-chip" id="gold-chip" title="队伍金币"></span>
+      <span class="ip-chip" id="ip-chip" title="队伍改进点 IP"></span>
+      <span class="eb-chip" id="eb-chip" title="队伍欧元（eb）"></span>
     </div>
   </header>
 
@@ -194,6 +222,14 @@
         <p class="side-label">冒险队伍</p>
         <div id="party-list"></div>
       </div>
+      <div class="side-card" id="cyber-card">
+        <p class="side-label">义体与人性</p>
+        <div id="cyber-list"><p class="side-empty">尚无植入</p></div>
+      </div>
+      <div class="side-card" id="crit-card">
+        <p class="side-label">致命伤</p>
+        <div id="crit-list"><p class="side-empty">完好无损</p></div>
+      </div>
       <div class="side-card" id="flag-card">
         <p class="side-label">剧情手记</p>
         <div id="flag-list"><p class="side-empty">尚无记录</p></div>
@@ -202,6 +238,22 @@
         <button class="btn ghost" id="btn-reset">放弃本局，重新开团</button>
       </div>
     </aside>
+
+    <section id="map-panel" class="hidden">
+      <div class="map-head">
+        <p class="side-label" id="map-label">战术地图</p>
+        <div class="map-tools">
+          <button class="btn ghost tiny" id="btn-map-grid" title="显示/隐藏网格线">格</button>
+          <button class="btn ghost tiny" id="btn-map-fold" title="收起/展开地图">《</button>
+        </div>
+      </div>
+      <div id="map-viewport">
+        <img id="map-bg" alt="" draggable="false">
+        <div id="map-gridlines" class="hidden"></div>
+        <div id="map-tokens"></div>
+        <div id="map-move-hint" class="hidden">点击地图落子（1 格 = 2 米）</div>
+      </div>
+    </section>
 
     <section id="stage">
       <div id="chronicle" aria-live="polite"></div>

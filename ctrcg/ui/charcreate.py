@@ -1,25 +1,19 @@
 """玩家角色创建向导（CLI 版；AutoUI 演示模式下可跳过）。
 
-属性采用 4d6 去最低的掷骰法；种族/职业/出身名单为《博德之门3》；
-种族加值沿用 BG3 规则：任意两项属性 +2/+1（可自选）。
+《赛博朋克 RED》轻松模式不掷骰建卡：从模组的**预设角色**（pregens）里挑一个，
+填上自己的名字/绰号，再选几名预设角色作为 AI 队友同行。
 """
 
 from __future__ import annotations
 
 from ..rules import data as D
 from ..rules.character import Character
-from ..rules.dice import roll_scores
-
-STYLE_NAMES = {"archery": "箭术（远程攻击+2）", "defense": "防御（AC+1）",
-               "dueling": "对决（单手近战伤害+2）", "two_weapon": "双武器格斗",
-               "great_weapon": "大武器格斗（双手武器伤害骰1/2重骰）"}
 
 # ---------------------------------------------------------------- AI PC 人设字段
 # 玩家人设 = AI 代打的 PC 角色卡素材（docs/aipc-design.md §3.3/§4.2）。
 # description=角色简介（行为依据），personality=说话语气；mes_example/system_prompt
-# 为进阶覆盖字段（仅随 start spec 透传，Web 表单不暴露）。终端建卡 P0 不加交互项
-# （create_player_console 不动），字段留空时由 st.card.card_from_player 以
-# 种族·职业·背景兜底文案组卡。
+# 为进阶覆盖字段（仅随 start spec 透传，Web 表单不暴露）。终端建卡 P0 不加交互项，
+# 字段留空时由 st.card.card_from_player 以职业·义体兜底文案组卡。
 AIPC_FIELD_LIMIT = 2000
 AIPC_CARD_FIELDS = ("description", "personality", "mes_example", "system_prompt")
 
@@ -40,126 +34,170 @@ def aipc_card_fields(spec: dict) -> dict[str, str]:
             out[key] = text
     return out
 
-# 按职业的推荐属性优先级（掷骰结果按此顺序从高到低分配）
-RECOMMENDED: dict[str, dict[str, int]] = {
-    "barbarian": {"str": 15, "con": 14, "dex": 13, "wis": 12, "cha": 10, "int": 8},
-    "bard":      {"cha": 15, "dex": 14, "con": 13, "wis": 12, "int": 10, "str": 8},
-    "cleric":    {"wis": 15, "con": 14, "str": 13, "cha": 12, "dex": 10, "int": 8},
-    "druid":     {"wis": 15, "con": 14, "dex": 13, "int": 12, "cha": 10, "str": 8},
-    "fighter":   {"str": 15, "dex": 14, "con": 13, "int": 10, "wis": 12, "cha": 8},
-    "monk":      {"dex": 15, "wis": 14, "con": 13, "str": 12, "cha": 10, "int": 8},
-    "paladin":   {"str": 15, "cha": 14, "con": 13, "wis": 12, "dex": 10, "int": 8},
-    "ranger":    {"dex": 15, "wis": 14, "con": 13, "str": 12, "int": 10, "cha": 8},
-    "rogue":     {"dex": 15, "int": 14, "con": 13, "cha": 12, "wis": 10, "str": 8},
-    "sorcerer":  {"cha": 15, "con": 14, "dex": 13, "wis": 12, "int": 10, "str": 8},
-    "warlock":   {"cha": 15, "con": 14, "dex": 13, "wis": 12, "int": 10, "str": 8},
-    "wizard":    {"int": 15, "dex": 14, "con": 13, "wis": 12, "cha": 10, "str": 8},
-}
+
+# ---------------------------------------------------------------- 预设角色
+def _raw_module_data(module) -> dict:
+    """兜底：直接读模组源文件（campaign 层的 Module 尚未暴露 pregens 时用）。"""
+    path = getattr(module, "path", None)
+    if not path:
+        return {}
+    try:
+        import json
+        from pathlib import Path
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def assign_by_recommended(rolled: list[int], klass: str) -> dict[str, int]:
-    """把掷骰结果按职业推荐优先级从高到低分配到六项属性。"""
-    rec = RECOMMENDED[klass]
-    order = sorted(rec, key=lambda k: -rec[k])
-    return dict(zip(order, sorted(rolled, reverse=True)))
+def pregens_of(module) -> dict:
+    """模组的预设角色表（缺省为空 dict）。"""
+    pregens = getattr(module, "pregens", None)
+    if isinstance(pregens, dict) and pregens:
+        return pregens
+    raw = _raw_module_data(module).get("pregens")
+    return raw if isinstance(raw, dict) else {}
 
 
-def create_player_console(ui, rng) -> Character:
-    ui.raw("\n—— 角色创建 ——（D&D 5e · 1级 · 4d6 去最低掷骰法）")
-    name = ui.free_input("你的角色名字> ") or "无名者"
+def default_companion_keys(module) -> list[str]:
+    comps = getattr(module, "default_companions", None)
+    if isinstance(comps, (list, tuple)) and comps:
+        return [str(c) for c in comps]
+    raw = _raw_module_data(module).get("default_companions")
+    return [str(c) for c in raw] if isinstance(raw, (list, tuple)) else []
 
-    rkeys = list(D.RACES)
-    i = ui.choose("选择种族（博德之门3 全种族）",
-                  [f"{D.RACES[r]['family']}·{D.RACES[r]['name']}：{D.RACES[r]['traits'][0]}"
-                   for r in rkeys])
-    race = rkeys[i]
 
-    ckeys = list(D.CLASSES)
-    i = ui.choose("选择职业", [f"{D.CLASSES[c]['name']}（生命骰 d{D.CLASSES[c]['hit_die']}）"
-                               for c in ckeys])
-    klass = ckeys[i]
+def role_name(role: str) -> str:
+    return (D.ROLES.get(role) or {}).get("name", role or "独行侠")
 
-    bkeys = list(D.BACKGROUNDS)
-    i = ui.choose("选择背景", [f"{D.BACKGROUNDS[b]['name']}：{D.BACKGROUNDS[b]['desc']}"
-                               for b in bkeys])
-    background = bkeys[i]
 
-    # 属性：4d6 去最低，最多重骰 2 次
-    rolled = roll_scores(rng)
-    for attempt in range(2):
-        i = ui.choose(f"掷骰结果（4d6 去最低）：{' '.join(map(str, rolled))}",
-                      ["就这样，分配属性", "重骰一次"])
-        if i == 0:
+def pregen_label(key: str, pregen: dict) -> str:
+    """一行卡片摘要：名字（绰号）· 职业 rank —— PW n · 关键词技能。"""
+    handle = str(pregen.get("handle") or "").strip()
+    name = str(pregen.get("name") or key)
+    role = role_name(str(pregen.get("role") or "solo"))
+    rank = int(pregen.get("role_rank", 4))
+    pw = pregen.get("hp") or Character.hp_for(
+        int((pregen.get("stats") or {}).get("body", 5)))
+    skills = sorted((pregen.get("skill_levels") or {}).items(),
+                    key=lambda kv: -int(kv[1]))[:3]
+    skill_txt = "、".join(f"{D.SKILLS[k]['name']}{v}" for k, v in skills
+                          if k in D.SKILLS)
+    head = f"{name}（{handle}）" if handle else name
+    return f"{head} · {role}{rank} —— PW {pw}" + (f" · {skill_txt}" if skill_txt else "")
+
+
+def build_from_pregen(module, key: str, name: str = "",
+                      companion_keys: list[str] | None = None
+                      ) -> tuple[Character, list[Character]]:
+    """按预设角色 key 装配玩家与 AI 队友（Web 与终端共用的唯一入口）。
+
+    ``name`` 非空时覆盖预设的姓名；``companion_keys`` 为 None 时用模组默认队友。"""
+    pregens = pregens_of(module)
+    if key not in pregens:
+        raise ValueError("未知的预设角色")
+    player = Character.from_pregen(key, pregens[key], player=True)
+    if str(name or "").strip():
+        player.name = str(name).strip()[:16]
+    if companion_keys is None:
+        companion_keys = default_companion_keys(module)
+    comps: list[Character] = []
+    for ck in companion_keys:
+        if ck not in pregens:
+            raise ValueError(f"未知的预设角色：{ck}")
+        if ck == key or any(c.name == str(pregens[ck].get("name", ck)) for c in comps):
+            continue
+        comps.append(Character.from_pregen(ck, pregens[ck], kind="companion"))
+    return player, comps
+
+
+def print_pregen_sheet(ui, key: str, pregen: dict) -> None:
+    """把预设角色的完整卡片打到终端（十项属性 / 伤势 / 技能 / 装备 / 义体）。"""
+    stats = pregen.get("stats") or {}
+    pw = int(pregen.get("hp") or Character.hp_for(int(stats.get("body", 5))))
+    ui.raw(f"—— 预设角色 · {pregen.get('name', key)}"
+           + (f"（{pregen['handle']}）" if pregen.get("handle") else "") + " ——")
+    ui.raw(f"职业：{role_name(str(pregen.get('role') or 'solo'))}"
+           f" {int(pregen.get('role_rank', 4))}"
+           + (f"　特殊能力：{pregen['role_ability']}" if pregen.get("role_ability") else ""))
+    ui.raw("属性：" + " ".join(
+        f"{D.STATS[k]['name']}{int(stats.get(k, 0))}" for k in D.STAT_ORDER))
+    ui.raw(f"PW {pw}　重伤阈值 {max(1, -(-pw // 2))}"
+           f"　幸运 {int(stats.get('luck', 0))}"
+           f"　人性 {int(stats.get('emp', 0)) * D.HUMANITY_PER_EMP}")
+    skills = sorted((pregen.get("skill_levels") or {}).items(), key=lambda kv: -int(kv[1]))
+    if skills:
+        ui.raw("技能：" + "、".join(
+            f"{D.SKILLS[k]['name']} {int(stats.get(D.SKILLS[k]['stat'], 0)) + int(v)}"
+            for k, v in skills if k in D.SKILLS))
+    armor = pregen.get("armor")
+    if armor:
+        ui.raw(f"护甲：{D.ARMORS.get(armor, {}).get('name', armor)}"
+               f" SP {D.ARMORS.get(armor, {}).get('sp', 0)}")
+    weapons = [D.WEAPONS[w]["name"] for w in (pregen.get("weapons") or []) if w in D.WEAPONS]
+    if weapons:
+        ui.raw("武器：" + "、".join(weapons))
+    cw = [D.CYBERWARE[c]["name"] for c in (pregen.get("cyberware") or []) if c in D.CYBERWARE]
+    if cw:
+        ui.raw("义体：" + "、".join(cw))
+    if pregen.get("desc"):
+        ui.raw(str(pregen["desc"]))
+    ui.raw("")
+
+
+def create_player_console(ui, rng=None, module=None) -> tuple[Character, list[str]]:
+    """终端建卡：挑预设角色 → 填名字 → 选队友。返回 (玩家, 队友预设 key 列表)。
+
+    ``rng`` 仅为兼容旧签名保留（RED 建卡不掷骰）。"""
+    ui.raw("\n—— 角色创建 ——（赛博朋克 RED · 轻松模式 · 预设角色）")
+    pregens = pregens_of(module)
+    if not pregens:
+        raise ValueError("该模组没有预设角色（pregens），无法建卡")
+    keys = list(pregens)
+    while True:
+        i = ui.choose("选择预设角色", [pregen_label(k, pregens[k]) for k in keys])
+        print_pregen_sheet(ui, keys[i], pregens[keys[i]])
+        if ui.choose("就用这个角色吗？", ["就是TA", "看下一个"]) == 0:
             break
-        rolled = roll_scores(rng)
-    else:
-        ui.raw(f"最终掷骰结果：{' '.join(map(str, rolled))}")
+    key = keys[i]
+    default_name = str(pregens[key].get("name") or "无名者")
+    name = ui.free_input(f"你的名字或街头绰号（回车沿用「{default_name}」）> ") or default_name
 
-    # 分配：按职业推荐，或手动分配掷骰结果
-    i = ui.choose("属性分配", ["按职业推荐自动分配（推荐）", "手动分配掷骰结果"])
-    scores = assign_by_recommended(rolled, klass) if i == 0 else _assign_manual(ui, rolled)
+    rest = [k for k in keys if k != key]
+    picks = [k for k in default_companion_keys(module) if k in rest]
+    if rest:
+        ui.raw("默认队友：" + ("、".join(str(pregens[k].get("name", k)) for k in picks)
+                              or "无"))
+        if ui.choose("是否另选队友？", ["沿用默认", "自己挑"]) == 1:
+            picks = []
+            for k in rest:
+                if ui.choose(f"「{pregens[k].get('name', k)}」同行吗？",
+                             ["同行", "留守"]) == 0:
+                    picks.append(k)
 
-    # BG3 种族加值：+2/+1 任意两项
-    b2 = _pick_bonus(ui, "选择 +2 的属性（BG3 种族加值）")
-    b1 = _pick_bonus(ui, "选择 +1 的属性（须与 +2 不同）", exclude=b2)
-
-    # 技能：职业技能从职业列表选；种族赠送技能（人类/半精灵）可任选任意技能
-    kls = D.CLASSES[klass]
-    chosen: list[str] = []
-    avail = list(kls["skill_choices"])
-    for _ in range(kls["skill_count"]):
-        j = ui.choose(f"选择职业技能（还剩 {kls['skill_count'] - len(chosen)} 项）",
-                      [f"{D.SKILLS[s]['name']}（{D.ABILITIES[D.SKILLS[s]['ability']]}）"
-                       for s in avail if s not in chosen])
-        chosen.append(avail[j])
-    race_n = D.RACES[race].get("skills", 0)
-    for _ in range(race_n):
-        pool = [s for s in D.SKILLS if s not in chosen]
-        j = ui.choose("选择种族赠送技能（任意技能）",
-                      [f"{D.SKILLS[s]['name']}（{D.ABILITIES[D.SKILLS[s]['ability']]}）"
-                       for s in pool])
-        chosen.append(pool[j])
-
-    style = ""
-    if klass == "fighter":
-        j = ui.choose("选择战斗风格", list(STYLE_NAMES.values()))
-        style = list(STYLE_NAMES)[j]
-
-    c = Character.create(name=name, race=race, klass=klass, background=background,
-                         scores=scores, skill_choices=chosen, fighting_style=style,
-                         bonus2=b2, bonus1=b1)
-    _print_sheet(ui, c)
-    return c
+    player = Character.from_pregen(key, pregens[key], player=True)
+    player.name = name
+    print_character_sheet(ui, player)
+    return player, picks
 
 
-def _pick_bonus(ui, title: str, exclude: str | None = None) -> str:
-    keys = [k for k in D.ABILITIES if k != exclude]
-    j = ui.choose(title, [f"{v}（{k}）" for k, v in
-                          [(k, D.ABILITIES[k]) for k in keys]])
-    return keys[j]
-
-
-def _assign_manual(ui, rolled: list[int]) -> dict:
-    pool = sorted(rolled, reverse=True)
-    scores: dict[str, int] = {}
-    for abil, disp in D.ABILITIES.items():
-        opts = sorted(set(pool), reverse=True)
-        j = ui.choose(f"为 {disp} 分配（剩余 {pool}）", [str(v) for v in opts])
-        pool.remove(int(j))
-        scores[abil] = int(j)
-    return scores
-
-
-def _print_sheet(ui, c: Character) -> None:
+def print_character_sheet(ui, c: Character) -> None:
+    """玩家角色卡（终端）。"""
     ui.raw("\n—— 角色卡 ——")
-    ui.raw(f"{c.name}｜{D.RACES[c.race]['name']} {D.CLASSES[c.klass]['name']}"
-           f"（{D.BACKGROUNDS[c.background]['name']}）")
-    ui.raw(" | ".join(f"{D.ABILITIES[a]} {c.abilities[a]}({c.mod(a):+d})"
-                      for a in D.ABILITIES))
-    ui.raw(f"HP {c.hp_max}  AC {c.ac()}  熟练+{c.prof_bonus()}  "
-           f"被动察觉 {c.passive_perception()}")
-    ui.raw("技能熟练：" + "、".join(D.SKILLS[s]["name"] for s in sorted(c.skills)))
-    ui.raw("装备：" + "、".join(D.WEAPONS[w]["name"] for w in c.weapons)
-           + f"，{D.ARMORS[c.armor]['name']}"
-           + ("，盾牌" if c.shield else ""))
+    ui.raw(f"{c.name}" + (f"（{c.handle}）" if c.handle else "")
+           + f"｜{c.role_name} {c.role_rank}"
+           + (f"（{c.role_ability}）" if c.role_ability else ""))
+    ui.raw(c.stat_line())
+    ui.raw(f"PW {c.hp_cur}/{c.hp_max}　重伤阈值 {c.seriously_wounded_threshold}"
+           f"　伤势 {c.wound_name()}　护甲 {c.armor_name()} SP {c.armor_at('torso')}")
+    ui.raw(f"幸运 {c.luck_cur}/{c.stat('luck')}　人性 {c.humanity_cur}/{c.humanity_max}"
+           f"　欧元 {c.eurobucks} eb　改进点 {c.ip}")
+    skills = c.skill_lines()
+    if skills:
+        ui.raw("技能：" + "、".join(skills))
+    ui.raw("装备：" + "、".join(D.WEAPONS[w]["name"] for w in c.weapons if w in D.WEAPONS)
+           + (f"，{c.armor_name()}" if c.armor_key else ""))
+    if c.cyberware:
+        ui.raw("义体：" + "、".join(D.CYBERWARE[x]["name"] for x in c.cyberware
+                                   if x in D.CYBERWARE))
     ui.raw("")

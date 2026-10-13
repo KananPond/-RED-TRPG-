@@ -1,405 +1,219 @@
-"""原创模组《星坠矿脉的阴影》—— 被遗忘的大陆 · 剑湾。
+"""内置兜底模组（最后手段）—— 夜之城 · 最后一份兜底数据。
 
-结构致敬主流入门模组的经典节奏：
-护送任务 → 路上伏击 → 追踪至匪巢 → 前线小镇与黑帮 → 地下城决战。
-文本为原创，机制数值取自 SRD 5.1 数据表。
+本文件**不是**正式剧本。正式剧本以 ``modules/<id>/module.json`` 为准；
+只有当 ``modules/`` 目录缺失、模组文件损坏，或存档引用的模组 id 无法解析时，
+引擎才会退回这里的数据（``cordis.default_fallback_module()`` 与 ``GameState``
+默认使用的 ``M.BUILTIN``）。正常游玩不应看到它。
 
-数据同时供两种 DM 使用：
-- 剧本模式（离线）：按 scenes 线性推进，intro/outro 直接朗读。
-- AI 模式：场景数据作为 DM Agent 的"模组手册"上下文，
-  通过工具推进 story flag，叙事由 LLM 即兴生成。
+因此这里只保留**最小可运行**的内容：2 个场景、1 场遭遇、2 名预设角色，
+数值全部取自 :mod:`ctrcg.rules.data`，口径为《赛博朋克 RED》轻松模式
+（十项属性 / 41 项技能 / 难度值 DV / 生命值 PW / 护甲 SP / 改进点 IP / 欧元 eb）。
+
+导出名与旧版保持一致（``MODULE/COMPANIONS/NPCS/ENCOUNTERS/SCENES/EPILOGUE/
+ACT_TITLES/D_NAME/COND_CN/default_companions/BUILTIN``），仅内容改为 RED。
 """
 
 from __future__ import annotations
 
+from ..rules import data as D
+
 # ---------------------------------------------------------------- 显示名映射（state/server 共用）
-D_NAME = {"fighter": "战士", "ranger": "游侠", "cleric": "牧师",
-          "wizard": "法师", "rogue": "游荡者", "barbarian": "野蛮人",
-          "bard": "吟游诗人", "druid": "德鲁伊", "monk": "武僧",
-          "paladin": "圣武士", "sorcerer": "术士", "warlock": "邪术师"}
+#: 职业 key → 中文名（RED 用职业 role，不再有 种族/职业/背景）
+D_NAME = {k: v["name"] for k, v in D.ROLES.items()}
 
-COND_CN = {"poisoned": "中毒", "frightened": "恐惧", "prone": "倒地",
-           "unconscious": "昏迷", "hidden": "潜行", "invisible": "隐形",
-           "asleep": "沉睡", "blessed": "受祝福", "hunters_mark": "印记中",
-           "shielded": "护盾术", "stable": "稳定", "dead": "死亡",
-           "outlined": "妖火标记", "restrained": "束缚", "paralyzed": "麻痹",
-           "stunned": "震慑", "charmed": "魅惑", "blinded": "目盲",
-           "grappled": "被擒抱", "raging": "狂暴", "guided": "引导标记",
-           "ac+2": "信仰护盾", "mirror_image": "镜影", "burning": "燃烧"}
-
-
-def default_companions() -> list[dict]:
-    """模组未定义同伴时的默认队友（星坠矿脉三人组）。"""
-    return [dict(c) for c in COMPANIONS]
+#: 状态 key → 中文名（RED 的伤势等级与控制状态）
+COND_CN = {
+    "healthy": "完好",
+    "light": "轻伤",
+    "serious": "重伤",
+    "mortal": "濒死",
+    "controlled": "被控制",
+    "prone": "倒地",
+    "unconscious": "昏迷",
+    "stabilized": "已稳定",
+    "crit_stabilized": "致命伤已固定",
+    "dead": "死亡",
+}
 
 
 MODULE = {
-    "title": "星坠矿脉的阴影",
-    "en_title": "Shadows over the Starfall Mine",
+    "title": "赛博朋克 RED：兜底剧本",
+    "en_title": "Cyberpunk RED: Last-Resort Fallback",
     "setting": (
-        "被遗忘的大陆（Forgotten Realms），剑湾（Sword Coast）东缘。"
-        "无冬城（Neverwinter）东南的丘陵地带，商路与古代矿脉交织，"
-        "哥布林、灰矮人与更阴暗的势力在废墟间游荡。"
+        "2045 年，夜之城（Night City）。血染之时（Time of the Red）之后的废墟上，"
+        "霓虹与酸雨一起落下。本段数据是引擎自带的兜底场景，"
+        "任何正式的 modules/<id>/module.json 都会覆盖它。"
     ),
     "synopsis": (
-        "三百年前，矮人们在星坠矿脉深处建成了传说中的魔法锻造炉——星炉，"
-        "随后矿脉在地动中封存。如今，矮人商会的贡林·石锤出资助人手重开矿脉，"
-        "护送重建物资前往边陲小镇松溪镇。但商队在半路失了音讯，"
-        "而矿脉的阴影里，某个自称'灰烬之主'的存在也在寻找星炉……"
+        "【兜底剧本 · 最后手段】中间人 Marlo 在卡布奇夜市后巷约见你的小队，"
+        "要你们去海伍德工业区的废弃仓库取一只无人认领的公文包。"
+        "钱不多，但足够付这个月的房租——前提是你们能活着走出仓库。"
+        "（本剧本仅 2 幕，用于 modules/ 目录缺失时保证游戏不硬失败。）"
     ),
-    "party_level_start": 1,
-    "expected_end_level": 3,
 }
 
-# ---------------------------------------------------------------- 同伴
-COMPANIONS = [
-    {
-        "id": "roland",
-        "name": "罗兰·北风",
-        "race": "human", "klass": "fighter", "background": "soldier",
-        "fighting_style": "defense",
-        "scores": {"str": 15, "dex": 13, "con": 14, "int": 10, "wis": 12, "cha": 8},
-        "skills": ["athletics", "intimidation"],
+# ---------------------------------------------------------------- 预设角色（pregens）
+#: key → 预设角色数据块（字段与 ``Character.from_pregen`` 对齐）
+PREGENS: dict[str, dict] = {
+    "v_solo": {
+        "name": "Vera", "handle": "V", "role": "solo", "role_rank": 4,
+        "role_ability": "战斗直觉",
+        "stats": {"int": 5, "ref": 8, "dex": 7, "tech": 4, "cool": 6,
+                  "will": 6, "luck": 6, "move": 6, "body": 6, "emp": 4},
+        "hp": 40,
+        "skill_levels": {"handgun": 6, "evasion": 5, "athletics": 4,
+                         "perception": 4, "brawling": 4, "stealth": 3,
+                         "conversation": 2},
+        "armor": "light_armorjack",
+        "weapons": ["very_heavy_pistol", "heavy_melee"],
+        "cyberware": ["neural_link", "pain_editor"],
+        "gear": {"ammo": 20, "agent": 1},
+        "eurobucks": 50,
         "persona": (
-            "前无冬城卫戍兵，沉稳寡言，把保护队友看得比自己的命重。"
-            "战斗风格：顶在队伍最前面，优先攻击靠近虚弱的同伴的敌人；"
-            "血量过半时用回气。说话简短、直接，偶尔冷幽默。"
+            "独行侠，靠枪吃饭七年，从不接没有退路的活。战斗风格：抢占掩体，"
+            "优先点掉敌方持枪者；队友倒地时先把他拖出火线再谈别的。"
+            "话少，句子短，只在算钱的时候话多。"
         ),
-        "voice": "低沉，句子很短。",
+        "voice": "低哑，语速慢，句尾常带一句脏话。",
+        "desc": "黑色防弹夹克，右眼有一道旧疤。",
     },
-    {
-        "id": "veilan",
-        "name": "薇兰·叶语",
-        "race": "high_elf", "klass": "ranger", "background": "folk_hero",
-        "fighting_style": "archery",
-        "scores": {"str": 12, "dex": 15, "con": 13, "int": 10, "wis": 14, "cha": 8},
-        "skills": ["stealth", "perception", "survival"],
+    "k_medtech": {
+        "name": "Kay", "handle": "Doc K", "role": "medtech", "role_rank": 4,
+        "role_ability": "医疗",
+        "stats": {"int": 6, "ref": 5, "dex": 6, "tech": 8, "cool": 5,
+                  "will": 7, "luck": 5, "move": 5, "body": 5, "emp": 6},
+        "hp": 35,
+        "skill_levels": {"paramedic": 6, "first_aid": 6, "deduction": 5,
+                         "perception": 4, "handgun": 4, "conversation": 4,
+                         "electronics_security": 3},
+        "armor": "kevlar",
+        "weapons": ["medium_pistol"],
+        "cyberware": ["cyberoptics", "internal_agent"],
+        "gear": {"medkit": 2, "first_aid_kit": 2},
+        "eurobucks": 30,
         "persona": (
-            "高等精灵游侠，在杉落道林间长大，曾在雪夜独自引回迷路的商队。"
-            "战斗风格：保持距离用长弓点杀，优先射击落单或最虚弱的敌人；"
-            "得到猎人印记就贴上去。观察力敏锐，喜欢提醒同伴注意细节。"
+            "医疗师，在地下诊所缝合过太多枪伤，习惯先把人救活再问对错。"
+            "战斗风格：站在掩体后面，谁流血最多就先处理谁；"
+            "只在没人需要急救时开枪。说话像念病历。"
         ),
-        "voice": "轻快，爱用自然作比。",
+        "voice": "平静，术语多，喜欢用数字描述伤势。",
+        "desc": "洗得发白的旧手术服外套一件凯夫拉背心。",
     },
-    {
-        "id": "pip",
-        "name": "皮普·铜齿轮",
-        "race": "rock_gnome", "klass": "cleric", "background": "sage",
-        "fighting_style": "",
-        "scores": {"str": 8, "dex": 13, "con": 14, "int": 12, "wis": 15, "cha": 10},
-        "skills": ["insight", "medicine"],
-        "persona": (
-            "岩侏儒牧师，贡林商会的随行医者兼书记，侍奉锻造之神，"
-            "对古代机械与星炉传说痴迷到失态。战斗风格：优先治疗倒下或重伤的队友"
-            "（治疗真言/疗伤术），需要时给近战队友上祝福术，平时用神圣火焰消耗敌人。"
-            "话多，爱给一切现象起名字。"
-        ),
-        "voice": "兴奋，句子里全是感叹号和术语。",
-    },
-]
+}
 
-# ---------------------------------------------------------------- NPC
+# ---------------------------------------------------------------- 同伴（预设角色的列表视图）
+COMPANIONS: list[dict] = [{"key": k, **dict(v)} for k, v in PREGENS.items()]
+
+#: 玩家未另选队友时默认启用的预设角色
+DEFAULT_COMPANIONS: list[str] = list(PREGENS)
+
+
+def default_companions() -> list[dict]:
+    """模组未定义预设角色时的默认队友（返回数据块副本，每项含 key）。"""
+    return [dict(c) for c in COMPANIONS]
+
+
+# ---------------------------------------------------------------- NPC（叙事角色，非战斗数据）
 NPCS = {
-    "gunlir": {
-        "name": "贡林·石锤", "race": "盾矮人",
-        "desc": "石锤商会的老主事，留络腮胡，说话像算账。雇佣队伍护送重建物资，报酬每人10金币。",
+    "malou": {
+        "name": "Marlo", "role": "中间人",
+        "desc": "卡布奇夜市的老中间人，抽着劣质香烟报价，从不多说一个字。",
+        "persona": "只谈价钱与风险，讨厌废话；报价时喜欢停顿。",
+        "voice": "沙哑，短句，报数字时特别清楚。",
     },
-    "durga": {
-        "name": "杜尔加·石拳", "race": "盾矮人",
-        "desc": "商队护卫队长。伏击中被俘，囚于匪巢。获救后透露：货物是修复矿脉竖井的机械，而矿脉深处封存着星炉。",
+    "rennick": {
+        "name": "Rennick", "role": "警察",
+        "desc": "NCPD 巡警，收了钱就会在正确的时间出现在错误的地方。",
+        "persona": "嘴上讲程序，手上讲价钱；被戳穿时会突然变得很正式。",
+        "voice": "公事公办的腔调，夹着街头俚语。",
     },
-    "mira": {
-        "name": "米拉·褐穗", "race": "人类",
-        "desc": "松溪镇镇长，疲惫而务实。委托队伍调查黑鸦帮，酬金每人25金币。",
-    },
-    "bomm": {
-        "name": "波姆·蜜酒", "race": "轻足半身人",
-        "desc": "'醉獾酒馆'老板，消息灵通，胆小但心善。知道黑鸦帮从老柳井进出。",
-    },
-    "vessk": {
-        "name": "维斯克", "race": "人类",
-        "desc": "黑鸦帮头目，红斗篷下的疤脸剑客。为'灰烬之主'卖命，负责封锁矿脉消息。（强盗头目数据）",
-    },
-    "sylith": {
-        "name": "丝莉丝", "race": "小恶魔（伪装人形）",
-        "desc": "商会派驻松溪镇的'会计'，礼貌得过分。真身是潜伏的小恶魔，灰烬之主的耳目。",
-    },
-    "ashen_one": {
-        "name": "维克托·灰烬", "race": "人类（堕法师）",
-        "desc": "自称'灰烬之主'的亡灵法师。三十年前在矿脉事故中失去一切，如今要夺星炉锻造亡者大军。决战首领。（灰烬之主数据）",
+}
+
+# ---------------------------------------------------------------- 自定义 NPC（战斗数据）
+CUSTOM_NPCS: dict[str, dict] = {
+    "boosterganger": {
+        "name": "莽汉帮小混混", "role": "solo",
+        "stats": {"int": 4, "ref": 6, "dex": 6, "tech": 3, "cool": 5,
+                  "will": 5, "luck": 4, "move": 6, "body": 5, "emp": 3},
+        "skills": {"handgun": 4, "brawling": 4, "athletics": 3,
+                   "evasion": 2, "perception": 2},
+        "hp": 25, "armor": 4, "armor_name": "皮衣",
+        "weapons": ["medium_pistol", "light_melee"],
+        "cyberware": [], "gear": ["ammo"],
+        "notes": "莽汉帮的廉价打手，靠人多和兴奋剂壮胆；见血就散。",
     },
 }
 
 # ---------------------------------------------------------------- 遭遇
 ENCOUNTERS: dict[str, dict] = {
-    "e_ambush": {
-        "title": "大路伏击",
-        "dark": False,
-        "intro": "两匹驮马嘶鸣着倒在路中央，草丛里传出弓弦的震颤声——哥布林伏击！",
-        "monsters": [("goblin", 4)],
-        "loot": {"gold": 20, "items": {"healing_potion": 1}},
-    },
-    "e_cave_sentinel": {
-        "title": "洞口哨卫",
-        "dark": True,
-        "intro": "洞穴入口的阴影里，两条狼藉的皮斗篷动了动——哨卫发现了你们。",
-        "monsters": [("goblin", 3)],
-        "loot": {"gold": 12, "items": {}},
-    },
-    "e_wolves": {
-        "title": "狼穴",
-        "dark": True,
-        "intro": "腐肉与兽腥味扑面而来。两头座狼从骨堆后低吼着扑出，一个哥布林驯兽员尖叫着吹响骨哨。",
-        "monsters": [("worg", 2), ("goblin", 1)],
-        "loot": {"gold": 0, "items": {"healing_potion": 1}},
-    },
-    "e_bugbear_boss": {
-        "title": "匪巢头目",
-        "dark": True,
+    "e_warehouse_ambush": {
+        "title": "仓库伏击",
         "intro": (
-            "洞穴大厅里火光摇晃。大地精格鲁什坐在矮人的盾牌堆成的'王座'上，"
-            "两个哥布林守着角落里被捆住的杜尔加。'肉……来了！'"
+            "公文包就放在仓库正中的货箱上，太干净了。"
+            "卷帘门在身后落下的同时，两束战术手电从货架间亮起——"
+            "Rennick 把警徽挂在胸前的防弹衣上，笑得很客气："
+            "'东西留下，你们走。或者你们也留下。'"
         ),
-        "monsters": [("hobgoblin", 1), ("goblin", 2)],
-        "loot": {"gold": 60, "items": {"healing_potion": 2, "torch": 2}},
-    },
-    "e_street": {
-        "title": "夜巷袭击",
-        "dark": True,
-        "intro": "散场后的街巷静得反常。红斗篷从三个方向围了上来。",
-        "monsters": [("bandit", 3)],
-        "loot": {"gold": 30, "items": {}},
-    },
-    "e_hideout": {
-        "title": "柳井密室",
-        "dark": True,
-        "intro": (
-            "老柳井下的密室里烛火通明。维斯克拔出弯刀：'多管闲事的，都沉到井底去。'"
-        ),
-        "monsters": [("bandit", 4), ("bandit_captain", 1)],
-        "loot": {"gold": 120, "items": {"healing_potion": 2}},
-    },
-    "e_orc_post": {
-        "title": "矿门灰矮人哨站",
-        "dark": True,
-        "intro": (
-            "矿脉入口的木门被劈成了碎片。灰矮人哨兵围着火堆沉默地磨着战锤，"
-            "一头裹着锁子甲碎片的大块头食人魔拎着巨棒站了起来。"
-        ),
-        "monsters": [("duergar", 2), ("ogre", 1)],
-        "loot": {"gold": 80, "items": {"healing_potion": 1}},
-    },
-    "e_spiders": {
-        "title": "蛛巢回廊",
-        "dark": True,
-        "intro": (
-            "矿道两侧结满厚重的蛛网，几具缠成茧的尸骸悬在半空。"
-            "一只巨蛛从洞顶垂落，尸骸中传来骨头摩擦的声音——两具僵尸挣脱了茧。"
-        ),
-        "monsters": [("giant_spider", 1), ("zombie", 2)],
-        "loot": {"gold": 40, "items": {"healing_potion": 1}},
-    },
-    "e_forge_boss": {
-        "title": "星炉大厅决战",
-        "dark": True,
-        "intro": (
-            "巨大的球形锻造厅中央，星炉如一颗沉睡的蓝色心脏静默着。"
-            "灰袍的维克托·灰烬张开双臂：'来得正好。星炉认我，而你们——将成为灰烬。'\n"
-            "他身侧的'丝莉丝'笑得愈发标准——人皮之下，小恶魔的螫刺在蓝光中闪亮。"
-            "一把食尸鬼的利爪从阴影里探了出来。"
-        ),
-        "monsters": [("ash_mage", 1), ("imp", 1), ("ghoul", 1)],
-        "loot": {"gold": 200, "items": {"healing_potion": 2, "star_forge_blade": 1}},
+        "enemies": [["corrupt_cop", 2], ["boosterganger", 2]],
+        "loot": {"eurobucks": 80, "items": {"ammo": 20, "first_aid_kit": 1}},
+        "spawns": {"corrupt_cop": [[9, 2], [9, 5]],
+                   "boosterganger": [[8, 3], [8, 6]]},
     },
 }
 
 # ---------------------------------------------------------------- 场景
-# 每个场景：intro 进场叙述；explore 引导词；skills 可选检定；
-# encounter 触发战斗（可选）；next 下一场景；milestone 幕完成奖励。
+# 每个场景：intro 进场叙述；explore 引导词；checks 可选检定（技能 + 难度值 DV）；
+# encounter 触发战斗（可选）；next 下一场景；ip 离开本场景时发放的改进点。
 SCENES: list[dict] = [
     {
-        "id": "road_intro", "act": 1, "location": "杉落道官道 · 无冬城以东",
+        "id": "kabuki_meet", "act": 1,
+        "location": "夜之城 · 卡布奇 · 夜市后巷",
         "intro": (
-            "清晨的雾气还没散尽。你随商队离开无冬城东门已有两天，"
-            "矮人主事贡林·石锤坐在头车上一遍遍清点货物清单。\n"
-            "'星坠矿脉的竖井机械——一样都不能少。'他敲了敲车厢，"
-            "'松溪镇就在前面。老规矩，每人十枚金币，货到了再请你们喝一顿。'\n"
-            "护卫队长杜尔加·石拳策马靠近：'这段路不太平。都把眼睛放亮点。'"
+            "酸雨把霓虹招牌泡成一团团化开的颜色。Marlo 靠在自动贩卖机上，"
+            "把一只数据芯片弹给你。\n"
+            "'海伍德，工业区，第七街的废弃仓库。一只公文包，没人认领。'\n"
+            "他吸了口烟：'三百欧，先付一半。别问包里是什么——问了就得加钱。'"
         ),
-        "explore": "你可以和商队成员攀谈，检查装备，或者观察四周的丘陵。",
-        "skills": [
-            {"skill": "perception", "dc": 12,
-             "success": "你注意到远处的乌鸦盘旋不落——有东西惊扰了它们。",
-             "fail": "官道两侧只有风声。"},
+        "explore": "可以查看芯片上的坐标、和 Marlo 讨价还价，或观察后巷里的人。",
+        "checks": [
+            {"skill": "human_perception", "dv": 13,
+             "success": "Marlo 的报价里有一处犹豫：他自己也不知道包里是什么——这单是转手的。",
+             "fail": "Marlo 的表情被烟雾和霓虹灯挡得干干净净。"},
         ],
-        "encounter": None, "next": "road_ambush", "milestone": 0,
+        "encounter": None, "next": "warehouse_drop", "ip": 0,
+        "shop": True, "outro": "", "encounter_note": "",
     },
     {
-        "id": "road_ambush", "act": 1, "location": "杉落道官道 · 林弯",
+        "id": "warehouse_drop", "act": 2,
+        "location": "海伍德工业区 · 第七街废弃仓库",
         "intro": (
-            "转过一个林弯，前方路面横着两匹驮马的尸体——正是商队先行的小车！"
-            "箭雨从左侧的杉树林中泼下——哥布林伏击！"
+            "仓库里只有一处光源：货箱顶上那只公文包，被一盏应急灯照着。"
+            "你们的脚步声在铁皮屋顶下面回响了两次——第三次不是你们的。"
         ),
-        "explore": "战斗结束后，可以搜索树林和尸体。",
-        "skills": [
-            {"skill": "survival", "dc": 12,
-             "success": "你从折断的枝叶和拖痕中读出了去向：哥布林拖着物资进了北面的山坳。",
-             "fail": "拖痕在乱石间消失了。不过杜尔加的斥候本能最终还是找到了方向——北面山坳。"},
+        "explore": "可以检查货架、抢占掩体，或者直接拿了包就走。",
+        "checks": [
+            {"skill": "perception", "dv": 15,
+             "success": "你从货架反光里认出了 Rennick 的警徽——NCPD 也想拿这只包。",
+             "fail": "手电亮起之前，仓库看起来确实空无一人。"},
         ],
-        "encounter": "e_ambush", "next": "cave_entrance", "milestone": 0,
-    },
-    {
-        "id": "cave_entrance", "act": 1, "location": "山坳匪巢 · 洞口",
-        "intro": (
-            "山坳深处，一道裂隙在岩壁上张开，洞口的荆棘被人刻意编成了掩护。"
-            "里面隐隐传来粗粝的说话声。杜尔加不在商队里——很可能被拖了进去。"
-        ),
-        "explore": "可以尝试潜行接近、光明正大地突入，或投掷石块引诱哨兵。",
-        "skills": [
-            {"skill": "stealth", "dc": 13,
-             "success": "你们像影子一样贴近洞口，哨兵毫无察觉——战斗开始时你们具有优势！",
-             "fail": "碎石从脚边滚落，洞里的说话声戛然而止。"},
-        ],
-        "encounter": "e_cave_sentinel", "next": "wolf_den", "milestone": 0,
-    },
-    {
-        "id": "wolf_den", "act": 1, "location": "山坳匪巢 · 狼穴隧道",
-        "intro": (
-            "隧道向下延伸，火把的光晕尽头是一片扩建的兽栏，"
-            "空气中弥漫着腐肉味。骨头堆后面传来低低的咆哮。"
-        ),
-        "explore": "战斗结束后，兽栏角落里有一只被哥布林抢走的行李箱。",
-        "skills": [
-            {"skill": "investigation", "dc": 12,
-             "success": "你在兽栏草料下找到商队丢失的银器箱（+15金币）。",
-             "fail": "草料下只有老鼠。"},
-        ],
-        "encounter": "e_wolves", "next": "boss_den", "milestone": 0, "level_to": 2,
-    },
-    {
-        "id": "boss_den", "act": 1, "location": "山坳匪巢 · 大厅",
-        "intro": (
-            "洞穴豁然开朗，火光把石壁照得忽明忽暗。"
-            "大地精格鲁什的'王座'竟是用矮人的盾牌垒成的。"
-            "角落里，一个满身血污的矮人被捆在柱子上——杜尔加还活着！"
-        ),
-        "explore": "击败格鲁什后，记得给杜尔加松绑。他的装备堆在墙角。",
-        "skills": [],
-        "encounter": "e_bugbear_boss", "next": "town_arrive", "milestone": 300,
+        "encounter": "e_warehouse_ambush", "next": None, "ip": 30,
+        "shop": False,
         "outro": (
-            "杜尔加揉着手腕站起来：'多谢……咳，欠你们一条命。'\n"
-            "他压低声音：'听着，货物不只是机械。贡林真正要找的是矿脉深处的星炉——"
-            "矮人古国的魔法锻造炉。三天前，矿脉的竖井被人从里面锁死了。'\n"
-            "'先去松溪镇。贡林的主事点在镇上，把消息带给他。'"
+            "Rennick 倒在货架之间，警徽还在胸前晃。"
+            "公文包里只有一份纸质名单：夜之城七名中间人的名字，"
+            "其中三个已经被划掉了。第一行写着 Marlo 的名字。"
         ),
-    },
-    {
-        "id": "town_arrive", "act": 2, "location": "松溪镇 · 镇口",
-        "intro": (
-            "松溪镇比想象中萧条：半数店铺上了门板，广场的告示牌钉满悬赏令。"
-            "一个裹着红斗篷的家伙正从杂货铺里'收取保护费'，掌柜敢怒不敢言。\n"
-            "镇长米拉·褐穗闻讯赶来：'矿脉的援兵？感谢诸神！但先帮我个忙——"
-            "黑鸦帮把整座镇子攥在手里，我的巡卫不敢碰他们。"
-            "每人25金币，替松溪镇拔掉这颗钉子。'"
-        ),
-        "explore": "可以在镇上打探消息：醉獾酒馆、铁匠铺、被查封的商行。",
-        "shop": True,
-        "skills": [
-            {"skill": "insight", "dc": 12,
-             "success": "你注意到商会驻点的'会计'丝莉丝笑得太标准了——她的眼神根本没有落在人身上。",
-             "fail": "镇民们大多讳莫如深。"},
-        ],
-        "encounter": None, "next": "inn_rumors", "milestone": 0,
-    },
-    {
-        "id": "inn_rumors", "act": 2, "location": "松溪镇 · 醉獾酒馆",
-        "intro": (
-            "醉獾酒馆的壁炉噼啪作响，但酒客们压低的交谈一遇生人就停。"
-            "半身人老板波姆擦着杯子凑过来：'外地来的？……嘘。'\n"
-            "'黑鸦帮的老巢在镇西老柳井下面。天黑后他们才走动。"
-            "帮头维斯克……他脖子上挂着一枚灰烬色的徽章，不是普通的强盗。'"
-        ),
-        "explore": "可以向波姆进一步打听，或请镇民喝酒套话。",
-        "skills": [
-            {"skill": "persuasion", "dc": 13,
-             "success": "波姆一咬牙画出了柳井密室的入口和守卫轮值：'这么说，我可什么都没说！'",
-             "fail": "波姆缩了缩脖子：'知道的越多，死得越快……你们自己当心吧。'"},
-        ],
-        "shop": True,
-        "encounter": "e_street", "next": "well_hideout", "milestone": 0,
-        "encounter_note": "离开酒馆时，黑鸦帮的暗哨在夜巷里动手了。",
-    },
-    {
-        "id": "well_hideout", "act": 2, "location": "松溪镇 · 老柳井密室",
-        "intro": (
-            "老柳井的辘轳绳尽头不是水面，而是凿在石灰岩里的密室。"
-            "烛火下摊着矿脉图纸，墙上的灰烬色徽章泛着微光。\n"
-            "维斯克放下酒杯，缓缓拔出弯刀：'矿脉的事，知道的人都不该活着。'"
-        ),
-        "explore": "战斗结束后，搜查维斯克的书桌。",
-        "skills": [
-            {"skill": "investigation", "dc": 13,
-             "success": "你找到一叠通信：落款是一个灰烬色的印记——'矿门已开，星炉之夜将至。——灰烬之主'。还有矿脉的完整地图。",
-             "fail": "书信被烧了大半，只剩矿脉的位置图。"},
-        ],
-        "encounter": "e_hideout", "next": "mine_entrance", "milestone": 300, "level_to": 3,
-        "outro": (
-            "米拉镇长亲自来井口接应：'干得漂亮！矿脉的地图……'\n"
-            "她脸色发白：'他们在矿里待了一个月了。带上这些药水，星炉不能再落入那种人手里。'"
-        ),
-    },
-    {
-        "id": "mine_entrance", "act": 3, "location": "星坠矿脉 · 矿门",
-        "intro": (
-            "被劈碎的矿门后面，古老的竖井机械锈死在半空。"
-            "矿道里火光摇曳——灰矮人占领了门厅，火堆边还拴着一头食人魔。"
-        ),
-        "explore": "战斗结束后，竖井绞盘还能勉强使用——这是通往深处的捷径。",
-        "skills": [
-            {"skill": "athletics", "dc": 12,
-             "success": "你们摇动绞盘降下矿车，省去了半日的下坡路，人人都恢复了些体力。",
-             "fail": "绞盘卡死了，你们只能沿旋梯下行，一路气喘吁吁。"},
-        ],
-        "encounter": "e_orc_post", "next": "spider_hall", "milestone": 0,
-    },
-    {
-        "id": "spider_hall", "act": 3, "location": "星坠矿脉 · 蛛巢回廊",
-        "intro": (
-            "矿道渐渐向下，岩壁上开始出现人工凿出的导水槽——这里曾是矮人的水力车间。"
-            "而如今，厚重的蛛网封住了通道，茧状的尸骸悬在半空。"
-        ),
-        "explore": "茧里有一具穿着学徒袍的骸骨，手里攥着一本烧焦一半的日记。",
-        "skills": [
-            {"skill": "arcana", "dc": 13,
-             "success": "日记残页写着：'星炉不是炉……它是一扇门。他要把'灰烬'灌进去。'你隐约理解了星炉的真正用途。",
-             "fail": "残页的字迹已无法辨认。"},
-        ],
-        "encounter": "e_spiders", "next": "forge_hall", "milestone": 0,
-    },
-    {
-        "id": "forge_hall", "act": 3, "location": "星坠矿脉 · 星炉大厅",
-        "intro": (
-            "最后一段矿道尽头，是一座倒扣的碗状大厅。"
-            "中央悬浮着一颗半透明的蓝色晶体心脏——星炉沉睡于此，光尘如雪飘落。\n"
-            "灰袍身影背对你们：'三百年了，它一直在等我。'"
-        ),
-        "explore": "击败灰烬之主后，星炉将认可触碰它的人。",
-        "skills": [],
-        "encounter": "e_forge_boss", "next": None, "milestone": 300,
-        "outro": None,
+        "encounter_note": "拿包的动作会触发伏击。",
     },
 ]
 
 EPILOGUE = (
-    "星炉的蓝光漫过大厅，尘埃般的魔法光点环绕着你们上升。"
-    "星炉缓缓认出了触碰它的人，锻造台上浮起一柄流转星辉的长剑。\n"
-    "三天后，松溪镇为'星炉的英雄们'举行了庆典。贡林·石锤把报酬翻了一倍，"
-    "米拉镇长宣布重开矿脉，杜尔加·石拳被任命为矿脉卫队长。\n"
-    "而在大陆的其他角落，新的传闻正在酝酿——但那是下一段冒险的故事了。\n"
-    "—— 冒险结束。感谢游玩《星坠矿脉的阴影》——"
+    "名单上的第一个名字是 Marlo。你们把纸折好，塞进夹克内袋。\n"
+    "夜市那边传来警笛，霓虹还在雨里化开——夜之城从不为一件事停下来。\n"
+    "（兜底剧本到此结束。正式的模组会从这里接上。）"
 )
 
-ACT_TITLES = {1: "第一幕：杉落道上的伏击", 2: "第二幕：松溪镇的黑鸦帮", 3: "第三幕：星坠矿脉"}
+ACT_TITLES = {1: "第一幕：卡布奇夜市", 2: "第二幕：海伍德仓库"}
 
 
 def scene_by_id(scene_id: str) -> dict | None:
@@ -412,33 +226,47 @@ def scene_by_id(scene_id: str) -> dict | None:
 def module_handbook() -> str:
     """供 DM Agent 的浓缩手册文本。"""
     lines = [f"模组：{MODULE['title']}（{MODULE['en_title']}）", MODULE["synopsis"], ""]
-    for act in (1, 2, 3):
+    for act in sorted(ACT_TITLES):
         lines.append(f"== {ACT_TITLES[act]} ==")
         for s in SCENES:
             if s["act"] == act:
                 lines.append(f"[{s['id']}] {s['location']}")
                 lines.append("  " + s["intro"].replace("\n", " ")[:120])
         lines.append("")
+    lines.append("== 预设角色 ==")
+    for k, pg in PREGENS.items():
+        role = D.ROLES.get(pg["role"], {}).get("name", pg["role"])
+        lines.append(f"{pg['name']}（{role} · PW {pg.get('hp', '?')}）")
+    lines.append("")
     lines.append("== 关键NPC ==")
     for n in NPCS.values():
-        lines.append(f"{n['name']}（{n['race']}）：{n['desc']}")
+        lines.append(f"{n['name']}（{n['role']}）：{n['desc']}")
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------- 内置模组实例
+def builtin_data() -> dict:
+    """兜底模组的原始数据（与 ``modules/<id>/module.json`` 同构，且必须通过校验）。"""
+    return {
+        "id": "cpred-easy-mode",
+        "title": MODULE["title"],
+        "en_title": MODULE["en_title"],
+        "setting": MODULE["setting"],
+        "synopsis": MODULE["synopsis"],
+        "act_titles": {str(k): v for k, v in ACT_TITLES.items()},
+        "epilogue": EPILOGUE,
+        "npcs": NPCS,
+        "pregens": PREGENS,
+        "default_companions": list(DEFAULT_COMPANIONS),
+        "custom_npcs": CUSTOM_NPCS,
+        "encounters": ENCOUNTERS,
+        "scenes": SCENES,
+    }
+
+
 def _builtin():
     from .loader import Module
-    data = {
-        "id": "starfall", "title": MODULE["title"],
-        "en_title": MODULE["en_title"], "setting": MODULE["setting"],
-        "synopsis": MODULE["synopsis"],
-        "party_level_start": MODULE["party_level_start"],
-        "expected_end_level": MODULE["expected_end_level"],
-        "act_titles": {str(k): v for k, v in ACT_TITLES.items()},
-        "epilogue": EPILOGUE, "npcs": NPCS, "companions": COMPANIONS,
-        "encounters": ENCOUNTERS, "scenes": SCENES, "custom_monsters": {},
-    }
-    return Module(data, source="builtin")
+    return Module(builtin_data(), source="builtin")
 
 
 BUILTIN = _builtin()

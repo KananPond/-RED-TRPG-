@@ -1,61 +1,95 @@
 """从 Web 表单数据构建玩家角色（服务端校验）。
 
-属性分配采用 4d6 去最低的掷骰结果：
-- ability_mode="rolled"：前端携带本次掷骰结果 rolled 与六项分配 scores，
-  服务端校验分配恰好使用该次掷骰结果；
-- ability_mode="recommended"：服务端代为掷骰并按职业推荐优先级分配。
-种族加值沿用 BG3 规则：任意两项属性 +2/+1（bonus2/bonus1，可自选）。
+《赛博朋克 RED》不再掷骰生成属性：角色从模组的**预设角色**（pregens）里挑一个。
+- 玩家选定 `pregen`（预设角色 key）与自己的 `name`（街头名/绰号）；
+- 可另选 `companions`：本模组中其余预设角色里，哪些作为 AI 队友同行
+  （缺省用模组的 `default_companions`）。
+服务端只做校验与装配，一切数值来自模组数据（角色卡上的属性/技能/装备已定）。
 """
 
 from __future__ import annotations
 
 import random
 
-from ..rules import data as D
+from ..rules import lifepath as LIFE
 from ..rules.character import Character
-from ..rules.dice import roll_scores
-from ..ui.charcreate import aipc_card_fields, assign_by_recommended
-
-STYLE_KEYS = {"archery", "defense", "dueling", "two_weapon", "great_weapon"}
-_ABILITY_KEYS = ("str", "dex", "con", "int", "wis", "cha")
+from ..ui.charcreate import (aipc_card_fields, default_companion_keys,
+                             pregens_of)
 
 
-def build_character(spec: dict, rng: random.Random | None = None) -> Character:
+def roll_lifepath(char: Character, rng=None) -> dict:
+    """为角色走一遍《轻松模式》的人生之路（第 29-34 页的 11 张表）。
+
+    结果挂在 ``Character.lifepath`` 上，供 DM 在剧情里调用（朋友来帮忙、
+    仇人在尾声发誓复仇）。掷骰只决定履历，不影响任何战斗数值。
+    """
+    rng = rng or random.Random()
+    result = LIFE.roll_all(rng)
+    char.lifepath = result
+    return result
+
+
+def build_character(spec: dict, module, rng=None) -> Character:
     """校验并构建玩家角色。任何非法输入抛 ValueError。
 
-    rng：掷骰属性（ability_mode="recommended"）使用的随机源；
-    传入已按 seed 播种的实例可保证开局完全可复现。"""
+    RED 建卡不掷属性：从模组的**预设角色**里挑一个，再走一遍人生之路
+    （``lifepath``）；``rng`` 用于人生之路的掷骰，便于测试复现。"""
     if not isinstance(spec, dict):
         raise ValueError("请求体必须是 JSON 对象")
-    name = str(spec.get("name", "")).strip()[:16] or "无名者"
-    race = spec.get("race")
-    klass = spec.get("klass")
-    background = spec.get("background")
-    if race not in D.RACES:
-        raise ValueError("未知种族")
-    if klass not in D.CLASSES:
-        raise ValueError("未知职业")
-    if background not in D.BACKGROUNDS:
-        raise ValueError("未知背景")
-
-    scores = _resolve_scores(spec, klass, rng)
-    bonus2 = spec.get("bonus2") or None
-    bonus1 = spec.get("bonus1") or None
-    skill_choices = spec.get("skills")
-    if not isinstance(skill_choices, list) or not skill_choices:
-        raise ValueError("请选择职业技能")
-    style = str(spec.get("fighting_style") or "")
-    if klass == "fighter" and style not in STYLE_KEYS:
-        raise ValueError("战士必须选择战斗风格")
-    if klass != "fighter":
-        style = ""
+    pregens = pregens_of(module)
+    if not pregens:
+        raise ValueError("该模组没有预设角色（pregens），无法建卡")
+    key = str(spec.get("pregen") or "")
+    if key not in pregens:
+        raise ValueError("未知的预设角色")
+    pregen = pregens[key]
+    if not isinstance(pregen, dict):
+        raise ValueError("预设角色数据损坏")
+    name = str(spec.get("name", "")).strip()[:16]
+    if not name:
+        raise ValueError("请填写角色名字")
     try:
-        return Character.create(
-            name=name, race=race, klass=klass, background=background,
-            scores=scores, skill_choices=[str(s) for s in skill_choices],
-            fighting_style=style, bonus2=bonus2, bonus1=bonus1)
+        # 角色卡数值全部来自预设；玩家只改名（预设的 name/handle 保持在 pregen 里）
+        char = Character.from_pregen(key, pregen, player=True)
     except ValueError as e:
         raise ValueError(f"角色构建失败：{e}")
+    char.name = name
+    # 人生之路：spec 里给了现成结果就用（存档/重放），否则投骰
+    given = spec.get("lifepath")
+    if isinstance(given, dict) and given:
+        char.lifepath = {str(k): v for k, v in given.items()}
+    else:
+        roll_lifepath(char, rng)
+    return char
+
+
+def companion_ids(module, spec: dict, player_key: str) -> list[str]:
+    """解析同行队友的预设 key 列表：显式选择优先，否则模组的默认队友。
+
+    过滤规则：必须在预设法内、不能是玩家自己、去重且保持预设法顺序。"""
+    pregens = pregens_of(module)
+    raw = spec.get("companions")
+    if raw is None:
+        chosen = list(default_companion_keys(module))
+    elif isinstance(raw, (list, tuple)):
+        chosen = [str(c) for c in raw]
+    else:
+        raise ValueError("队友选择格式非法")
+    out: list[str] = []
+    for key in chosen:
+        if key not in pregens:
+            raise ValueError(f"未知的预设角色：{key}")
+        if key == player_key or key in out:
+            continue
+        out.append(key)
+    return out
+
+
+def build_companions(module, spec: dict, player_key: str) -> list[Character]:
+    """按玩家选择装配 AI 队友（未选则用模组默认队友）。"""
+    pregens = pregens_of(module)
+    return [Character.from_pregen(key, pregens[key], kind="companion")
+            for key in companion_ids(module, spec, player_key)]
 
 
 def build_aipc_card(spec: dict, name: str = "") -> dict | None:
@@ -65,7 +99,7 @@ def build_aipc_card(spec: dict, name: str = "") -> dict | None:
     未落地时以纯 dict 暂存于 GameState.aipc_card 并随存档往返，由
     server.build_session 接缝在 st 就绪后重建为 CharacterCard。
     四个字段全为空时返回 None——接缝将回退 card_from_player(state.player) 的
-    引擎兜底文案（种族·职业·背景 + 战术风格摘要）。字段经 aipc_card_fields
+    引擎兜底文案（职业·义体 + 战术风格摘要）。字段经 aipc_card_fields
     清洗：纯文本、各 ≤AIPC_FIELD_LIMIT 字符（超长截断，与姓名截断同风格）。"""
     fields = aipc_card_fields(spec)
     if not fields:
@@ -73,26 +107,3 @@ def build_aipc_card(spec: dict, name: str = "") -> dict | None:
     card = {"name": str(name or "")}
     card.update(fields)
     return card
-
-
-def _resolve_scores(spec: dict, klass: str, rng: random.Random | None = None) -> dict[str, int]:
-    mode = spec.get("ability_mode", "rolled")
-    if mode == "rolled":
-        rolled = spec.get("rolled")
-        if (not isinstance(rolled, list) or len(rolled) != 6
-                or not all(isinstance(v, int) and 3 <= v <= 18 for v in rolled)):
-            raise ValueError("掷骰结果无效（需要六个 3-18 的数值）")
-        scores = spec.get("scores")
-        if not isinstance(scores, dict) or set(scores) != set(_ABILITY_KEYS):
-            raise ValueError("需要完整的六项属性分配")
-        try:
-            values = [int(v) for v in scores.values()]
-        except (TypeError, ValueError):
-            raise ValueError("属性值必须是整数")
-        if sorted(values) != sorted(rolled):
-            raise ValueError("属性分配必须恰好使用本次掷骰结果")
-        return {k: int(v) for k, v in scores.items()}
-    if mode == "recommended":
-        # 服务端代为掷骰（4d6 去最低），按职业推荐优先级分配
-        return assign_by_recommended(roll_scores(rng or random.Random()), klass)
-    raise ValueError("未知的能力分配方式")

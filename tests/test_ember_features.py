@@ -1,625 +1,415 @@
-"""新功能测试：4 级属性提升（ASI）、物品通用化、同伴 AI 扩展、《余烬之门》模组。"""
+"""RED 角色成长 / 装备 / 义体 / 商店，以及两条回归。
 
-import json
+移植前这个文件写的是旧规则的"新功能"（属性提升、物品通用化、内置模组、
+物品同调与附魔、成长结算、商店、变形、特殊战斗、濒死循环回归）。RED 下的对应物：
+
+* ``TestIP``                      —— 改进点：技能 20×新等级（×2 翻倍）/ 职业 60×新等级
+* ``TestRoleAbilities``           —— 10 个职业的特殊能力在引擎里的落点
+* ``TestGearAndItems``            —— 武器/护甲/义体/装备的给予与使用
+* ``TestOutOfCombatHealing``      —— 稳定 / 急救固定 / 治疗 / 休整一天
+* ``TestCyberwareHumanity``       —— 义体一次收费、人性与共情、赛博精神病边界
+* ``TestShopEurobucks``           —— 欧元采购（不足即拒）+ 护甲修复价
+* ``TestScriptedCompanionAI``     —— 10 个职业各跑一回合同伴 AI 不崩
+* ``TestDeathSaveLoopRegression`` —— **死亡豁免循环必须终止**（规则无关的不变量）
+
+旧规则的这些子系统**整体删除**，RED 不再有任何对应物。
+"""
+
 import os
 import random
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
-from ctrcg.rules import data as D
-from ctrcg.rules.character import (
-    Character, COND_STABLE, ASI_PREFERENCE, COND_UNCONSCIOUS,
-)
-from ctrcg.rules.combat import Encounter, Monster
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from helpers import (ScriptRng, fixture_module, make_pc,  # noqa: E402
+                     make_state)
+from test_combat import corridor, duel, make_foe, PISTOL   # noqa: E402
 
-def make_pc(name="罗兰", klass="fighter", race="human", scores=None, style="defense",
-            level=1):
-    base = {"str": 15, "dex": 13, "con": 14, "int": 10, "wis": 12, "cha": 8}
-    if scores:
-        base.update(scores)
-    skills = {"fighter": ["athletics", "intimidation"], "wizard": ["arcana", "history"],
-              "cleric": ["insight", "medicine"], "rogue": ["stealth", "acrobatics",
-                                                           "deception", "perception"],
-              "ranger": ["stealth", "perception", "survival"],
-              "monk": ["acrobatics", "athletics"], "druid": ["nature", "perception"],
-              "sorcerer": ["arcana", "intimidation"], "warlock": ["arcana", "deception"],
-              "paladin": ["athletics", "persuasion"], "bard": ["performance",
-              "persuasion"]}[klass]
-    return Character.create(
-        name=name, race=race, klass=klass, background="soldier",
-        scores=base, skill_choices=skills, fighting_style=style, level=level)
+from ctrcg.game import state as G                          # noqa: E402
+from ctrcg.game.session import GameSession                 # noqa: E402
+from ctrcg.harness.models import ModelResponse             # noqa: E402
+from ctrcg.rules import data as D                          # noqa: E402
+from ctrcg.rules.character import (COND_DEAD,              # noqa: E402
+                                   COND_STABILIZED,
+                                   COND_UNCONSCIOUS, Character)
+from ctrcg.rules.combat import Encounter                   # noqa: E402
+from ctrcg.ui.cli import AutoUI                            # noqa: E402
 
 
-class TestASI(unittest.TestCase):
-    """PHB 4 级属性提升：单项 +2 或两项各 +1，上限 20。"""
+def shop_state(eurobucks=200, module=None):
+    """一个把玩家放在 ``shop: True`` 场景里的会话。"""
+    mod = module or fixture_module()
+    mod.scenes[0]["shop"] = True
+    st = make_state(module=mod)
+    st.player.eurobucks = eurobucks
+    st.scene_id = mod.scenes[0]["id"]
+    return st, GameSession(st, AutoUI(), loop=None)
 
-    def test_single_plus_two(self):
+
+# ================================================================ IP
+class TestIP(unittest.TestCase):
+    def test_skill_cost_is_twenty_times_the_new_rank(self):
+        c = make_pc(skill_levels={"handgun": 3})
+        self.assertEqual(c.ip_cost_skill("handgun"), 20 * 4)
+        c.skill_levels["handgun"] = 7
+        self.assertEqual(c.ip_cost_skill("handgun"), 20 * 8)
+
+    def test_x2_skills_cost_double(self):
+        for key in ("electronics_security", "paramedic"):
+            c = make_pc(skill_levels={key: 4})
+            self.assertEqual(c.ip_cost_skill(key), 20 * 5 * 2)
+
+    def test_role_cost_is_sixty_times_the_new_rank(self):
         c = make_pc()
-        c.apply_asi({"str": 2})
-        self.assertEqual(c.abilities["str"], 17 + 2)   # 人类默认力+2 → 17，再 +2 = 19
+        c.role_rank = 4
+        self.assertEqual(c.ip_cost_role(), D.IP_ROLE_BASE * 5)
 
-    def test_two_plus_one(self):
+    def test_ip_spend_through_the_session(self):
+        st = make_state()
+        session = GameSession(st, AutoUI(), loop=None)
+        out = session.award_ip(60, reason="测试")
+        self.assertTrue(out.get("ok", True))
+        self.assertEqual(out["each"], 60)
+        # 经典模式发完 IP 会立刻把花费菜单摆给玩家（AutoUI 当场花掉一部分），
+        # 所以这里只断言"每人确实拿了 60"，具体花费另测
+        for c in st.party():
+            self.assertLessEqual(c.ip, 60)
+        cost = st.player.ip_cost_skill("handgun")
+        st.player.gain_ip(cost + 5)
+        before_ip = st.player.ip
+        before_level = st.player.skill("handgun")
+        ok, msg = st.player.raise_skill("handgun")
+        self.assertTrue(ok, msg)
+        self.assertEqual(st.player.ip, before_ip - cost)
+        self.assertEqual(st.player.skill("handgun"), before_level + 1)
+
+    def test_refusal_keeps_state(self):
+        c = make_pc(ip=5)
+        before = dict(c.skill_levels)
+        ok, msg = c.raise_skill("handgun")
+        self.assertFalse(ok)
+        self.assertIn("改进点不足", msg)
+        self.assertEqual(c.skill_levels, before)
+        self.assertEqual(c.ip, 5)
+
+    def test_scene_ip_is_awarded_on_leaving(self):
+        st = make_state()
+        session = GameSession(st, AutoUI(), loop=None)
+        scene = st.module.scene_by_id(st.scene_id)
+        session.advance_scene(scene["next"])
+        self.assertTrue(all(c.ip > 0 for c in st.party()))
+
+    def test_no_xp_or_levels_exist(self):
         c = make_pc()
-        c.apply_asi({"str": 1, "con": 1})
-        self.assertEqual(c.abilities["str"], 18)       # 15+2种族+1ASI
-        self.assertEqual(c.abilities["con"], 16)       # 14+1种族+1ASI
+        for gone in ("xp", "level", "gain_xp", "level_up_to", "prof_bonus"):
+            self.assertFalse(hasattr(c, gone), gone)
+        self.assertTrue(hasattr(c, "ip"))
 
-    def test_cap_at_20(self):
+
+# ================================================================ 职业能力
+class TestRoleAbilities(unittest.TestCase):
+    def test_solo_and_rockerboy_are_wired_into_the_engine(self):
+        solo = make_pc(role="solo")
+        self.assertEqual(solo.initiative_bonus(), 4)
+        rock = make_pc(role="rockerboy")
+        self.assertTrue(rock.has_role_bonus("persuasion"))
+        self.assertFalse(make_pc(role="fixer").has_role_bonus("persuasion"))
+
+    def test_role_rank_is_part_of_the_character_card(self):
+        c = make_pc(role="medtech")
+        self.assertEqual(c.role_name, "医疗师")
+        self.assertEqual(c.role_rank, 4)
+        self.assertIn("职级", G.GameState(c, []).party_snapshot())
+
+    def test_every_role_builds_and_fights_a_turn(self):
+        for role in D.ROLES:
+            c = make_pc(f"测试-{role}", role=role, weapons=[PISTOL])
+            self.assertEqual(c.role, role)
+            enc = duel(pc=c, foe=make_foe(), grid=corridor(3), cells=3)
+            enc.rng = ScriptRng([8, 3, 3, 3])
+            res = enc.attack(c, enc.enemies[0], PISTOL)
+            self.assertTrue(res["ok"])
+
+
+# ================================================================ 装备
+class TestGearAndItems(unittest.TestCase):
+    def test_give_routes_by_table(self):
+        c = make_pc(weapons=[], armor=None)
+        c.give("heavy_pistol")
+        c.give("kevlar")
+        c.give("internal_agent")
+        c.give("medkit", 2)
+        self.assertIn("heavy_pistol", c.weapons)
+        self.assertEqual(c.armor_key, "kevlar")
+        self.assertIn("internal_agent", c.cyberware)
+        self.assertEqual(c.gear["medkit"], 2)
+
+    def test_use_item_and_armor_repair_price(self):
+        c = make_pc(gear={"first_aid_kit": 1}, armor="kevlar")
+        self.assertTrue(c.use_item("first_aid_kit"))
+        self.assertFalse(c.use_item("first_aid_kit"))
+        c.take_damage(20)
+        self.assertLess(c.armor_at("torso"), 7)
+        c.repair_armor()
+        self.assertEqual(c.armor_at("torso"), 7)
+        self.assertEqual(D.ARMOR_REPAIR_COST, 10)
+
+    def test_best_weapon_and_damage(self):
+        c = make_pc(weapons=["medium_pistol", "heavy_melee", "assault_rifle"])
+        self.assertEqual(c.best_weapon("ranged"), "assault_rifle")
+        self.assertEqual(c.best_weapon(), "heavy_melee")
+        self.assertEqual(c.weapon_damage("assault_rifle"), "5d6")
+
+    def test_inventory_view_is_red(self):
+        from ctrcg.game.tools import GameTools
+        st = make_state()
+        tools = GameTools(st, AutoUI())
+        view = tools._inventory(st.player)
+        self.assertIn(D.CURRENCY_ABBR, view)
+        self.assertIn("义体", view)
+        self.assertNotIn("金币", view)
+        self.assertNotIn("法术位", view)
+
+
+# ================================================================ 战斗外治疗
+class TestOutOfCombatHealing(unittest.TestCase):
+    def test_stabilize_then_rest_day(self):
+        st = make_state()
+        session = GameSession(st, AutoUI(), loop=None)
+        pc = st.player
+        pc.hp_cur = 0
+        pc.conditions.add(COND_UNCONSCIOUS)
+        session.stabilize_in_explore(pc, party_only=True)
+        self.assertGreaterEqual(pc.hp_cur, 0)
+        pc.stabilize()
+        before = pc.hp_cur
+        session.party_rest_day()
+        self.assertGreater(pc.hp_cur, before)
+
+    def test_rest_day_needs_stabilized(self):
         c = make_pc()
-        c.abilities["str"] = 19
-        c.apply_asi({"str": 2})
-        self.assertEqual(c.abilities["str"], 20)       # 溢出部分丢弃
+        c.hp_cur = 0                                     # 濒死：未稳定不恢复
+        self.assertEqual(c.rest_day(), 0)
+        c.stabilize()
+        self.assertEqual(c.rest_day(), c.stat("body"))
 
-    def test_invalid_shapes_raise(self):
+    def test_crit_first_aid_in_explore(self):
+        st = make_state()
+        session = GameSession(st, AutoUI(), loop=None)
+        pc = st.player
+        pc.apply_crit_injury(5)                                  # 肋骨骨折（可固定）
+        st.rng = ScriptRng([10, 5])                              # 暴击成功
+        session.crit_first_aid_in_explore(pc)
+        self.assertTrue(pc.crit_injuries[0]["stabilized"]
+                        or pc.crit_injuries == [])
+
+    def test_treat_crit_in_explore_removes_the_injury(self):
+        """外科治疗：不能自医，由队里的医疗师动手。"""
+        st = make_state()
+        session = GameSession(st, AutoUI(), loop=None)
+        medic = st.player
+        medic.skill_levels["paramedic"] = 8
+        patient = st.companions[0]
+        patient.apply_crit_injury(5)                             # 骨折（可治疗）
+        st.rng = ScriptRng([10, 5])
+        session.treat_crit_in_explore(patient)
+        self.assertTrue(patient.crit_injuries == []
+                        or patient.crit_injuries[0].get("permanent"))
+
+    def test_heal_caps_at_max(self):
         c = make_pc()
-        with self.assertRaises(ValueError):
-            c.apply_asi({"str": 3})
-        with self.assertRaises(ValueError):
-            c.apply_asi({"str": 1, "dex": 1, "con": 1})
-        with self.assertRaises(ValueError):
-            c.apply_asi({})
+        c.hp_cur = 40
+        self.assertEqual(c.heal(99), c.hp_max - 40)
+        self.assertEqual(c.hp_cur, c.hp_max)
 
-    def test_pending_at_level_4_only_once(self):
+
+# ================================================================ 义体 / 人性
+class TestCyberwareHumanity(unittest.TestCase):
+    def test_install_charges_once(self):
         c = make_pc()
-        c.level_up_to(3)
-        self.assertNotIn("asi", c.pending_feature_choices())
-        c.level_up_to(4)
-        self.assertIn("asi", c.pending_feature_choices())
-        c.feature_choices["asi"] = "str+2"             # 模拟已选
-        self.assertNotIn("asi", c.pending_feature_choices())
+        loss = c.install_cyberware("cyberaudio")
+        self.assertEqual(loss, D.CYBERWARE["cyberaudio"]["humanity"])
+        self.assertEqual(c.install_cyberware("cyberaudio"), 0)
 
-    def test_companion_default_takes_feat(self):
-        """同伴 4 级默认取推荐专长（施法者→战争施法者），不占 ASI。"""
-        c = make_pc(name="缇娅", klass="sorcerer",
-                    scores={"str": 8, "dex": 14, "con": 14, "int": 10, "wis": 10,
-                            "cha": 15})
-        c.level_up_to(4)
-        c.apply_default_choices()
-        self.assertEqual(c.feature_choices["feat"], "war_caster")
-        self.assertTrue(c.has_feature("war_caster"))
-        self.assertEqual(c.abilities["cha"], 15)       # 专长替换了 ASI
+    def test_show_cyberware_renders_red(self):
+        st = make_state()
+        st.player.install_cyberware("cyberoptics")
+        ui = AutoUI()
+        session = GameSession(st, ui, loop=None)
+        session.show_cyberware()
+        joined = "\n".join(ui.history)
+        self.assertIn("赛博光学组件", joined)
+        self.assertIn("人性", joined)
+        self.assertNotIn("法术位", joined)
 
-    def test_lucky_feat_reroll_and_reset(self):
-        """专长幸运：d20 出 1~5 自动重骰（取高者），3 次/长休。"""
-        c = make_pc()
-        c.feature_choices["feat"] = "lucky"
-        rng = random.Random(1234)
-        used = 0
-        for _ in range(60):
-            before = c.feat_lucky_used
-            res = c._lucky_d20(rng, 0)
-            if c.feat_lucky_used > before:
-                used += 1
-                self.assertEqual(res.kept[0], max(res.rolls))  # 取更优者结算
-            self.assertLessEqual(c.feat_lucky_used, 3)
-        self.assertGreater(used, 0)
-        c.long_rest()
-        self.assertEqual(c.feat_lucky_used, 0)         # 长休重置
+    def test_cyberpsychosis_is_a_hard_boundary(self):
+        c = make_pc(stats={"emp": 1, "body": 5, "will": 5})
+        c.humanity_cur = 6
+        self.assertFalse(c.is_cyberpsycho())
+        c.install_cyberware("internal_agent")                     # 6 → 0
+        self.assertTrue(c.is_cyberpsycho())
 
-    def test_player_wizard_asi_via_flow(self):
-        """升到 4 级后 pending 列表包含 asi，且选择后写入 feature_choices。"""
-        c = make_pc(name="梅林", klass="wizard",
-                    scores={"str": 8, "dex": 13, "con": 14, "int": 15, "wis": 12,
-                            "cha": 10}, level=1)
-        c.level_up_to(4)
-        needs = c.pending_feature_choices()
-        self.assertIn("asi", needs)
-        c.apply_asi({"int": 2})
-        self.assertEqual(c.abilities["int"], 17)       # 15 + ASI +2
+    def test_save_roundtrip(self):
+        st = make_state()
+        st.player.install_cyberware("cyberoptics")
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "g.json"
+            G.save_game(st, path)
+            back = G.load_game(path, module=st.module)
+        self.assertEqual(back.player.cyberware, ["cyberoptics"])
+        self.assertEqual(back.player.humanity_cur, st.player.humanity_cur)
 
 
-class TestItemsGeneralized(unittest.TestCase):
-    def _enc(self):
-        rng = random.Random(5)
-        enc = Encounter("t")
-        enc.rng = rng
-        pc = make_pc()
-        enc.add(pc, "party")
-        enc.add(Monster("goblin", rng), "enemy")
-        enc.begin(rng)
-        return enc, pc, rng
+# ================================================================ 商店
+class TestShopEurobucks(unittest.TestCase):
+    def test_buy_and_insufficient_funds(self):
+        st, session = shop_state(eurobucks=200)
+        pc = st.player
+        from ctrcg.game import session as S
+        key, price = S.SHOP_GOODS[0][1], S.SHOP_GOODS[0][3]
+        out = session.buy_good(key)
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(pc.eurobucks, 200 - price)
+        st.player.eurobucks = 1
+        out = session.buy_good(key)
+        self.assertFalse(out["ok"])
+        self.assertIn("欧元不够", out["error"])
+        self.assertEqual(st.player.eurobucks, 1)
 
-    def test_greater_potion_heals_more(self):
-        enc, pc, rng = self._enc()
-        pc.inventory["potion_greater_healing"] = 1
-        pc.take_damage(10)
-        hp_before = pc.hp_cur
-        r = enc.use_item(pc, "potion_greater_healing")
-        self.assertTrue(r["ok"])
-        healed = r["healed"]
-        self.assertTrue(8 <= healed <= 20)             # 4d4+4
-        self.assertEqual(pc.hp_cur, min(pc.hp_max, hp_before + healed))
-        self.assertEqual(pc.inventory["potion_greater_healing"], 0)
+    def test_shop_only_where_declared(self):
+        st = make_state()
+        session = GameSession(st, AutoUI(), loop=None)
+        out = session.buy_good("medkit")
+        self.assertFalse(out["ok"])
+        self.assertIn("夜市", out["error"])
 
-    def test_feed_potion_to_downed_ally(self):
-        enc, pc, rng = self._enc()
-        ally = make_pc(name="皮普", klass="cleric")
-        enc.add(ally, "party")
-        ally.take_damage(ally.hp_max)
-        self.assertIn(COND_UNCONSCIOUS, ally.conditions)
-        pc.inventory["potion_greater_healing"] = 1
-        r = enc.use_item(pc, "potion_greater_healing", ally)
-        self.assertTrue(r["ok"])
-        self.assertGreater(ally.hp_cur, 0)
-        self.assertNotIn(COND_UNCONSCIOUS, ally.conditions)
+    def test_unknown_good_rejected(self):
+        _st, session = shop_state()
+        out = session.buy_good("魔法药水")
+        self.assertFalse(out["ok"])
 
-    def test_healer_kit_stabilizes_without_check(self):
-        enc, pc, rng = self._enc()
-        ally = make_pc(name="皮普", klass="cleric")
-        enc.add(ally, "party")
-        ally.take_damage(ally.hp_max)
-        ally.death_fails = 2
-        pc.inventory["healer_kit"] = 10
-        r = enc.use_item(pc, "healer_kit", ally)
-        self.assertTrue(r["ok"])
-        self.assertIn(COND_STABLE, ally.conditions)
-        self.assertEqual(pc.inventory["healer_kit"], 9)  # 用次 = 持有数量
-        self.assertEqual(ally.death_fails, 2)            # 稳定不重置失败数（长休才清）
-
-    def test_healer_kit_rejects_healthy_target(self):
-        enc, pc, rng = self._enc()
-        pc.inventory["healer_kit"] = 3
-        r = enc.use_item(pc, "healer_kit", pc)
-        self.assertFalse(r["ok"])
-        self.assertEqual(pc.inventory["healer_kit"], 3)  # 失败不消耗
-
-    def test_item_mech_grants_resistance(self):
-        c = make_pc()
-        self.assertNotIn("fire_resist", c.mech())
-        c.inventory["ember_ward_charm"] = 1
-        self.assertTrue(c.mech().get("fire_resist"))
-        c.inventory["ember_ward_charm"] = 0
-        self.assertNotIn("fire_resist", c.mech())        # 数量 0 不生效
-
-
-class TestEmbergateModule(unittest.TestCase):
-    """《余烬之门》：加载校验、场景链、等级里程碑、自定义怪物。"""
-
-    @classmethod
-    def setUpClass(cls):
-        path = os.path.join("modules", "embergate", "module.json")
-        cls.data = json.load(open(path, encoding="utf-8"))
-        from ctrcg.campaign.loader import validate_module
-        cls.errors, cls.warnings = validate_module(cls.data)
-
-    def test_validates_clean(self):
-        self.assertEqual(self.errors, [])
-        self.assertEqual(self.warnings, [])
-
-    def test_scene_chain_and_levels(self):
-        from ctrcg.campaign.loader import Module
-        mod = Module(self.data, source="file")
-        self.assertEqual(mod.party_level_start, 3)
-        self.assertEqual(mod.expected_end_level, 5)
-        # 3→5 两次里程碑升级
-        level_tos = [s.get("level_to") for s in mod.scenes if s.get("level_to")]
-        self.assertEqual(level_tos, [4, 5])
-        # 场景链完整：沿 next 走到 null
-        ids = {s["id"] for s in mod.scenes}
-        node, steps = mod.scenes[0]["id"], 0
-        while node is not None and steps < 20:
-            scene = next(s for s in mod.scenes if s["id"] == node)
-            node, steps = scene["next"], steps + 1
-        self.assertIsNone(node)
-
-    def test_uses_srd_roster_not_yet_covered(self):
-        """启用内置表中长期未用的怪物。"""
-        from ctrcg.campaign.loader import Module
-        mod = Module(self.data, source="file")
-        used = set()
-        for spec in mod.encounters.values():
-            for name, _n in spec["monsters"]:
-                used.add(name)
-        self.assertTrue({"gnoll", "owlbear", "wight", "redcap", "phase_spider",
-                         "minotaur", "bulette", "cambion"} <= used)
-
-    def test_custom_ember_priest_fights(self):
-        from ctrcg.campaign.loader import Module
-        from ctrcg.rules.combat import monster_choose_action
-        mod = Module(self.data, source="file")
-        table = mod.monster_table
-        rng = random.Random(9)
-        enc = Encounter("t")
-        enc.rng = rng
-        enc.add(make_pc(), "party")
-        priest = Monster("ember_priest", rng, table=table)
-        enc.add(priest, "enemy")
-        enc.begin(rng)
-        self.assertLess(priest.hp_cur, 40)             # 6d8+6 ≤ 54
-        # 火焰抗性字段生效
-        self.assertTrue(priest.fire_resist)
-        # 至少能正常执行一次 AI 动作
-        act = monster_choose_action(enc, priest)
-        self.assertIn("action", act)
-
-
-class TestScriptedCompanionAI(unittest.TestCase):
-    """扩展后的启发式队友 AI：全职业一轮不崩、行为合理。"""
-
-    def _session(self, rng):
-        from ctrcg.game import state as G
-        from ctrcg.game.session import GameSession
-        from ctrcg.ui.cli import AutoUI
-        hero = make_pc(name="凯尔")
-        return GameSession(G.GameState(hero, [hero], rng), AutoUI(), loop=None), hero
-
-    def test_all_classes_take_a_turn(self):
-        rng = random.Random(31)
-        session, hero = self._session(rng)
-        enc = Encounter("t")
-        enc.rng = rng
-        monk = make_pc(name="无相", klass="monk",
-                       scores={"str": 13, "dex": 15, "con": 14, "int": 8, "wis": 14,
-                               "cha": 10}, level=5)
-        druid = make_pc(name="芬恩", klass="druid",
-                        scores={"str": 8, "dex": 13, "con": 14, "int": 10, "wis": 15,
-                                "cha": 10}, level=5)
-        sorc = make_pc(name="缇娅", klass="sorcerer",
-                       scores={"str": 8, "dex": 14, "con": 14, "int": 10, "wis": 10,
-                               "cha": 15}, level=5)
-        warlock = make_pc(name="赫克斯", klass="warlock",
-                          scores={"str": 10, "dex": 13, "con": 14, "int": 10, "wis": 12,
-                                  "cha": 15}, level=5)
-        paladin = make_pc(name="奥丽薇", klass="paladin",
-                          scores={"str": 15, "dex": 12, "con": 14, "int": 8, "wis": 10,
-                                  "cha": 15}, level=5)
-        bard = make_pc(name="吟游", klass="bard",
-                       scores={"str": 10, "dex": 14, "con": 13, "int": 10, "wis": 12,
-                               "cha": 15}, level=5)
-        enc.add(hero, "party")
-        for c in (monk, druid, sorc, warlock, paladin, bard):
-            enc.add(c, "party")
-        for _ in range(4):
-            enc.add(Monster("goblin", rng), "enemy")
-        enc.begin(rng)
-        for c in (monk, druid, sorc, warlock, paladin, bard):
-            c.hp_cur = c.hp_max                        # 满血走攻击/法术分支
-            enc.begin_turn(c)
-            session._scripted_pc_turn(enc, c)          # 一整轮（动作+附赠）不崩溃
-        # 引擎状态自洽：有敌人已掉血，且没有非法状态
-        self.assertGreaterEqual(enc.round, 1)
-        self.assertTrue(any(f.hp_cur < f.hp_max for f in enc.enemies()))
-
-
-class TestDrainAndDeathRegression(unittest.TestCase):
-    """生命汲取的恢复（RAW：长休解除削减）与死者的升级/长休隔离。"""
-
-    def test_drain_reduces_and_long_rest_restores(self):
-        c = make_pc()
-        full = c.hp_max
-        c.take_damage(4)
-        c.hp_max -= 6
-        c.hp_drain = 6
-        c.hp_cur = min(c.hp_cur, c.hp_max)
-        msg = c.long_rest()
-        self.assertEqual(c.hp_max, full)               # 长休恢复被汲取的上限
-        self.assertEqual(c.hp_drain, 0)
-        self.assertIn("长休完毕", msg)
-
-    def test_dead_neither_levels_nor_gains_xp(self):
-        c = make_pc()
-        c.take_damage(c.hp_max + c.hp_max)             # 大伤害即死
-        self.assertIn("dead", c.conditions)
-        self.assertEqual(c.level_up_to(5), "")
-        self.assertEqual(c.level, 1)
-        self.assertEqual(c.gain_xp(1000), "")
-        self.assertEqual(c.xp, 0)
-
-    def test_long_rest_skips_dead(self):
-        c = make_pc()
-        c.take_damage(c.hp_max + c.hp_max)
-        before = c.hp_cur
-        msg = c.long_rest()
-        self.assertIn("已死亡", msg)
-        self.assertEqual(c.hp_cur, before)             # 尸体不被"回满"
-
-
-class TestMagicItemAttunement(unittest.TestCase):
-    """魔法物品拾取即同调（修复前星炉长剑(+1)是死物品）。"""
-
-    def _session(self):
-        from ctrcg.game import state as G
-        from ctrcg.game.session import GameSession
-        from ctrcg.ui.cli import AutoUI
-        rng = random.Random(2)
-        hero = make_pc(name="凯尔")
-        session = GameSession(G.GameState(hero, [hero], rng), AutoUI(), loop=None)
-        return session, hero
-
-    def test_star_forge_blade_attunes_once(self):
-        session, hero = self._session()
-        session.tools._tool_give_loot(gold=0, items={"star_forge_blade": 1})
-        self.assertEqual(hero.magic_attack_bonus, 1)
-        self.assertEqual(hero.magic_damage_bonus, 1)
-        # 重复拾取（存档往返/重复战利品）不叠加
-        session.tools._tool_give_loot(gold=0, items={"star_forge_blade": 1})
-        self.assertEqual(hero.magic_attack_bonus, 1)
-        self.assertEqual(hero.magic_damage_bonus, 1)
-
-    def test_plain_items_do_not_attune(self):
-        session, hero = self._session()
-        session.tools._tool_give_loot(gold=5, items={"healing_potion": 2})
-        self.assertEqual(hero.magic_attack_bonus, 0)
-
-
-class TestXpLevelUpChoices(unittest.TestCase):
-    """经验升级（非里程碑）也会结算职业特性选择（此前被静默跳过）。"""
-
-    def test_award_xp_resolves_asi_for_player_and_defaults_for_companions(self):
-        from ctrcg.game import state as G
-        from ctrcg.game.session import GameSession
-        from ctrcg.ui.cli import AutoUI
-        rng = random.Random(4)
-        hero = make_pc(name="凯尔", level=3)
-        comp = make_pc(name="芬恩", klass="druid",
-                       scores={"str": 8, "dex": 13, "con": 14, "int": 10, "wis": 15,
-                               "cha": 10}, level=3)
-        session = GameSession(G.GameState(hero, [comp], rng), AutoUI(), loop=None)
-        session.tools._tool_award_xp(20000, "测试")
-        self.assertEqual(hero.level, 5)
-        self.assertEqual(comp.level, 5)
-        # 玩家：选择已结算（AutoUI 会因选项描述含"攻击"选中巨武器大师专长）
-        self.assertTrue(hero.feature_choices.get("asi"))
-        self.assertTrue(hero.feature_choices.get("feat")
-                        or hero.abilities["str"] == 19)
-        # 同伴：推荐默认（德鲁伊 → 战争施法者）
-        self.assertEqual(comp.feature_choices.get("feat"), "war_caster")
-
-    def test_award_xp_player_can_pick_plain_asi(self):
-        """玩家选择"属性提升：单项 +2"分支正常结算。"""
-        from ctrcg.game import state as G
-        from ctrcg.game.session import GameSession
-        from ctrcg.ui.cli import AutoUI
-
-        class PickFirst(AutoUI):
-            def choose(self, prompt, options):
-                if "属性提升" in str(prompt) or "4 级" in str(prompt):
-                    return 0
-                if "提升哪项属性" in str(prompt):
-                    return 0                      # 力量
-                return super().choose(prompt, options)
-
-        rng = random.Random(4)
-        hero = make_pc(name="凯尔", level=3)
-        session = GameSession(G.GameState(hero, [hero], rng), PickFirst(), loop=None)
-        session.tools._tool_award_xp(20000, "测试")
-        self.assertEqual(hero.feature_choices.get("asi"), "str+2")
-        self.assertEqual(hero.abilities["str"], 19)
-
-    def test_feat_shown_in_resource_lines(self):
-        c = make_pc()
-        c.feature_choices["feat"] = "great_weapon_master"
-        self.assertTrue(any("巨武器大师" in ln for ln in c.resource_lines()))
-
-
-class TestShop(unittest.TestCase):
-    """商店：金币消费出口（购买扣款、库存入包、金币不足拦截）。"""
-
-    def _shop_ui(self, picks):
+    def test_menu_shop_closes_cleanly(self):
         from ctrcg.ui.cli import ConsoleUI
-        calls = {"i": 0}
 
-        class QueueUI(ConsoleUI):
+        class LeaveUI(ConsoleUI):
+            def __init__(self):
+                super().__init__(input_fn=lambda _p: "", show_dice=False)
+                self.calls = 0
+
             def choose(self, prompt, options):
-                idx = picks[min(calls["i"], len(picks) - 1)]
-                calls["i"] += 1
-                return idx
+                self.calls += 1
+                return len(options) - 1                          # 离开货摊
 
-        return QueueUI()
-
-    def _session(self, ui, gold=200):
-        import ctrcg.game.state as G
-        from ctrcg.game.session import GameSession
-        rng = random.Random(3)
-        hero = make_pc(name="凯尔")
-        hero.gold = gold
-        session = GameSession(G.GameState(hero, [hero], rng), ui, loop=None)
-        # 商店只在 scene.shop = true 的场景开放（buy_good 会校验场景），
-        # 故把会话切到内置模组的商店场景 town_arrive
-        session.state.scene_id = "town_arrive"
-        return session, hero
-
-    def test_buy_and_leave(self):
-        # 货摊 4 项：买治疗药水(50) → 买火把(5) → 离开
-        session, hero = self._session(self._shop_ui([0, 3, 4]), gold=200)
-        p0 = hero.inventory.get("healing_potion", 0)
-        t0 = hero.inventory.get("torch", 0)
+        st, _s = shop_state(eurobucks=200)
+        ui = LeaveUI()
+        session = GameSession(st, ui, loop=None)
         session.open_shop()
-        self.assertEqual(hero.gold, 145)
-        self.assertEqual(hero.inventory.get("healing_potion", 0), p0 + 1)
-        self.assertEqual(hero.inventory.get("torch", 0), t0 + 1)
-
-    def test_insufficient_gold_blocked(self):
-        # 金币 10：买上乘药水(150)被拒 → 继续尝试 → 离开
-        session, hero = self._session(self._shop_ui([1, 1, 4]), gold=10)
-        session.open_shop()
-        self.assertEqual(hero.gold, 10)
-        self.assertNotIn("potion_greater_healing", hero.inventory)
-
-    def test_healer_kit_bundle(self):
-        # 医疗包一整包 = 10 次用次
-        session, hero = self._session(self._shop_ui([2, 4]), gold=200)
-        session.open_shop()
-        self.assertEqual(hero.gold, 100)
-        self.assertEqual(hero.inventory.get("healer_kit"), 10)
+        self.assertEqual(ui.calls, 1)
+        self.assertEqual(st.player.eurobucks, 200)
 
 
-class TestOutOfCombatPotion(unittest.TestCase):
-    """探索阶段喝药：引擎代掷、扣库存、长休前也能回血。"""
+# ================================================================ 同伴 AI
+class TestScriptedCompanionAI(unittest.TestCase):
+    def test_all_ten_roles_act_a_turn_without_crashing(self):
+        st = make_state()
+        session = GameSession(st, AutoUI(), loop=None)
+        enc = Encounter(title="全职业演练", entry={}, rng=st.rng)
+        enc.enemies.append(make_foe())
+        for i, role in enumerate(D.ROLES):
+            comp = make_pc(f"同伴-{role}", role=role, weapons=[PISTOL])
+            comp.kind = "companion"
+            enc.allies.append(comp)
+        enc.grid = corridor(6)
+        for i, c in enumerate(enc.combatants):
+            enc.positions[c.name] = (1 + (i % 2), 1 + (i % 3))
+        enc.speed_left = {c.name: c.move_value() for c in enc.combatants}
+        st.companions = list(enc.allies[1:])
+        for comp in enc.allies[1:]:
+            try:
+                session.companion_turn(enc, comp)
+            except Exception as exc:                            # noqa: BLE001
+                self.fail(f"{comp.role} 的同伴回合崩了：{exc!r}")
+            enc.refresh_actions(comp)                           # 给下一个职业腾位
 
-    def test_drink_potion_out_of_combat(self):
-        from ctrcg.game import state as G
-        from ctrcg.game.session import GameSession
-        from ctrcg.ui.cli import AutoUI
-        rng = random.Random(6)
-        hero = make_pc()
-        session = GameSession(G.GameState(hero, [hero], rng), AutoUI(), loop=None)
-        hero.take_damage(8)
-        hero.inventory["potion_greater_healing"] = 1
-        hero.inventory["healing_potion"] = 2
-        before_hp, before_cnt = hero.hp_cur, 3
-        session.drink_potion_out_of_combat()
-        self.assertGreater(hero.hp_cur, before_hp)
-        self.assertEqual(sum(hero.inventory.get(k, 0) for k in
-                             ("healing_potion", "potion_greater_healing")),
-                         before_cnt - 1)
-        self.assertEqual(hero.inventory["potion_greater_healing"], 0)  # 优先喝上乘
-
-    def test_drink_without_potion(self):
-        from ctrcg.game import state as G
-        from ctrcg.game.session import GameSession
-        from ctrcg.ui.cli import AutoUI
-        session = GameSession(G.GameState(make_pc(), [], random.Random(1)),
-                              AutoUI(), loop=None)
-        session.drink_potion_out_of_combat()           # 不抛异常即可
-
-
-class TestWildShapeDisplay(unittest.TestCase):
-    """野变下状态栏显示兽形 HP（修复前显示 本体cur/兽形max 的错位）。"""
-
-    def test_shaped_druid_status_shows_beast_hp(self):
-        rng = random.Random(8)
-        enc = Encounter("t")
-        enc.rng = rng
-        druid = make_pc(name="芬恩", klass="druid",
-                        scores={"str": 8, "dex": 13, "con": 14, "int": 10, "wis": 15,
-                                "cha": 10}, level=5)
-        enc.add(druid, "party")
-        enc.add(Monster("goblin", rng), "enemy")
-        enc.begin(rng)
-        enc.begin_turn(druid)
-        self.assertTrue(enc.wild_shape(druid, "black_bear").get("ok"))
-        line = next(ln for ln in enc.status_lines() if "芬恩" in ln)
-        cur, mx = line.split("HP")[1].split(",")[0].strip().split("/")
-        self.assertEqual(int(cur), int(mx))            # 满血兽形：cur == max
-        # brief() 同步
-        b = enc.brief()
-        me = next(p for p in b["party"] if p["name"] == "芬恩")
-        c2, m2 = me["hp"].split("/")
-        self.assertEqual(c2, m2)
+    def test_scripted_heuristic_attacks(self):
+        st = make_state()
+        session = GameSession(st, AutoUI(), loop=None)
+        enc = duel(pc=make_pc("同伴", role="solo", weapons=[PISTOL]),
+                   foe=make_foe(), grid=corridor(3), cells=3)
+        comp = enc.allies[0]
+        comp.kind = "companion"
+        enc.rng = ScriptRng([8, 3, 3, 3])
+        session.companion_turn(enc, comp)
+        self.assertTrue(enc.rolls)                    # 真的走了一次攻击结算
+        self.assertFalse(enc.has_action(comp))        # 动作被用掉
 
 
-class TestFeatCombat(unittest.TestCase):
-    """专长的战斗机制：大力攻击 −5/+10、巨武器大师追击、战争施法者专注优势。"""
-
-    def test_power_attack_math(self):
-        for feat, weapon in (("great_weapon_master", "greataxe"),
-                             ("sharpshooter", "longbow")):
-            pc = make_pc(name="重锤", klass="fighter", level=4)
-            pc.weapons = [weapon]
-            pc.feature_choices["feat"] = feat
-            gob = Monster("goblin", random.Random(1))
-            base, powered = None, None
-            for flag, store in ((False, "base"), (True, "powered")):
-                rng = random.Random(77)                  # 同 seed：骰运一致
-                enc = Encounter("t")
-                enc.rng = rng
-                enc.add(pc, "party")
-                m = Monster("goblin", rng)
-                enc.add(m, "enemy")
-                enc.begin(rng)
-                enc.begin_turn(pc)
-                r = enc.attack_action(pc, m, weapon, rng, power_attack=flag)
-                if store == "base":
-                    base = r
-                else:
-                    powered = r
-            self.assertIn("大力攻击", powered["detail"])
-            self.assertNotIn("大力攻击", base["detail"])
-
-    def test_gwm_bonus_attack_on_kill(self):
-        pc = make_pc(name="重锤", klass="fighter", level=4)
-        pc.weapons = ["greataxe"]
-        pc.feature_choices["feat"] = "great_weapon_master"
-        rng = random.Random(5)
-        enc = Encounter("t")
-        enc.rng = rng
-        enc.add(pc, "party")
-        m = Monster("goblin", rng)
-        enc.add(m, "enemy")
-        m2 = Monster("goblin", rng)
-        enc.add(m2, "enemy")
-        m.hp_cur = 1                                    # 一斧头砍倒
-        m.ac_base = 5                                   # 确保命中
-        enc.begin(rng)
-        enc.begin_turn(pc)
-        r = enc.attack_action(pc, m, "greataxe", rng)
-        self.assertIn("巨武器大师", r["detail"])
-        self.assertTrue(enc.bonus_used.get(pc.name))    # 附赠动作被消耗
-
-    def test_war_caster_concentration_advantage(self):
-        rng = random.Random(9)
-        enc = Encounter("t")
-        enc.rng = rng
-        caster = make_pc(name="缇娅", klass="sorcerer", level=4)
-        caster.feature_choices["feat"] = "war_caster"
-        enc.add(caster, "party")
-        m = Monster("goblin", rng)
-        enc.add(m, "enemy")
-        enc.begin(rng)
-        enc.cast(caster, "bless", [caster.name], rng)   # 专注法术
-        self.assertIsNotNone(caster.concentration)
-        m.ac_base = 5
-        for _ in range(4):                              # 直到命中一次（打断专注）
-            enc.begin_turn(m)
-            r = enc.attack_action(m, caster, None, rng)
-            if r.get("hit"):
-                break
-        save_events = [e for e in enc.rolls
-                       if e.get("label") == "专注豁免"]
-        self.assertTrue(save_events)
-        self.assertGreaterEqual(len(save_events[-1].get("rolls") or []), 2)
-
-
+# ================================================================ 循环终止回归
 class TestDeathSaveLoopRegression(unittest.TestCase):
-    """回归：战斗后无人施救的濒死者掷出自然 20 复活（1 HP），
-    死亡豁免循环必须终止（修复前会永远空转）。"""
+    """回归：濒死成员被救回后，战斗回合循环必须终止（修复前会永远空转）。
 
-    def test_revived_member_terminates_loop(self):
-        import ctrcg.rules.character as CH
-        from ctrcg.game import state as G
-        from ctrcg.game.session import GameSession
-        from ctrcg.ui.cli import AutoUI
+    这是规则无关的不变量：无论生存检定的实现怎么改，"复活/被稳定"之后
+    就不该再对同一个角色反复掷生存检定。
+    """
 
-        rng = random.Random(3)
-        hero = make_pc(name="凯尔")
-        ally = make_pc(name="皮普", klass="cleric")
-        session = GameSession(G.GameState(hero, [ally], rng), AutoUI(), loop=None)
+    def test_revived_member_terminates_the_loop(self):
+        st = _state_with_small_encounter()
+        session = GameSession(st, AutoUI(), loop=None)
+        session.launch_encounter("e_small")
+        enc = session.encounter
 
-        enc = Encounter("t")
-        enc.rng = rng
-        enc.add(hero, "party")
-        enc.add(ally, "party")
-        gob = Monster("goblin", rng)
-        enc.add(gob, "enemy")
-        gob.take_damage(999)                          # 敌人已倒 → 战斗结束
-        # 全队倒地：无人可施救 → 走死亡豁免分支
-        for c in (hero, ally):
-            c.hp_cur = 0
-            c.conditions.add(CH.COND_UNCONSCIOUS)
-        session.encounter = enc
-        session.tools.encounter = enc
-
-        calls: dict[int, int] = {}
+        calls: dict[str, int] = {}
 
         def fake_death_save(self2, _rng):
-            n = calls.get(id(self2), 0) + 1
-            calls[id(self2)] = n
-            if n == 1:
-                self2.hp_cur = 1                      # 自然 20：复活
-                return {"who": self2.name, "result": "revived", "detail": "d20=20"}
-            self2.conditions.add(CH.COND_STABLE)
-            return {"who": self2.name, "result": "stable", "detail": "ok"}
+            from ctrcg.rules.dice import check_roll as _roll
+            n = calls.get(self2.name, 0) + 1
+            calls[self2.name] = n
+            self2.hp_cur = 1                     # 第一次就"复活"归队
+            self2.conditions.discard(COND_DEAD)
+            self2.conditions.discard(COND_UNCONSCIOUS)
+            res = _roll(ScriptRng([1]), 0, dv=10)
+            if n > 1:
+                self2.stabilize()
+            return {"ok": True, "face": 1, "dv": 10, "roll": res, "dead": False}
 
-        orig = Character.death_save_turn
-        Character.death_save_turn = fake_death_save
+        orig = Character.death_save
+        Character.death_save = fake_death_save
         try:
+            # 让敌人在旁边看着不还手，隔离出"生存检定循环"本身
+            enc.npc_choose_action = lambda c: {"action": "wait"}
+            st.player.hp_cur = 0
+            st.player.conditions.add(COND_UNCONSCIOUS)
             outcome = session.run_combat()
         finally:
-            Character.death_save_turn = orig
-        self.assertEqual(outcome, "win")
-        # 每人最多两次掷骰（复活一次 + 稳定一次），而非无限循环
-        self.assertLessEqual(max(calls.values()), 2)
+            Character.death_save = orig
+        self.assertIn(outcome, ("win", "retreat", "tpk"))
+        self.assertTrue(calls, "生存检定根本没有被触发")
+        self.assertLessEqual(max(calls.values()), 2,
+                             f"某个角色的生存检定被反复触发：{calls}")
+
+    def test_stabilized_member_is_not_rerolled(self):
+        c = make_pc()
+        c.hp_cur = 0
+        enc = Encounter(title="t", entry={}, rng=ScriptRng([5, 5, 5]))
+        enc.allies.append(c)
+        enc.enemies.append(make_foe())
+        enc.order = [c, enc.enemies[0]]
+        enc.begin_turn(c)                        # 第一回合：掷一次生存检定
+        first = c.death_save_mod
+        enc.begin_turn(c)                        # 第二回合：再掷一次
+        self.assertEqual(first, 1)
+        self.assertEqual(c.death_save_mod, 2)
+
+
+def _state_with_small_encounter():
+    st = make_state()
+    st.module.encounters["e_small"] = {
+        "title": "小冲突", "intro": "一个条子堵住了巷口。",
+        "enemies": [["corrupt_cop", 1]], "loot": {"eurobucks": 40}}
+    return st
 
 
 if __name__ == "__main__":

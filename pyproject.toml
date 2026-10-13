@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ctrcg"
-version = "1.6.0"
-description = "CTRCG —— 单人 AI 跑团：完整 D&D 5e 规则引擎 + AI DM/队友（被遗忘的大陆）"
+version = "2.0.0"
+description = "CTRCG —— 单人 AI 跑团：完整《赛博朋克 RED》规则引擎 + AI 主持人/队友（夜之城 2045）"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "KananPond" }]
 requires-python = ">=3.10"
 dependencies = []
-keywords = ["dnd", "ttrpg", "ai", "singleplayer", "chinese"]
+keywords = ["cyberpunk-red", "ttrpg", "ai", "singleplayer", "chinese"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",

@@ -7,8 +7,18 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
+
+#: 文件名里不能出现的字符（Windows 尤其严格）；会话 id 形如 ``pc:24/7``，
+#: 角色名可能带 ``/`` 或 ``:``，落盘前统一替换成 ``_``。
+_BAD_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def safe_filename(session_id: str) -> str:
+    """把会话 id 变成可安全落盘的文件名（``pc:24/7`` → ``pc_24_7``）。"""
+    return _BAD_FILENAME.sub("_", str(session_id)) or "session"
 
 
 class Session:
@@ -20,7 +30,7 @@ class Session:
         if log_dir is not None:
             log_dir = Path(log_dir)
             log_dir.mkdir(parents=True, exist_ok=True)
-            self._file = log_dir / f"{session_id}.jsonl"
+            self._file = log_dir / f"{safe_filename(session_id)}.jsonl"
 
     def log(self, etype: str, **payload) -> dict:
         self._seq += 1

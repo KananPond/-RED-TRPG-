@@ -7,7 +7,7 @@ docs/companion-npc-agents.md §2）。
   对话面（say 一件工具），台词直接回到 DM 的工具结果里；DM 随时可用
   speak_as_npc 亲自说话覆盖它。控制权始终在 DM 手上。
 
-每个 NPC 一份持久 harness 会话（npc:<id>）：记得此前与冒险者的交锋，
+每个 NPC 一份持久 harness 会话（npc:<id>）：记得此前与这支边缘行者小队的交锋，
 "NPC 会记仇、也会改主意"有了记忆载体。世界情报（引擎世界书 + 模组为
 NPC 配的卡上角色书）每回合按桌面窗口扫描注入——SillyTavern World Info
 通路与同伴/玩家同款。
@@ -126,6 +126,9 @@ class NPCDirector:
         table = self._table_text()
         if table:
             lines.append("【桌上此刻】\n" + table)
+        # 战术地图态势（只感知不改动：谁在附近，1格=2米）
+        if s.state.map:
+            lines.append("【地图】\n" + s.state.map_digest())
         wi_block = "\n".join(x for x in (wi_res.before, wi_res.after) if x.strip())
         if wi_block:
             lines.append("【世界书】\n" + wi_block)

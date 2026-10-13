@@ -26,87 +26,103 @@ from ..campaign.loader import Module
 from ..config import LLM_PROVIDERS, LLMConfig
 from ..game import state as G
 from ..game.session import GameSession
+from ..game.story import (StorySession, ending_ids, iter_story_files,
+                          load_story_file, load_unlocks, record_unlock)
 from ..harness.usage import TokenMeter
 from ..rules import data as D
-from ..rules.character import Character
-from ..rules.dice import roll_scores
-from ..ui.charcreate import RECOMMENDED
+from ..ui.charcreate import (build_from_pregen, default_companion_keys,
+                             pregens_of)
 from ..ui.webui import AbortGame, WebUI
-from .charbuild import build_aipc_card, build_character
+from .charbuild import build_aipc_card, build_character, companion_ids
 
 STATIC_DIR = Path(__file__).parent / "static"
 SAVE_FILE = "saves/game.json"
+DEFAULT_MODULE_ID = "cpred-easy-mode"
 LLM_SETTINGS_FILE = "saves/llm_config.json"   # 仅存非敏感字段（provider/base_url/model + aipc）
+UNLOCKS_FILE = "saves/story_endings.json"     # 剧本模式结局图鉴（非敏感）
 
-_GEN_SYSTEM = """你是资深的 D&D 5e 模组设计师，为"被遗忘的大陆"（被遗忘的国度，剑湾一带）创作跑团模组。
+_GEN_SYSTEM = """你是资深的《赛博朋克 RED》（Cyberpunk RED）模组设计师，为"夜之城 · 2045 血染之时"创作跑团模组。
 你要输出一个完整的模组 JSON，供跑团引擎直接加载运行。只输出 JSON 本身，不要任何解释或代码围栏。
 
 模组 JSON 规范（必须严格遵守）：
 {
   "id": "小写字母数字连字符（1-48字符）",
   "title": "模组中文名", "en_title": "English Title",
-  "setting": "舞台设定（1-2句，被遗忘的大陆/剑湾）",
+  "setting": "舞台设定（1-2句：夜之城 2045 年，哪个区、什么气候与权力格局）",
   "synopsis": "剧情梗概（3-4句）",
-  "party_level_start": 1, "expected_end_level": 3,
   "act_titles": {"1": "第一幕标题", "2": "..."},
   "epilogue": "结局叙述（多行\\n分隔）",
-  "npcs": {"npc_id": {"name": "名字", "race": "种族", "desc": "描述与动机"}},
-  "companions": [                          // 可选；缺省时引擎使用默认三人组
-    {"id": "ally", "name": "名字", "race": "BG3种族key（见下方种族表）",
-     "klass": "BG3职业key（12职业之一）", "background": "BG3出身key（见下方出身表）",
-     "fighting_style": "archery|defense|dueling|",
-     "scores": {"str":15,"dex":13,"con":14,"int":10,"wis":12,"cha":8},
-     "skills": ["职业技能key"], "persona": "人设", "voice": "语气"}],
-  "encounters": { "e_xxx": {"title": "名", "dark": false, "intro": "开战叙述",
-      "monsters": [["goblin", 3]], "loot": {"gold": 30, "items": {"healing_potion": 1}}} },
-  "scenes": [ {"id": "s1", "act": 1, "location": "地点",
+  "pregens": {                              // 必填，5 个预设角色：玩家挑其中一个扮演
+    "solo_x": {"name": "名字", "handle": "街头绰号", "role": "职业 key（见下）",
+      "role_rank": 4, "role_ability": "职业特殊能力名",
+      "stats": {"int":6,"ref":7,"dex":6,"tech":4,"cool":6,"will":6,"luck":6,"move":5,"body":6,"emp":5},
+      "hp": 40,                             // = 10 + 5 × ⌈(体格 + 意志力) ÷ 2⌉
+      "skill_levels": {"handgun":6,"athletics":3},
+      "armor": "护甲 key（见下）", "weapons": ["武器 key（见下）"],
+      "cyberware": ["义体 key（见下）"], "gear": {"ammo": 20},
+      "eurobucks": 0, "persona": "人设", "voice": "语气", "desc": "外貌与来历"}},
+  "default_companions": ["medtech_y", "tech_z"],   // 必填：预设法里的 key
+  "encounters": { "e_xxx": {"title": "名", "intro": "开战叙述",
+      "enemies": [["corrupt_cop", 3]], "loot": {"eurobucks": 100, "items": {"ammo": 20}},
+      "spawns": {"corrupt_cop": [[9,2],[9,5],[8,3]]}}},
+  "scenes": [ {"id": "s1", "act": 1, "location": "地点（如：海伍德工业区 · 废弃仓库）",
       "intro": "进场叙述（2-4句）", "explore": "可做的事",
-      "skills": [{"skill": "perception", "dc": 12, "success": "成功结果", "fail": "失败结果"}],
+      "checks": [{"skill": "perception", "dv": 15, "success": "成功结果", "fail": "失败结果"}],
       "encounter": "e_xxx 或 null", "next": "下一场景id 或 null(最终场景)",
-      "milestone": 0, "level_to": null,
-      "outro": null 或 "战斗后叙述"} , ...],
-  "custom_monsters": { "my_monster": {"name": "名", "xp": 200, "hp": "4d8+4", "ac": 14,
-      "speed": 30, "abilities": {"str":14,"dex":14,"con":12,"int":8,"wis":10,"cha":8},
-      "traits": ["特性中文名（可含：施法者/突袭/群袭战术）"],
-      "attacks": [{"weapon": "scimitar|shortbow|longbow|greataxe|bite|slam|morningstar|dagger|mace|quarterstaff",
-                   "bonus": 4, "extra": "+2", "dmg": "1d6"}],
-      "darkvision": 60} }
+      "ip": 40, "shop": false, "outro": "", "map": {"grid": [11, 8], "label": "地图名",
+        "obstacles": [[5,3]], "party_spawn": [1,4]}}, ...],
+  "custom_npcs": { "my_npc": {"name": "名", "stats": {"ref":6,"dex":6,"body":6},
+      "skills": {"handgun": 6}, "hp": 35, "armor": 7, "armor_name": "凯夫拉",
+      "weapons": ["heavy_pistol"], "notes": "战术与动机"}},
+  "npcs": {"npc_id": {"name": "名", "role": "中间人/警察/记者…", "desc": "描述与动机",
+      "persona": "人设", "voice": "语气"}}
 }
 
 硬性约束：
 1. 场景链必须从第一个场景经 next 连贯走到唯一的 null 终点，无环、无孤场景。
-2. 场景的 encounter 必须指向 encounters 中存在的 id；怪物 id 必须是内置表
-   （SRD 生物：goblin, skeleton, zombie, wolf, giant_badger, riding_horse,
-   bandit, hobgoblin, worg, gnoll, black_bear, duergar, giant_spider, ghoul,
-   imp, hook_horror, ettercap, bandit_captain, ogre, ash_mage, phase_spider,
-   redcap, owlbear, minotaur, wight, bulette, cambion）或 custom_monsters 中
-   定义的 id（自定义怪物字段规范见根目录 MODULE_SPEC.md：支持 dtype、
-   spell_level、multiattack、onhit 等完整机制字段）。
-3. 技能 key 只能取：athletics/acrobatics/sleight_of_hand/stealth/arcana/history/
-   investigation/nature/religion/animal_handling/insight/medicine/perception/
-   survival/deception/intimidation/performance/persuasion；DC 5-30。
-4. 经验预算：全部怪物 XP + milestone 总和按 4 人平分后应达到 900（升3级），约 1200-2500 为佳。
-5. 战斗难度递进；至少一场 boss 战；intro/outro 用具体、有画面感的中文。
-6. id 用英文，正文全用中文。规模：2-3 幕、6-10 个场景、4-7 场遭遇。
+2. 场景的 encounter 必须指向 encounters 中存在的 id；敌人 id 必须是内置表
+   （corrupt_cop, houston, bike_ganger, lazlo）或 custom_npcs 中定义的 id。
+3. 检定写成 checks，skill 只能取下方技能白名单的 key，dv 只能取 13/15/17/21/24
+   （日常/困难/专业/英雄/不可思议），也可用 9-30 的任意值。
+4. pregens 必须 5 个，职业互不重复；default_companions 取其中 2-3 个。
+   属性 2-8，十项齐全；PW = 10 + 5 × ⌈(体格 + 意志力) ÷ 2⌉；技能等级 0-10。
+5. 改进点 ip 是离开场景时给队伍的奖励，单场上限 400 以内；不要使用经验值或等级。
+6. 战斗难度递进；至少一场 boss 战；intro/outro 用具体、有画面感的中文。
+7. id 用英文，正文用中文；**人名一律写英文**（预设角色、NPC、敌人专名都用英文原名或拉丁转写，不要音译成中文），但**地名与类型标签保持中文**（夜之城/海伍德；腐败警察/摩托增援/线人）。规模：2-3 幕、6-10 个场景、4-7 场遭遇。
+   赛博朋克基调：巨型公司、街头帮派、义体、霓虹与雨夜；不写魔法与法术。
 
-种族表（BG3，同伴 race 字段只能取这些 key）：human, high_elf, wood_elf,
-drow_lolth, drow_seldarine, half_elf_high, half_elf_wood, half_elf_drow,
-dwarf_shield, dwarf_gold, duergar, lightfoot_halfling, strongheart_halfling,
-forest_gnome, rock_gnome, deep_gnome, tiefling_asmodeus, tiefling_mephisto,
-tiefling_zariel, half_orc, githyanki, dragonborn_red, dragonborn_gold,
-dragonborn_black, dragonborn_blue, dragonborn_green, dragonborn_white,
-dragonborn_silver, dragonborn_brass, dragonborn_bronze, dragonborn_copper。
-出身表（BG3，background 字段只能取这些 key）：acolyte, charlatan, criminal,
-entertainer, folk_hero, guild_artisan, noble, outlander, sage, soldier, urchin。"""
+职业 key（10 个）：solo（独行侠/枪手）、netrunner（网络行者/黑客）、tech（技术师）、
+medtech（医疗师/义医）、media（媒体人/记者）、cop（警察）、corporate（公司人）、
+fixer（中间人/掮客）、nomad（游牧民）、rockerboy（摇滚客）。
+护甲 key：leather(皮衣 SP4), kevlar(凯夫拉 SP7), light_armorjack(轻型防弹夹克 SP11),
+medium_armorjack(中型防弹衣 SP12), heavy_armorjack(重型防弹衣 SP13),
+bulletproof_shield(防弹盾 SP10)。
+武器 key：brawling, light_melee, medium_melee, heavy_melee, very_heavy_melee,
+medium_pistol, heavy_pistol, very_heavy_pistol, smg, heavy_smg, shotgun,
+assault_rifle, sniper_rifle, bow, crossbow。
+义体 key：internal_agent, pain_editor, cyberaudio, cyberoptics, neural_link,
+subdermal_armor, muscle_enhance, cyberarm。
+技能白名单（41 项）：accounting, acting, athletics, brawling, bribery, bureaucracy,
+business, composition, conceal_reveal, concentration, conversation, criminology,
+cryptography, dancing, deduction, drive_land_vehicle, education,
+electronics_security, evasion, first_aid, forgery, handgun, human_perception,
+interrogation, library_search, local_expert, melee_weapon, paramedic, perception,
+personal_grooming, persuasion, photography_film, pick_lock, pick_pocket,
+play_instrument, resist_torture_drugs, shoulder_arms, stealth, streetwise,
+tactics, tracking。"""
 
 
 class AppState:
-    def __init__(self, cordis_root: str | Path = "modules"):
+    def __init__(self, cordis_root: str | Path = "modules",
+                 unlocks_path: str | Path = UNLOCKS_FILE):
         self.ui: WebUI | None = None
         self.session: GameSession | None = None
+        self.story: StorySession | None = None    # 剧本模式对局（互斥于 session）
+        self.story_meta: dict = {}                # 当前剧本的模块级信息（id/module_id/数据）
         self.thread: threading.Thread | None = None
         self.cordis = Cordis(cordis_root)
         self.meter = TokenMeter("saves/token_usage.json")
+        self.unlocks_path = unlocks_path
         self._runtime_key: str | None = None       # 仅内存，不落盘
         self._persisted: dict = self._load_llm_settings()
         self.aipc_prefs: dict = (                  # AI PC 偏好（开关/persona，非敏感）
@@ -227,6 +243,8 @@ class AppState:
         with self.lock:
             if self.thread is not None and self.thread.is_alive():
                 return False, "已有一局在进行，请先重置", {}
+        self.story = None
+        self.story_meta = {}
         module = None
         try:
             if spec.get("continue"):
@@ -235,24 +253,22 @@ class AppState:
                     raw = json.loads(Path(save_path).read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError) as e:
                     return False, f"存档读取失败：{e}", {}
-                module_id = str(raw.get("module_id") or "starfall")
+                module_id = str(raw.get("module_id") or DEFAULT_MODULE_ID)
                 module, errs, _w = self.cordis.ensure(module_id)
                 if module is None:
                     return False, f"存档所需模组缺失：{module_id}", {}
                 state = G.load_game(save_path, module=module)
             else:
-                module_id = str(spec.get("module_id") or "blue-watch")
+                module_id = str(spec.get("module_id") or DEFAULT_MODULE_ID)
                 module, errs, warns = self.cordis.ensure(module_id)
                 if module is None:
                     return False, "；".join(errs) or f"模组加载失败：{module_id}", {}
                 import random
                 rng = (random.Random(spec["seed"]) if spec.get("seed") is not None
                        else random.Random())
-                # 同一 rng 供属性掷骰与对局使用：同 seed 完全可复现
-                player = build_character(spec, rng=rng)
-                if module.party_level_start > player.level:
-                    player.level_up_to(module.party_level_start)
-                companions = build_companions(module, state_level=player.level)
+                # RED 建卡：从模组预设角色里挑一个，队友同样取自预设（无掷骰/等级）
+                player = build_character(spec, module, rng=rng)
+                companions = build_companions(module, spec)
                 state = G.GameState(player, companions, rng, module=module)
                 # AI PC（aipc-design §4.1）：开关以开局 spec 优先，缺省回退设置页
                 # 持久化偏好；续档走 load_game，以存档 aipc.enabled 为准，不在此覆盖。
@@ -291,12 +307,114 @@ class AppState:
         self.thread.start()
         return True, None, self.snapshot()
 
+    # ------------------------------------------------------------ 剧本模式（互动剧）
+    def stories_payload(self) -> dict:
+        """剧本列表：modules/<id>/story_*.json + 结局图鉴解锁状态。"""
+        unlocks = load_unlocks(self.unlocks_path)
+        stories = []
+        errors: list[str] = []
+        for module_id, path in iter_story_files(self.cordis.root):
+            story, errs = load_story_file(path)
+            if story is None:
+                errors.extend(errs)
+                continue
+            sid = str(story.get("id", ""))
+            endings = [{"id": str(e), "title": str(story["nodes"][e].get("title", e)),
+                        "rank": str(story["nodes"][e].get("rank", ""))}
+                       for e in ending_ids(story)]
+            mod = self.cordis.ensure(module_id)[0]
+            stories.append({
+                "story_id": sid,
+                "module_id": module_id,
+                "module_title": mod.title if mod else module_id,
+                "title": story.get("title", ""),
+                "en_title": story.get("en_title", ""),
+                "synopsis": story.get("synopsis", ""),
+                "endings_total": int(story.get("endings_total", len(endings))),
+                "endings": endings,
+                "unlocked": [str(e) for e in unlocks.get(sid, []) if isinstance(e, str)],
+                "heroes": [{"index": i, "id": h.get("id", ""), "name": h.get("name", ""),
+                            "title": h.get("title", ""), "hp": int(h.get("hp", 10)),
+                            "desc": h.get("desc", "")}
+                           for i, h in enumerate(story.get("heroes", []))],
+            })
+        return {"stories": stories, "errors": errors}
+
+    def start_story(self, spec: dict) -> tuple[bool, str | None, dict]:
+        """开始一局剧本演绎（与跑团对局共用 UI 槽与事件流，互斥）。"""
+        with self.lock:
+            if self.thread is not None and self.thread.is_alive():
+                return False, "已有一局在进行，请先重置", {}
+        self.session = None
+        self.story = None
+        self.story_meta = {}
+        story_id = str(spec.get("story_id") or "")
+        target = None
+        target_module_id = ""
+        errors: list[str] = []
+        for module_id, path in iter_story_files(self.cordis.root):
+            data, errs = load_story_file(path)
+            if data is None:
+                errors.extend(errs)
+                continue
+            if str(data.get("id", "")) == story_id:
+                target = data
+                target_module_id = module_id
+                break
+        if target is None:
+            return False, f"剧本不存在或已损坏：{story_id}", {}
+        try:
+            hero_index = int(spec.get("hero_index", 0))
+        except (TypeError, ValueError):
+            return False, "主角序号非法", {}
+        if not 0 <= hero_index < len(target.get("heroes", [])):
+            return False, f"主角序号越界：{hero_index}", {}
+        import random
+        rng = (random.Random(spec["seed"]) if spec.get("seed") is not None
+               else random.Random())
+        ui = WebUI()
+        session = StorySession(target, ui, rng=rng)
+        session.set_hero(hero_index)
+        mod = self.cordis.ensure(target_module_id)[0]
+        self.story_meta = {"story_id": story_id,
+                           "module_id": target_module_id,
+                           "module_title": mod.title if mod else "",
+                           "story": target}
+        with self.lock:
+            self.generation += 1
+        self.ui, self.story = ui, session
+
+        def run():
+            try:
+                ending = session.run()
+                unlocked = record_unlock(story_id, str(ending.get("id", "")),
+                                         self.unlocks_path)
+                ui._emit("game_over", reason="story_ended",
+                         ending={"id": str(ending.get("id", "")),
+                                 "title": str(ending.get("title", "")),
+                                 "rank": str(ending.get("rank", "")),
+                                 "text": str(ending.get("text", ""))},
+                         unlocked=unlocked,
+                         endings_total=int(target.get("endings_total", 0)),
+                         dice_stats=ui.dice_stats())
+            except AbortGame:
+                pass
+            except Exception as e:  # noqa: BLE001 —— 错误必须反馈到前端
+                ui._emit("game_over", reason="error",
+                         error=f"{type(e).__name__}: {e}")
+
+        self.thread = threading.Thread(target=run, daemon=True, name="story-loop")
+        self.thread.start()
+        return True, None, self.snapshot()
+
     def reset(self) -> None:
         with self.lock:
             ui, session = self.ui, self.session
             self.session = None
+            self.story = None
+            self.story_meta = {}
             self.ui = None            # 置空：新连接不再回放已结束对局的历史
-        if session is not None and ui is not None:
+        if ui is not None:
             ui.abort()
 
     def snapshot(self) -> dict:
@@ -308,11 +426,34 @@ class AppState:
                 "provider": cfg.provider if cfg else "",
                 "save_exists": save_exists, "running": False,
                 "generation": self.generation}
+        if self.story is not None:
+            # 剧本模式：轻量状态（无队伍/地图/欧元，HP 由 board 事件与快照下发）
+            story_data = self.story_meta.get("story", {})
+            hero = self.story.hero
+            base.update({
+                "started": True,
+                "running": bool(self.thread and self.thread.is_alive()),
+                "mode": "story",
+                "module_id": self.story_meta.get("module_id", ""),
+                "module_title": self.story_meta.get("module_title", ""),
+                "act": 0, "act_title": "", "location": story_data.get("title", ""),
+                "eurobucks": None, "flags": {}, "party": [],
+                "encounter_title": None, "map": None,
+                "story": {"id": self.story_meta.get("story_id", ""),
+                          "title": story_data.get("title", ""),
+                          "hero": {"name": hero.get("name", ""),
+                                   "title": hero.get("title", ""),
+                                   "hp": self.story.hp,
+                                   "hp_max": self.story.hp_max}},
+            })
+            return base
         if self.session is None:
             return base
         st = self.session.state
         scene = self.session.module.scene_by_id(st.scene_id) or {}
         enc = self.session.encounter
+        party = st.party()
+        eddies = sum(int(getattr(c, "eurobucks", 0)) for c in party)
         base.update({
             "started": True,
             "running": bool(self.thread and self.thread.is_alive()),
@@ -321,20 +462,10 @@ class AppState:
             "act": scene.get("act", 1),
             "act_title": self.session.module.act_titles.get(scene.get("act", 1), ""),
             "location": scene.get("location", ""),
-            "gold": st.player.gold,
+            "eurobucks": eddies,
             "flags": st.flags,
             "encounter_title": enc.title if enc else None,
-            "party": [{
-                "name": c.name,
-                "klass": M.D_NAME.get(c.klass, c.klass),
-                "klass_key": c.klass,
-                "race": c.race,
-                "level": c.level, "hp": c.hp_cur, "hp_max": c.hp_max,
-                "ac": c.ac(),
-                "conditions": sorted(_cn(c.conditions)),
-                "slots": {str(k): v for k, v in c.spell_slots().items()},
-                "is_player": c is st.player,
-            } for c in st.party()],
+            "party": [_member_payload(c, c is st.player) for c in party],
         })
         # AI PC 模式（§4.1）：enabled=控制器已挂载（真正接管）；requested=开关已开
         # 但本局降级为人类操控（LLM 未配置/组件未就绪/名字冲突），前端据此说明
@@ -343,26 +474,60 @@ class AppState:
             "requested": bool(getattr(st, "aipc_enabled", False)),
             "player": st.player.name,
         }
+        # 战术地图快照（docs/battlemap-design.md §4）：SSE map 事件的重放兜底
+        base["map"] = st.map_brief()
         return base
 
 
 def _cn(conds) -> list[str]:
-    return [M.COND_CN.get(c, c) for c in conds]
+    """状态 key → 中文（RED 状态在 rules.character 里以英文 key 表示）。"""
+    table = getattr(M, "COND_CN", None) or {}
+    fallback = {"controlled": "被控制", "prone": "倒地", "unconscious": "昏迷",
+                "dead": "死亡", "stabilized": "已稳定",
+                "crit_stabilized": "急救固定"}
+    return [table.get(c, fallback.get(c, c)) for c in conds]
 
 
-def build_companions(module: Module, state_level: int = 1) -> list[Character]:
-    """同伴由模组决定；模组未定义时使用默认三人组（见 MODULE_SPEC.md）。"""
-    comps = module.companions or M.default_companions()
-    out = []
-    for comp in comps:
-        ch = Character.create(
-            name=comp["name"], race=comp["race"], klass=comp["klass"],
-            background=comp["background"], scores=comp["scores"],
-            skill_choices=comp["skills"], fighting_style=comp.get("fighting_style", ""),
-            level=state_level)
-        ch.apply_default_choices()
-        out.append(ch)
-    return out
+def _member_payload(c, is_player: bool) -> dict:
+    """队伍面板载荷（PORT_SPEC §9）：RED 口径，无 AC / 等级 / 法术位。"""
+    return {
+        "name": c.name,
+        "handle": getattr(c, "handle", ""),
+        "role": getattr(c, "role", ""),
+        "role_name": c.role_name if hasattr(c, "role_name") else "",
+        "role_rank": getattr(c, "role_rank", 0),
+        "role_ability": getattr(c, "role_ability", ""),
+        "hp_cur": c.hp_cur, "hp_max": c.hp_max,
+        "hp": c.hp_cur,                       # 兼容旧字段名
+        "seriously_wounded": c.seriously_wounded_threshold,
+        "wound": c.wound_state(), "wound_name": c.wound_name(),
+        "sp": c.armor_at("torso"), "armor_name": c.armor_name(),
+        "luck_cur": c.luck_cur, "luck_max": c.stat("luck"),
+        "humanity_cur": c.humanity_cur, "humanity_max": c.humanity_max,
+        "eurobucks": int(getattr(c, "eurobucks", 0)),
+        "ip": int(getattr(c, "ip", 0)),
+        "reputation": int(getattr(c, "reputation", 0)),
+        "conditions": sorted(_cn(c.conditions)),
+        "crit_injuries": [str(i.get("name", "")) for i in c.crit_injuries],
+        "cyberware": [D.CYBERWARE[x]["name"] for x in c.cyberware
+                      if x in D.CYBERWARE],
+        "weapons": [D.WEAPONS[w]["name"] for w in c.weapons if w in D.WEAPONS],
+        "stats": {k: c.stat(k) for k in D.STAT_ORDER},
+        # 人生之路（轻松模式建卡时投骰的履历，第 29-34 页）
+        "lifepath": c.lifepath_lines() if hasattr(c, "lifepath_lines") else [],
+        "is_player": is_player,
+    }
+
+
+def build_companions(module: Module, spec: dict) -> list:
+    """AI 队友取自模组的预设角色表（玩家未另选时用模组的默认队友）。"""
+    from ..rules.character import Character
+    pregens = pregens_of(module)
+    if not pregens:
+        return []
+    player_key = str(spec.get("pregen") or "")
+    return [Character.from_pregen(k, pregens[k], kind="companion")
+            for k in companion_ids(module, spec, player_key)]
 
 
 def build_session(state: G.GameState, ui: WebUI, llm_cfg: LLMConfig | None,
@@ -392,16 +557,31 @@ def build_session(state: G.GameState, ui: WebUI, llm_cfg: LLMConfig | None,
                             compactor=TruncateCompactor(token_limit=12000))
     dm_agent = make_dm_agent(llm_cfg.model, module)
     pc_agents = {}
-    for comp, ch in zip(module.companions, state.companions):
-        slots_hint = "法术位：" + ("、".join(f"{lv}环×{n}" for lv, n in ch.spell_slots().items())
-                                   or "无")
-        pc_agents[ch.name] = make_pc_agent(comp, ch.level, ch.weapons,
-                                           slots_hint, llm_cfg.model,
-                                           user=state.player.name)
+    # RED：队友即模组预设角色；agent 卡素材直接取 pregen（含 persona/voice/desc）
+    pregens = pregens_of(module)
+    for ch in state.companions:
+        pregen = _pregen_for(pregens, ch)
+        kit = "、".join([D.WEAPONS[w]["name"] for w in ch.weapons if w in D.WEAPONS]
+                        + ([ch.armor_name()] if ch.armor_key else [])) or "徒手"
+        try:
+            pc_agents[ch.name] = make_pc_agent(pregen, ch.role_rank, ch.weapons,
+                                               kit, llm_cfg.model,
+                                               user=state.player.name)
+        except TypeError as e:  # 队友 agent 组装线签名变动时不阻塞开局
+            _aipc_note(ui, f"（队友 {ch.name} 的 AI 未挂载：{e}）")
     session = GameSession(state, ui, loop=loop, dm_agent=dm_agent, pc_agents=pc_agents,
                           module=module, meter=meter)
     _maybe_attach_aipc(session, state, ui, llm_cfg, loop)
     return session
+
+
+def _pregen_for(pregens: dict, ch) -> dict:
+    """在模组预设法里找回该角色对应的 pregen（供队友 agent 卡使用）。"""
+    for pregen in pregens.values():
+        if str(pregen.get("name") or "") == ch.name:
+            return pregen
+    return {"id": ch.name, "name": ch.name, "role": ch.role,
+            "persona": ch.persona, "voice": ch.voice, "desc": ch.desc}
 
 
 def _aipc_note(ui, text: str) -> None:
@@ -452,6 +632,42 @@ def _maybe_attach_aipc(session: GameSession, state: G.GameState, ui,
     _aipc_note(ui, f"（AI 代打已启用：{state.player.name} 将由 AI 扮演。）")
 
 
+def _pregen_view(key: str, pregen: dict) -> dict:
+    """预设角色视图（建卡界面用：职业/十项属性/PW·重伤阈值/技能/装备）。"""
+    stats = {k: int((pregen.get("stats") or {}).get(k, D.STAT_MIN))
+             for k in D.STAT_ORDER}
+    hp = int(pregen.get("hp") or
+             (10 + 5 * ((stats.get("body", 0) + stats.get("will", 0) + 1) // 2)))
+    role = str(pregen.get("role") or "solo")
+    armor = pregen.get("armor")
+    return {
+        "key": key,
+        "name": str(pregen.get("name") or key),
+        "handle": str(pregen.get("handle") or ""),
+        "role": role,
+        "role_name": (D.ROLES.get(role) or {}).get("name", role),
+        "role_rank": int(pregen.get("role_rank", 4)),
+        "role_ability": str(pregen.get("role_ability") or ""),
+        "stats": stats,
+        "hp": hp,
+        "seriously_wounded": max(1, -(-hp // 2)),
+        "luck": stats.get("luck", 0),
+        "humanity": stats.get("emp", 0) * D.HUMANITY_PER_EMP,
+        "skills": {k: int(v) for k, v in (pregen.get("skill_levels") or {}).items()},
+        "armor": armor or "", "armor_name": (D.ARMORS.get(armor) or {}).get("name", ""),
+        "sp": int((D.ARMORS.get(armor) or {}).get("sp", 0)),
+        "weapons": [D.WEAPONS[w]["name"] for w in (pregen.get("weapons") or [])
+                    if w in D.WEAPONS],
+        "cyberware": [D.CYBERWARE[c]["name"] for c in (pregen.get("cyberware") or [])
+                      if c in D.CYBERWARE],
+        "gear": [D.GEAR[g]["name"] for g in (pregen.get("gear") or {}) if g in D.GEAR],
+        "eurobucks": int(pregen.get("eurobucks", 0)),
+        "persona": str(pregen.get("persona") or ""),
+        "voice": str(pregen.get("voice") or ""),
+        "desc": str(pregen.get("desc") or ""),
+    }
+
+
 def meta_payload(app: AppState) -> dict:
     modules = []
     for entry in app.cordis.scan():
@@ -463,8 +679,14 @@ def meta_payload(app: AppState) -> dict:
             continue
         s = mod.summary()
         s["broken"] = False
+        pregens = pregens_of(mod)
+        s["pregens"] = [_pregen_view(k, pregens[k]) for k in pregens
+                        if isinstance(pregens[k], dict)]
+        s["default_companions"] = [k for k in default_companion_keys(mod)
+                                   if k in pregens]
         modules.append(s)
     return {
+        "ruleset": "cyberpunk-red",
         "title": M.MODULE["title"], "en_title": M.MODULE["en_title"],
         "setting": M.MODULE["setting"], "synopsis": M.MODULE["synopsis"],
         "llm": app.llm_settings_view(),
@@ -474,31 +696,43 @@ def meta_payload(app: AppState) -> dict:
                        "default": bool(v.get("default"))}
                       for k, v in LLM_PROVIDERS.items()],
         "modules": modules,
-        "races": [{"key": k, "name": v["name"], "family": v.get("family", ""),
-                   "traits": v["traits"], "skills": v.get("skills", 0),
-                   "bonuses": v.get("default_bonuses", {}),
-                   "darkvision": v.get("darkvision", 0)} for k, v in D.RACES.items()],
-        "classes": [{"key": k, "name": v["name"], "hit_die": v["hit_die"],
-                     "skill_count": v["skill_count"],
-                     "skill_choices": v["skill_choices"],
-                     "has_style": k == "fighter",
-                     "armor": v["armor"], "shield": v["shield"]}
-                    for k, v in D.CLASSES.items()],
-        "backgrounds": [{"key": k, "name": D.BACKGROUNDS[k]["name"],
-                         "desc": D.BACKGROUNDS[k]["desc"],
-                         "skills": D.BACKGROUNDS[k]["skills"]}
-                        for k in D.BACKGROUNDS],
-        "skills": [{"key": k, "name": v["name"], "ability": D.ABILITIES[v["ability"]]}
+        # RED 数据面（PORT_SPEC §10）
+        "stats": [{"key": k, "name": D.STATS[k]["name"], "abbr": D.STATS[k]["abbr"],
+                   "desc": D.STATS[k]["desc"]} for k in D.STAT_ORDER],
+        "skills": [{"key": k, "name": v["name"], "stat": v["stat"],
+                    "x2": bool(v.get("x2")), "desc": v.get("desc", "")}
                    for k, v in D.SKILLS.items()],
-        "styles": [{"key": k, "name": n} for k, n in STYLE_MAP.items()],
-        "dice_rule": "4d6去最低 × 6",
-        "recommended": RECOMMENDED,
-        "abilities": [{"key": k, "name": n} for k, n in D.ABILITIES.items()],
+        "roles": [{"key": k, "name": v["name"], "en": v.get("en", ""),
+                   "nickname": v.get("nickname", ""), "desc": v["desc"],
+                   "ability": v["ability"]["name"],
+                   "ability_desc": v["ability"]["desc"]}
+                  for k, v in D.ROLES.items()],
+        "difficulty": [{"dv": dv, "name": v["name"], "desc": v["desc"]}
+                       for dv, v in sorted(D.DIFFICULTY.items())],
+        "weapons": [{"key": k, "name": v["name"], "kind": v.get("kind", ""),
+                     "dmg": v.get("dmg", ""), "rof": v.get("rof", 0),
+                     "ammo": v.get("ammo"), "cost": v.get("cost", 0),
+                     "skill": v.get("skill", ""),
+                     "skill_name": (D.SKILLS.get(v.get("skill")) or {}).get("name", ""),
+                     "kind_name": D.WEAPON_TYPES.get(v.get("kind"), "")}
+                    for k, v in D.WEAPONS.items()],
+        "armors": [{"key": k, "name": v["name"], "sp": v["sp"],
+                    "cost": v.get("cost", 0), "notes": v.get("notes", "")}
+                   for k, v in D.ARMORS.items()],
+        "gear": [{"key": k, "name": v["name"], "cost": v.get("cost", 0),
+                  "notes": v.get("notes", "")} for k, v in D.GEAR.items()],
+        "cyberware": [{"key": k, "name": v["name"], "humanity": v.get("humanity", 0),
+                       "cost": v.get("cost", 0), "text": v.get("text", "")}
+                      for k, v in D.CYBERWARE.items()],
+        "wounds": [{"key": k, "name": D.WOUND_STATES[k]["name"],
+                    "check_penalty": D.WOUND_STATES[k].get("check_penalty", 0),
+                    "desc": D.WOUND_STATES[k].get("desc", "")}
+                   for k in D.WOUND_ORDER],
+        "dice_rule": "1d10 + 属性 + 技能 vs 难度值 DV（掷出 10 暴击追加、掷出 1 暴击失败追加）",
+        "currency": {"name": D.CURRENCY, "abbr": D.CURRENCY_ABBR},
+        "ip_rule": {"skill_base": D.IP_SKILL_BASE, "stat_base": D.IP_STAT_BASE,
+                    "role_base": D.IP_ROLE_BASE, "skill_max": D.SKILL_MAX},
     }
-
-
-STYLE_MAP = {"archery": "箭术（远程攻击+2）", "defense": "防御（AC+1）",
-             "dueling": "对决（单手近战伤害+2）"}
 
 
 # ---------------------------------------------------------------- AI 生成
@@ -575,15 +809,16 @@ class Handler(BaseHTTPRequestHandler):
             if "/" in name or ".." in name or ext not in types:
                 return self._json({"error": "not found"}, 404)
             return self._file(name, types[ext])
+        if path.startswith("/api/asset/"):
+            return self._asset(path[len("/api/asset/"):])
         if path == "/api/stream":
             return self._stream()
         if path == "/api/meta":
             return self._json(meta_payload(self.app))
-        if path == "/api/roll_scores":
-            # 服务端代掷属性骰（4d6 去最低 × 6），保证结果可信
-            return self._json({"scores": roll_scores(random.Random())})
         if path == "/api/state":
             return self._json(self.app.snapshot())
+        if path == "/api/stories":
+            return self._json(self.app.stories_payload())
         if path == "/api/pending":
             ui = self.app.ui
             return self._json({"pending": ui.pending_view() if ui else None})
@@ -599,7 +834,7 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         raw = json.loads(f.read_text(encoding="utf-8"))
                         saves.append({"file": str(f),
-                                      "module_id": raw.get("module_id", "starfall"),
+                                      "module_id": raw.get("module_id", DEFAULT_MODULE_ID),
                                       "scene_id": raw.get("scene_id", ""),
                                       "ts": round(f.stat().st_mtime)})
                     except (OSError, json.JSONDecodeError):
@@ -625,6 +860,36 @@ class Handler(BaseHTTPRequestHandler):
         body = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    _ASSET_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".png": "image/png", ".webp": "image/webp",
+                    ".svg": "image/svg+xml"}
+
+    def _asset(self, rel: str) -> None:
+        """模组资产（地图/棋子图）：/api/asset/<module_id>/<子路径>。
+
+        只服务 modules/<module_id>/ 下的图片；路径净化禁止上跳与绝对路径，
+        扩展名白名单（与 loader._check_asset_path 同一约定）。"""
+        parts = [p for p in rel.split("/") if p not in ("", ".", "..")]
+        if len(parts) < 2 or any("\\" in p or ":" in p for p in parts):
+            return self._json({"error": "not found"}, 404)
+        module_id, *rest = parts
+        if not all(c.isalnum() or c in "-_" for c in module_id):
+            return self._json({"error": "not found"}, 404)
+        ext = ("." + rest[-1].rsplit(".", 1)[-1]) if "." in rest[-1] else ""
+        if ext.lower() not in self._ASSET_TYPES:
+            return self._json({"error": "not found"}, 404)
+        target = (Path("modules") / module_id / Path(*rest)).resolve()
+        root = (Path("modules") / module_id).resolve()
+        if root not in target.parents or not target.exists():
+            return self._json({"error": "not found"}, 404)
+        body = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", self._ASSET_TYPES[ext.lower()])
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -685,6 +950,10 @@ class Handler(BaseHTTPRequestHandler):
             ok, err, snap = self.app.start(body)
             return self._json({"ok": ok, "error": err, "state": snap},
                               200 if ok else 400)
+        if path == "/api/story/start":
+            ok, err, snap = self.app.start_story(body)
+            return self._json({"ok": ok, "error": err, "state": snap},
+                              200 if ok else 400)
         if path == "/api/answer":
             ui = self.app.ui
             if ui is None:
@@ -700,6 +969,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             ok, err = ui.resolve(index=body.get("index"), text=text)
             return self._json({"ok": ok, "error": err}, 200 if ok else 409)
+        if path == "/api/command":
+            # 桌面交互指令通道（点图移动等，docs/battlemap-design.md §5）：
+            # 与 AI PC 旁听指令共用 post_command 槽；战斗回合由引擎按需 poll
+            ui = self.app.ui
+            if ui is None or not hasattr(ui, "post_command"):
+                return self._json({"ok": False, "error": "对局未开始"}, 409)
+            text = str(body.get("text") or "").strip()
+            if not text:
+                return self._json({"ok": False, "error": "指令为空"}, 400)
+            ui.post_command(text)
+            return self._json({"ok": True})
         if path == "/api/reset":
             self.app.reset()
             return self._json({"ok": True})

@@ -3,7 +3,11 @@ __pycache__/
 saves/
 demo_*.txt
 webserver.log
+server*.log
 .env
 .mimosa/
 dist/
 .reference/
+# 本地参考资料 / 素材（体积大，不入库）
+_local/
+Additional Ressources/

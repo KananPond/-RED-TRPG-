@@ -53,13 +53,19 @@ run(agent, session, task):
 ## 在游戏中的两个实例
 
 - **DM Agent**（`game/agents.py` + `game/tools.py`）：工具组 =
-  `narrate / speak_as_npc / skill_check / save_roll / get_state / set_flag /
-  advance_scene / award_xp / give_loot / start_encounter`。
+  `narrate / speak_as_npc / npc_dialogue / skill_check / opposed_check /
+  get_state / set_flag / advance_scene / start_encounter / map_update /
+  give_loot / award_ip / confrontation / request_roll`。
+  检定一律走技能（`1d10 + 属性 + 技能` 对抗难度值 DV）与对抗检定，
+  成长走改进点（`award_ip`）：旧规则层的独立检定工具与成长点数发放工具已随规则层删除。
   所有掷骰、数值、剧情推进都在引擎里完成，LLM 只做"决策与叙述"，
   因此模型永远无法编造骰点结果——结果以工具返回为准回填给模型。
 - **PC Agent**（每名 AI 同伴一个）：工具组 = `say / combat_action /
-  explore_intent`。战斗回合给到 PC Agent 的上下文是遭遇快照
-  （双方 HP/AC、法术位），它必须调用 `combat_action` 完成回合；
+  explore_intent`（AI 代打的玩家用 `explore_act`）。战斗回合给到 PC Agent 的
+  上下文是遭遇快照（双方 PW/护甲 SP/伤势/剩余移动力），动作面为
+  `move / dash / attack / grab / choke / throw / escape_grapple / reload /
+  stand / stabilize / first_aid / use_item / delay / confrontation / flee /
+  end_turn`，它必须调用 `combat_action` 完成回合；
   LLM 不可达时编排器自动降级为启发式战斗 AI（`_scripted_pc_turn`）。
 
 每个 Agent 调用使用独立注册表（DM 与 PC 工具组不同），

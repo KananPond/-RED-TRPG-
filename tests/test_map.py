@@ -19,9 +19,9 @@ from helpers import (MODULES_DIR, RED_MODULE_ID, ScriptRng,  # noqa: E402
                      fixture_module, fixture_module_data, make_state)
 from test_combat import make_pc                           # noqa: E402,F401 (转出)
 
-from ctrcg.campaign.loader import Module, validate_module  # noqa: E402
-from ctrcg.game import state as G                          # noqa: E402
-from ctrcg.rules.combat import METERS_PER_CELL             # noqa: E402
+from trpg.campaign.loader import Module, validate_module  # noqa: E402
+from trpg.game import state as G                          # noqa: E402
+from trpg.rules.combat import METERS_PER_CELL             # noqa: E402
 
 
 def demo_module() -> Module:
@@ -290,7 +290,7 @@ class TestModuleValidation(unittest.TestCase):
 # ================================================================ map_update 工具
 class TestMapUpdateTool(unittest.TestCase):
     def _tools(self):
-        from ctrcg.game.tools import GameTools
+        from trpg.game.tools import GameTools
         st = make_state()                                # 夹具模组：s1 有 map
         sc = scene_with_map(st.module)
         st.scene_id = sc["id"]
@@ -334,7 +334,7 @@ class TestMapUpdateTool(unittest.TestCase):
         self.assertFalse(tools._tool_map_update([{"op": "move", "id": "x"}])["ok"])
 
     def test_refused_during_combat(self):
-        from ctrcg.game.tools import GameTools
+        from trpg.game.tools import GameTools
         st, tools = self._tools()
         tools.encounter = object()
         out = tools._tool_map_update([{"op": "label", "text": "x"}])
@@ -342,7 +342,7 @@ class TestMapUpdateTool(unittest.TestCase):
         self.assertIn("战斗", out["error"])
 
     def test_refused_without_a_map(self):
-        from ctrcg.game.tools import GameTools
+        from trpg.game.tools import GameTools
         st = make_state()
         st.map = None
         tools = GameTools(st, None)
@@ -356,7 +356,7 @@ class TestAssetRoute(unittest.TestCase):
     """``/api/asset/<module_id>/<rel>`` 只服务模组目录下的图片；穿越必须 404。"""
 
     def setUp(self):
-        from ctrcg.web import server as web_server
+        from trpg.web import server as web_server
         self._tmp = None
         # 为了不写仓库 modules/，把资产路由的根指向一个临时 modules/ 目录
         import tempfile

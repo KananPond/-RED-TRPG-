@@ -2,7 +2,7 @@
 
 - AI 模式：DM Agent / PC Agent 经 harness 循环决策，引擎执行规则。
 - 剧本模式（离线）：模组数据驱动 + 启发式队友 AI，无需任何 API。
-两种模式共用同一套 RED 规则引擎（``ctrcg.rules``）与 UI。
+两种模式共用同一套 RED 规则引擎（``trpg.rules``）与 UI。
 
 战斗采用 RED 动作经济：每回合 **一个移动动作 + 一个其他动作**；
 「附赠」槽被重新定义为**武器的第二发**（武器 LA/ROF ≥ 2 时可用，
@@ -34,7 +34,7 @@ SAVE_FILE = "saves/game.json"
 _DEATH_SAVE_AFTERMATH_LIMIT = 3
 
 #: 远程武器类别（决定按射程带查难度值）
-_RANGED_KINDS = ("pistol", "smg", "shotgun", "rifle", "bow", "grenade", "rocket")
+_RANGED_KINDS = ("pistol", "shotgun", "rifle")
 #: 白刃战/斗殴类别
 _MELEE_KINDS = ("melee", "brawling")
 

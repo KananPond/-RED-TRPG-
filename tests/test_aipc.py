@@ -24,10 +24,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import (CountUI, DM_MARK, is_fresh_run,  # noqa: E402
                      make_agent_session, make_state, message_system)
 
-from ctrcg.game import state as G                        # noqa: E402
-from ctrcg.game.aipc import AIPCController               # noqa: E402
-from ctrcg.harness.models import ModelResponse, ToolCall  # noqa: E402
-from ctrcg.st import CharacterCard, Persona              # noqa: E402
+from trpg.game import state as G                        # noqa: E402
+from trpg.game.aipc import AIPCController               # noqa: E402
+from trpg.harness.models import ModelResponse, ToolCall  # noqa: E402
+from trpg.st import CharacterCard, Persona              # noqa: E402
 
 
 class AipcScript:
@@ -254,7 +254,7 @@ class TestAipcInfra(unittest.TestCase):
 
     def test_command_slot_is_shared_with_the_ui(self):
         """旁听指令槽：UI 投递 → 控制器轮询（WebUI 才有 post_command）。"""
-        from ctrcg.ui.webui import WebUI
+        from trpg.ui.webui import WebUI
         session, _st, _ui, _adapter, controller = make_aipc_session(ui=WebUI())
         ui = session.ui
         self.assertIsNone(controller.poll_command(0.01))

@@ -1,6 +1,6 @@
-# 战术地图与 DM 独立 Agent 设计（ctrcg 2.0 · 《赛博朋克 RED》口径）
+# 战术地图与 DM 独立 Agent 设计（trpg 2.0 · 《赛博朋克 RED》口径）
 
-版本 1.1 · 适用 `ctrcg` ≥ 2.0 · 上游文档：`aipc-design.md`（ST 提示词栈）、
+版本 1.1 · 适用 `trpg` ≥ 2.0 · 上游文档：`aipc-design.md`（ST 提示词栈）、
 `companion-npc-agents.md`（同伴/NPC Agent 架构）、`../MODULE_SPEC.md`（模组规范）
 
 ## 0. 一句话总览

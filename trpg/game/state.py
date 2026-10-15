@@ -410,7 +410,7 @@ def _aipc_to_json(obj):
 def _aipc_from_json(raw, class_name: str):
     """aipc 块内 persona/card 反序列化（aipc-design §3.2）。
 
-    ctrcg.st.card 已落地时用其 from_dict 重建为对象；st 未就绪（持久化通路
+    trpg.st.card 已落地时用其 from_dict 重建为对象；st 未就绪（持久化通路
     先行合入）或数据异常时保留原始 dict——内容无损，就绪后读档即恢复为对象，
     接缝层（server.build_session）同时接受两种形态。"""
     if not isinstance(raw, dict) or not raw:

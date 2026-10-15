@@ -383,7 +383,7 @@ class StorySession:
 
     def _do_check(self, skill_key: str, dv: int) -> dict:
         """《赛博朋克 RED》检定：1d10 + 属性 + 技能 vs 难度值 DV
-        （由 ctrcg.rules 结算：Character.check / dice.check_roll）。"""
+        （由 trpg.rules 结算：Character.check / dice.check_roll）。"""
         ch = self.hero_char
         label = skill_name(skill_key)
         dv = int(dv)

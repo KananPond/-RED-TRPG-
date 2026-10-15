@@ -2,6 +2,66 @@
 
 本项目的所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [未发行] — 仓库整理 · 改名 TRPG · 模组对齐轻松模式 · 新增互动剧本
+
+纯整理，**不改动任何游戏逻辑、规则口径或数据**。
+
+### 变更
+
+**项目标识统一为 TRPG**
+
+- Python 包 `ctrcg` → `trpg`（`git mv`，文件历史保留）：全部导入、`pyproject.toml`
+  项目名与打包清单、发行包名 `TRPG-<版本>.zip`、界面显示名与 HTTP 服务标识同步。
+- **环境变量前缀 `CTRCG_` → `TRPG_`**：`TRPG_LLM_API_KEY`、`TRPG_LLM_BASE_URL`、
+  `TRPG_LLM_MODEL`、`TRPG_LLM_PROVIDER`、`TRPG_LLM_ALLOW_PRIVATE`、`TRPG_DATA_DIR`、
+  `TRPG_AIPC`。**旧变量名不再识别**，升级时请改写环境变量或改用「设置 → API 配置」。
+- HTTP 服务标识改为由 `trpg.__version__` 推导（原为硬编码 `CTRCG/1.4`，
+  自 1.5.0 起就没跟上版本号）。
+
+**仓库布局**
+
+- 仓库根上移一层：原先嵌套在 `WebUI/TRCG/`，现直接以仓库根为项目根
+  （目录名 `TRCG` 的拼写不一致随之消失）。
+- 规则书 PDF 由 `模组/` 移到 `.reference/`——与既有 `.gitignore` 规则一致（约 53 MB 不入库），
+  也不再与代码用的 `modules/`（原子模组目录）混淆。
+- 开发过程资料由 `_work/` 整理归档为 `_archive/`：`design/`（移植规格 PORT_SPEC）、
+  `recon/`（架构侦察笔记）、`pdf-extraction/`（角色卡 PDF 反推脚本与产出数据）、
+  `verification/`（验收与冒烟脚本）、`scripts/`（数据加工脚本）、`notes/`、`reorg/`；
+  可再生的中间裁图与运行日志已删除（约 37 MB → 约 5 MB）。
+- `docs/screenshots/` 收入开始页截图两张，README 的「界面预览待补」据此补齐。
+- `trpg/campaign/loader.py`、`trpg/rules/data.py`、`docs/sillytavern-architecture.md`、
+  `_archive/design/PORT_SPEC.md` 中指向旧路径的引用已同步更新。
+
+**模组严格对齐《轻松模式》**
+
+- 移除轻松模式未收录的武器数据：`D.WEAPONS` 删掉冲锋枪 `smg`、重型冲锋枪
+  `heavy_smg`、狙击步枪 `sniper_rifle`、弓 `bow`、弩 `crossbow`（15 → **10 种**）；
+  `D.WEAPON_TYPES` 删掉 `smg`/`bow`/`grenade`/`rocket`；`D.RANGED_DV` 只留
+  手枪 / 霰弹枪 / 突击步枪三条，与手册第 19 页「远程战斗难度值」表完全一致；
+  `RANGED_ORDER`、`game/session.py`、`rules/combat.py`、`web/server.py` 同步更新。
+- 依据：手册第 19 页的射程表只有这三类远程武器；中、波两版全文都检索不到
+  冲锋枪、狙击步枪、弓弩、火箭（`pistolet maszynowy`/`snajper`/`kusza`/`rakiet`
+  零命中），榴弹也只出现在冒险正文的一句「闪光手榴弹」里。
+- 终章仓库的守军改为手册口径的**玩家角色数 + 2** 名腐败警察（3 人队 = 5 名，
+  原先只配 2 名），摩托增援仍在第二回合额外入场；战术地图补上新守军的落点。
+- `D.CYBERWARE` 的工具手（`tool_hand`）确认在轻松模式角色卡上（Torch / Redtail），
+  保留不动。README 的装备计数与「明确未实现」措辞同步更新。
+
+**新增内置互动剧本**
+
+- `modules/cpred-easy-mode/story_wyskakuj.json`：《抢钱行动》（*WYSKAKUJ Z FORSY!*）
+  ——**70 个节点、8 个结局**，主角为模组的五名预设角色
+  （属性与技能直接取自同一份角色卡数据，两种模式共用一份事实来源）。
+- 结构照手册：来电（情绪解读）→ 出发前准备（踩点 / 排战术 / 检装备，各换一个有利条件，
+  可做可不做）→ 会面与巷中伏击（假钞、审讯、追逃）→ 营救中间人（急救 / 医疗救援 /
+  战斗出租车）→ **清除 / 渗透 / 外交 / 第四选项**四条路 → 尾声结算。
+- 八个结局：`walkaway`（这单我不接）、`deal`（五五分成）、`deal_better`（更好的条件）、
+  `ghost`（夜之城的鬼，全程没开枪）、`wipeout`（一个不留）、`fourth`（第四选项）、
+  `paid`（拿到报酬）、`blood`（血染之时，死亡结局）。
+- 外交线对摇滚客与媒体人有专属桥段（引擎的 `variants` 条件文本第一次有内置数据在用）；
+  伏击中接过箱子的人在尾声中身价翻倍。
+- 脚本化通关验证：4000 次随机演绎零运行时错误，8 个结局全部可达。
+
 ## [2.0.0] — 2026-10（发行 ·《赛博朋克 RED》移植）
 
 规则集整体替换：旧的 5e 规则层整体换成 **《赛博朋克 RED》（Cyberpunk RED）**，

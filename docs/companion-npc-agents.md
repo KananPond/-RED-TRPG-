@@ -1,9 +1,9 @@
 # 非玩家 PC（独立 Agent）与 NPC（DM 控制的子智能体）
 
-版本：1.1（对应 ctrcg 2.0 ·《赛博朋克 RED》口径）　上游参照：`_local/reference/SillyTavern`（浅克隆源码，gitignored）
+版本：1.1（对应 trpg 2.0 ·《赛博朋克 RED》口径）　上游参照：`_local/reference/SillyTavern`（浅克隆源码，gitignored）
 
 本设计把〔AI PC 设计（docs/aipc-design.md）〕建成的 SillyTavern 式提示词栈
-（`ctrcg/st/`：角色卡 / persona / 宏 / 世界书 / 组装 / 深度注入）推广到
+（`trpg/st/`：角色卡 / persona / 宏 / 世界书 / 组装 / 深度注入）推广到
 **桌上其余的智能体**，并给两类角色划清层级：
 
 | 角色 | 架构地位 | 控制权 | 记忆载体 |
@@ -16,7 +16,7 @@ ST 源码对照（克隆于 `_local/reference/SillyTavern`，仅作机制参照�
 角色卡字段 → `src/character-card-parser.js`、`public/char-data.js`；
 群聊多角色 → `public/scripts/group-chats.js`；用户 persona →
 `public/scripts/personas.js`；世界书 → `public/scripts/world-info.js`。
-本仓 `ctrcg/st` 的纯 Python 实现与 docs/sillytavern-architecture.md 的
+本仓 `trpg/st` 的纯 Python 实现与 docs/sillytavern-architecture.md 的
 规格一一对应，本设计只做**接线**，不改 st 机制。
 
 ---
@@ -25,7 +25,7 @@ ST 源码对照（克隆于 `_local/reference/SillyTavern`，仅作机制参照�
 
 ### 1.1 组装
 
-`make_pc_agent`（ctrcg/game/agents.py）不再手拼 `str.format`，改走与玩家版
+`make_pc_agent`（trpg/game/agents.py）不再手拼 `str.format`，改走与玩家版
 `make_aipc_agent` 完全相同的 `st.assemble_system` 默认序：
 
 ```
@@ -61,7 +61,7 @@ main（PC_SYSTEM_TEMPLATE 经 template_vars 预格式化）
 - AI 模式关闭 → `pc_agents` 为空、`social` 不构建 → 全部新分支不存在。
 - 同伴战斗回合链（`companion_turn`）不变；AI PC 的 attach/refresh 机制不变。
 
-## 2. NPC = DM 控制的子智能体（`ctrcg/game/npcagent.py`）
+## 2. NPC = DM 控制的子智能体（`trpg/game/npcagent.py`）
 
 ### 2.1 控制流
 
@@ -120,7 +120,7 @@ description = persona 或"职业。desc"。
   两场遭遇（`e_alley_ambush` / `e_warehouse`）、两张战术地图、五张预设角色卡
   （摇滚客 Forty / 独行侠 Mover / 技术师 Torch / 医疗师 Redtail / 媒体人 24/7）
   与合计 200 IP 的成长节点。
-- **兜底剧本**（`ctrcg/campaign/module_data.py`）：两幕的"卡布奇夜市 → 海伍德工业区
+- **兜底剧本**（`trpg/campaign/module_data.py`）：两幕的"卡布奇夜市 → 海伍德工业区
   废弃仓库"，只在 `modules/` 目录缺失、模组文件损坏或存档引用的模组 id 无法解析时
   启用（`cordis.default_fallback_module()`），保证游戏永不硬失败。
   导出名与旧版保持一致（`MODULE/COMPANIONS/NPCS/ENCOUNTERS/SCENES/EPILOGUE/

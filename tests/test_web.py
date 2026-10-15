@@ -27,8 +27,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import (RED_MODULE_ID, WebServerCase, http_get,  # noqa: E402
                      http_post, red_module_data)
 
-from ctrcg.campaign.module_data import COMPANIONS as M_COMPANIONS  # noqa: E402
-from ctrcg.ui.webui import AbortGame, WebUI                        # noqa: E402
+from trpg.campaign.module_data import COMPANIONS as M_COMPANIONS  # noqa: E402
+from trpg.ui.webui import AbortGame, WebUI                        # noqa: E402
 
 HOST = "127.0.0.1"
 
@@ -85,14 +85,14 @@ def scripted_mode_can_finish() -> bool:
     ``scripted_explore_turns`` 必须自己返回 ``"end"``，让 ``run()`` 走到
     ``_epilogue()``；否则菜单只剩「查看状态/背包/退出游戏」，永远结束不了。
     """
-    from ctrcg.game.session import GameSession
+    from trpg.game.session import GameSession
     from helpers import make_state
     mod = red_module_data()
     last = mod["scenes"][-1]
     if last.get("next") or last.get("encounter"):
         return True
     try:
-        from ctrcg.campaign.loader import Module
+        from trpg.campaign.loader import Module
         module = Module(mod)
         state = make_state(module=module)
         state.scene_id = last["id"]
@@ -483,9 +483,9 @@ class TestWebServer(WebServerCase):
 
     def test_generate_module_with_mocked_llm(self):
         """模拟端点返回合法 RED 模组 JSON → 生成并安装成功（含 token 记账）。"""
-        from ctrcg.config import LLMConfig
-        from ctrcg.harness import adapter as adapter_mod
-        from ctrcg.web.server import generate_module
+        from trpg.config import LLMConfig
+        from trpg.harness import adapter as adapter_mod
+        from trpg.web.server import generate_module
         module_json = builtin_json_text()
         module_json["id"] = "gen_test"
         module_json["title"] = "生成的模组"
@@ -517,9 +517,9 @@ class TestWebServer(WebServerCase):
 
     def test_ai_mode_dm_turn_over_http(self):
         """配置就绪时以 AI 模式开局：DM Agent 经 harness 调工具并输出叙述。"""
-        from ctrcg.config import LLMConfig
-        from ctrcg.harness import adapter as adapter_mod
-        from ctrcg.harness.models import ModelResponse, ToolCall
+        from trpg.config import LLMConfig
+        from trpg.harness import adapter as adapter_mod
+        from trpg.harness.models import ModelResponse, ToolCall
 
         def handler(messages, tools):
             if not any(m.get("role") == "tool" for m in messages):
@@ -686,7 +686,7 @@ class TestBuildCharacter(unittest.TestCase):
     """RED 建卡：从模组预设角色里挑一个（没有掷骰、没有出身/分类/背景）。"""
 
     def test_build_from_pregen(self):
-        from ctrcg.web.charbuild import build_character
+        from trpg.web.charbuild import build_character
         from helpers import red_module
         mod = red_module()
         ch = build_character({"pregen": "solo_mover", "name": "Zero"}, mod)
@@ -698,19 +698,19 @@ class TestBuildCharacter(unittest.TestCase):
         self.assertEqual(len(ch.stats), 10)
 
     def test_unknown_pregen_rejected(self):
-        from ctrcg.web.charbuild import build_character
+        from trpg.web.charbuild import build_character
         from helpers import red_module
         with self.assertRaises(ValueError):
             build_character({"pregen": "没有这个人", "name": "甲"}, red_module())
 
     def test_missing_name_rejected(self):
-        from ctrcg.web.charbuild import build_character
+        from trpg.web.charbuild import build_character
         from helpers import red_module
         with self.assertRaises(ValueError):
             build_character({"pregen": "solo_mover"}, red_module())
 
     def test_module_without_pregens_rejected(self):
-        from ctrcg.web.charbuild import build_character
+        from trpg.web.charbuild import build_character
         from helpers import fixture_module
         mod = fixture_module()
         mod.pregens = {}
@@ -718,7 +718,7 @@ class TestBuildCharacter(unittest.TestCase):
             build_character({"pregen": "x", "name": "甲"}, mod)
 
     def test_companion_selection_defaults_and_validation(self):
-        from ctrcg.web.charbuild import build_companions, companion_ids
+        from trpg.web.charbuild import build_companions, companion_ids
         from helpers import red_module
         mod = red_module()
         # 玩家取不在默认队友里的预设 → 队友就是模组的 default_companions
@@ -743,11 +743,11 @@ class TestBuildCharacter(unittest.TestCase):
 
     def test_build_session_llm_mode(self):
         """LLM 配置就绪时构建 AI 模式会话（不发任何网络请求）。"""
-        from ctrcg.config import LLMConfig
-        from ctrcg.rules.character import Character
-        from ctrcg.game import state as G
-        from ctrcg.web.server import build_session
-        from ctrcg.ui.webui import WebUI
+        from trpg.config import LLMConfig
+        from trpg.rules.character import Character
+        from trpg.game import state as G
+        from trpg.web.server import build_session
+        from trpg.ui.webui import WebUI
         import random
         from helpers import red_module
         mod = red_module()

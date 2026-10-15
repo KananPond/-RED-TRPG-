@@ -7,7 +7,7 @@
   经 loop.run(context_messages=…)，"模型可见 ⟺ 已记录"不变量自动成立。
 
 计量复用 harness.loop.estimate_tokens（CJK≈1 token/字，ASCII≈1/4 字符）。
-本模块只依赖 harness 与 st 内部，不 import ctrcg.game.*。
+本模块只依赖 harness 与 st 内部，不 import trpg.game.*。
 """
 
 from __future__ import annotations

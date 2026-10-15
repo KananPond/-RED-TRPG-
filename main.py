@@ -1,4 +1,4 @@
-"""CTRCG 入口：单人 AI 跑团《赛博朋克 RED》（默认模组 cpred-easy-mode · 夜之城 2045）。
+"""TRPG 入口：单人 AI 跑团《赛博朋克 RED》（默认模组 cpred-easy-mode · 夜之城 2045）。
 
 用法：
   python main.py --web             # 网页版（推荐）：开始页含 剧本模式/模组/存档/帮助/设置
@@ -19,14 +19,14 @@ import argparse
 import random
 import sys
 
-from ctrcg import __version__
-from ctrcg.campaign.cordis import Cordis, default_fallback_module
-from ctrcg.campaign.loader import Module
-from ctrcg.config import LLMConfig
-from ctrcg.game import state as G
-from ctrcg.game.session import GameSession
-from ctrcg.ui.cli import AutoUI, ConsoleUI
-from ctrcg.ui.charcreate import (build_from_pregen, create_player_console,
+from trpg import __version__
+from trpg.campaign.cordis import Cordis, default_fallback_module
+from trpg.campaign.loader import Module
+from trpg.config import LLMConfig
+from trpg.game import state as G
+from trpg.game.session import GameSession
+from trpg.ui.cli import AutoUI, ConsoleUI
+from trpg.ui.charcreate import (build_from_pregen, create_player_console,
                                  pregens_of)
 
 MODULES_DIR = "modules"
@@ -55,15 +55,15 @@ def load_module(cordis_dir: str, module_id: str | None) -> Module:
 def build_companions(module: Module, picks: list[str]) -> list:
     """按预设角色 key 装配 AI 队友。"""
     pregens = pregens_of(module)
-    from ctrcg.rules.character import Character
+    from trpg.rules.character import Character
     return [Character.from_pregen(k, pregens[k], kind="companion")
             for k in picks if k in pregens]
 
 
 def make_pc_agents(cfg: LLMConfig, module: Module, state) -> dict:
     """按预设角色构建队友 Agent（RED：职业 rank 与随身装备进提示词）。"""
-    from ctrcg.game.agents import make_pc_agent
-    from ctrcg.rules import data as D
+    from trpg.game.agents import make_pc_agent
+    from trpg.rules import data as D
     pregens = pregens_of(module)
     agents = {}
     for ch in state.companions:
@@ -82,9 +82,9 @@ def make_pc_agents(cfg: LLMConfig, module: Module, state) -> dict:
 
 
 def build_ai_stack(cfg: LLMConfig, module: Module):
-    from ctrcg.game.agents import make_dm_agent
-    from ctrcg.harness.adapter import OpenAICompatibleAdapter
-    from ctrcg.harness.loop import DefaultAgentLoop, TruncateCompactor
+    from trpg.game.agents import make_dm_agent
+    from trpg.harness.adapter import OpenAICompatibleAdapter
+    from trpg.harness.loop import DefaultAgentLoop, TruncateCompactor
     adapter = OpenAICompatibleAdapter(
         base_url=cfg.base_url, api_key=cfg.api_key,
         timeout=cfg.request_timeout, max_retries=cfg.max_retries)
@@ -96,7 +96,7 @@ def build_ai_stack(cfg: LLMConfig, module: Module):
 
 
 def check_llm(cfg: LLMConfig) -> int:
-    from ctrcg.harness.adapter import OpenAICompatibleAdapter
+    from trpg.harness.adapter import OpenAICompatibleAdapter
     adapter = OpenAICompatibleAdapter(cfg.base_url, cfg.api_key,
                                       timeout=cfg.request_timeout, max_retries=1)
     try:
@@ -114,7 +114,7 @@ def run_story_console(args, ui: ConsoleUI, rng: random.Random) -> int:
 
     剧本随模组分发（modules/<id>/story_*.json），基于原版模组的世界观创作；
     结局图鉴持久化到 saves/story_endings.json。"""
-    from ctrcg.game.story import (StorySession, ending_ids, load_stories,
+    from trpg.game.story import (StorySession, ending_ids, load_stories,
                                   load_unlocks, record_unlock)
     stories, errors = load_stories(MODULES_DIR)
     if args.story_id:
@@ -154,7 +154,7 @@ def run_web(args, cfg: LLMConfig | None) -> int:
     """启动本地网页版：浏览器前端 + 引擎 + DeepSeek 等 Agent。"""
     import threading
     import webbrowser
-    from ctrcg.web.server import AppState, make_server
+    from trpg.web.server import AppState, make_server
 
     app = AppState()
     if args.offline:
@@ -174,7 +174,7 @@ def run_web(args, cfg: LLMConfig | None) -> int:
     url = f"http://127.0.0.1:{port}"
     mode = f"AI 模式（{app.llm_cfg.provider} · {app.llm_cfg.model}）" if app.llm_cfg \
         else "经典模式（离线 · 含剧本模式互动剧）"
-    print(f"CTRCG 网页版 · 默认模组《{DEFAULT_MODULE_TITLE}》 · {mode}")
+    print(f"TRPG 网页版 · 默认模组《{DEFAULT_MODULE_TITLE}》 · {mode}")
     print(f"请用浏览器打开：{url}")
     print("（服务运行期间请保持本窗口开启，Ctrl+C 停止）\n")
     if not args.no_open:
@@ -188,7 +188,7 @@ def run_web(args, cfg: LLMConfig | None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="CTRCG 单人 AI 跑团")
+    parser = argparse.ArgumentParser(description="TRPG 单人 AI 跑团")
     parser.add_argument("--offline", action="store_true", help="强制经典模式（离线）")
     parser.add_argument("--story", action="store_true",
                         help="剧本模式（互动剧）：分支选择 · 多结局")
@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = LLMConfig.from_env()
     if args.check_llm:
         if cfg is None:
-            print("未配置 LLM 环境变量（CTRCG_LLM_BASE_URL / CTRCG_LLM_API_KEY）。")
+            print("未配置 LLM 环境变量（TRPG_LLM_BASE_URL / TRPG_LLM_API_KEY）。")
             return 1
         return check_llm(cfg)
 
@@ -260,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.offline or cfg is None:
         if cfg is None:
-            ui.system_line("未检测到 LLM 配置（CTRCG_LLM_BASE_URL / CTRCG_LLM_API_KEY），"
+            ui.system_line("未检测到 LLM 配置（TRPG_LLM_BASE_URL / TRPG_LLM_API_KEY），"
                            "进入经典模式：DM 按模组推进，AI 同伴使用战斗直觉。"
                            "（剧本模式互动剧见 --story / 网页版开始页。）")
         session = GameSession(state, ui, loop=None, module=module)

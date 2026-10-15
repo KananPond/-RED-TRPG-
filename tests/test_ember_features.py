@@ -28,15 +28,15 @@ from helpers import (ScriptRng, fixture_module, make_pc,  # noqa: E402
                      make_state)
 from test_combat import corridor, duel, make_foe, PISTOL   # noqa: E402
 
-from ctrcg.game import state as G                          # noqa: E402
-from ctrcg.game.session import GameSession                 # noqa: E402
-from ctrcg.harness.models import ModelResponse             # noqa: E402
-from ctrcg.rules import data as D                          # noqa: E402
-from ctrcg.rules.character import (COND_DEAD,              # noqa: E402
+from trpg.game import state as G                          # noqa: E402
+from trpg.game.session import GameSession                 # noqa: E402
+from trpg.harness.models import ModelResponse             # noqa: E402
+from trpg.rules import data as D                          # noqa: E402
+from trpg.rules.character import (COND_DEAD,              # noqa: E402
                                    COND_STABILIZED,
                                    COND_UNCONSCIOUS, Character)
-from ctrcg.rules.combat import Encounter                   # noqa: E402
-from ctrcg.ui.cli import AutoUI                            # noqa: E402
+from trpg.rules.combat import Encounter                   # noqa: E402
+from trpg.ui.cli import AutoUI                            # noqa: E402
 
 
 def shop_state(eurobucks=200, module=None):
@@ -164,7 +164,7 @@ class TestGearAndItems(unittest.TestCase):
         self.assertEqual(c.weapon_damage("assault_rifle"), "5d6")
 
     def test_inventory_view_is_red(self):
-        from ctrcg.game.tools import GameTools
+        from trpg.game.tools import GameTools
         st = make_state()
         tools = GameTools(st, AutoUI())
         view = tools._inventory(st.player)
@@ -268,7 +268,7 @@ class TestShopEurobucks(unittest.TestCase):
     def test_buy_and_insufficient_funds(self):
         st, session = shop_state(eurobucks=200)
         pc = st.player
-        from ctrcg.game import session as S
+        from trpg.game import session as S
         key, price = S.SHOP_GOODS[0][1], S.SHOP_GOODS[0][3]
         out = session.buy_good(key)
         self.assertTrue(out["ok"], out)
@@ -292,7 +292,7 @@ class TestShopEurobucks(unittest.TestCase):
         self.assertFalse(out["ok"])
 
     def test_menu_shop_closes_cleanly(self):
-        from ctrcg.ui.cli import ConsoleUI
+        from trpg.ui.cli import ConsoleUI
 
         class LeaveUI(ConsoleUI):
             def __init__(self):
@@ -364,7 +364,7 @@ class TestDeathSaveLoopRegression(unittest.TestCase):
         calls: dict[str, int] = {}
 
         def fake_death_save(self2, _rng):
-            from ctrcg.rules.dice import check_roll as _roll
+            from trpg.rules.dice import check_roll as _roll
             n = calls.get(self2.name, 0) + 1
             calls[self2.name] = n
             self2.hp_cur = 1                     # 第一次就"复活"归队

@@ -23,12 +23,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import (CountUI, RollGateUI, ScriptRng, make_agent_session,  # noqa: E402
                      make_pc, make_state)                    # noqa: F401 (转出)
 
-from ctrcg.game import state as G                            # noqa: E402
-from ctrcg.game.session import GameSession                   # noqa: E402
-from ctrcg.harness.adapter import ScriptedAdapter            # noqa: E402
-from ctrcg.harness.models import ModelResponse, ToolCall     # noqa: E402
-from ctrcg.rules.character import COND_STABILIZED            # noqa: E402
-from ctrcg.ui.cli import AutoUI                              # noqa: E402
+from trpg.game import state as G                            # noqa: E402
+from trpg.game.session import GameSession                   # noqa: E402
+from trpg.harness.adapter import ScriptedAdapter            # noqa: E402
+from trpg.harness.models import ModelResponse, ToolCall     # noqa: E402
+from trpg.rules.character import COND_STABILIZED            # noqa: E402
+from trpg.ui.cli import AutoUI                              # noqa: E402
 
 
 def _state_with_small_encounter():
@@ -202,7 +202,7 @@ class TestAgentMode(unittest.TestCase):
 
     def test_companion_falls_back_to_the_scripted_heuristic(self):
         """队友 Agent 的 LLM 故障 → 退回启发式回合，不炸整局。"""
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         st = _state_with_small_encounter()
         session, st, _ui, _adapter = make_agent_session(
             state=st, ui=RollGateUI(),

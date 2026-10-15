@@ -25,14 +25,14 @@ from helpers import ScriptRng, make_npc, make_pc, make_state   # noqa: E402
 from test_combat import (MELEE, PISTOL, corridor, duel,        # noqa: E402
                          make_foe)
 
-from ctrcg.game import state as G                              # noqa: E402
-from ctrcg.game.session import GameSession                     # noqa: E402
-from ctrcg.rules import data as D                              # noqa: E402
-from ctrcg.rules.character import (COND_CONTROLLED, COND_DEAD,  # noqa: E402
+from trpg.game import state as G                              # noqa: E402
+from trpg.game.session import GameSession                     # noqa: E402
+from trpg.rules import data as D                              # noqa: E402
+from trpg.rules.character import (COND_CONTROLLED, COND_DEAD,  # noqa: E402
                                    COND_STABILIZED, COND_UNCONSCIOUS,
                                    Character, LOCATIONS)
-from ctrcg.rules.combat import METERS_PER_CELL, Encounter       # noqa: E402
-from ctrcg.ui.cli import AutoUI                                # noqa: E402
+from trpg.rules.combat import METERS_PER_CELL, Encounter       # noqa: E402
+from trpg.ui.cli import AutoUI                                # noqa: E402
 
 
 # ================================================================ 1 动作经济
@@ -163,7 +163,7 @@ class TestArmorAndPenetration(unittest.TestCase):
 # ================================================================ 4 射程
 class TestRangeBands(unittest.TestCase):
     def test_every_weapon_kind_has_a_table(self):
-        for kind in ("pistol", "shotgun", "rifle", "smg", "bow"):
+        for kind in ("pistol", "shotgun", "rifle"):
             self.assertEqual(len(D.RANGED_DV[kind]), len(D.RANGE_BANDS), kind)
 
     def test_bands_are_contiguous_in_metres(self):
@@ -321,7 +321,7 @@ class TestCyberwareAndHumanity(unittest.TestCase):
         self.assertEqual(res.total, 5 + c.skill_total("perception") + 2)
 
     def test_save_roundtrip_keeps_cyberware_and_humanity(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         st = make_state()
         st.player.install_cyberware("cyberoptics")
         st.player.gain_ip(30)

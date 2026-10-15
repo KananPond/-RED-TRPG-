@@ -2,7 +2,7 @@
 
 > **文档目的**：本文档完整描述 SillyTavern（下称 ST）的角色卡、提示词组装、用户 persona、
 > 世界书、宏、按深度注入、群聊轮替与 swipe/重生成/继续等机制的精确语义，
-> 并在末尾给出 **机制 → ctrcg 现状对照表**。实现者只读这一份文档即可照做。
+> 并在末尾给出 **机制 → trpg 现状对照表**。实现者只读这一份文档即可照做。
 >
 > **来源标注约定**：
 > - 〔doc〕= docs.sillytavern.app 官方文档（release 分支文档站，抓取于 2026-10-02）；
@@ -29,7 +29,7 @@ ST 对两类 API 使用两套组装机制〔doc context-template〕：
 | **Text Completion** | 本地/文本补全后端 | **Story String**（Handlebars 模板）把角色卡字段渲染成一段前置文本，后接示例对话与聊天历史 | Advanced Formatting → Context Template |
 | **Chat Completion** | OpenAI 兼容 `/chat/completions` 等 | **Prompt Manager**：一组有序"提示词条目"（marker + 内容），逐条映射为 messages 数组 | AI Response Configuration → Prompt Manager |
 
-**本项目（ctrcg）走 OpenAI 兼容协议**（`ctrcg/harness/adapter.py:83` 的 `OpenAICompatibleAdapter`
+**本项目（trpg）走 OpenAI 兼容协议**（`trpg/harness/adapter.py:83` 的 `OpenAICompatibleAdapter`
 直连 `/chat/completions`），因此实现 AI PC 时应以 **Chat Completion 路径（Prompt Manager 模型）为主线**，
 Text Completion 的 story string 作为字段编排的概念对照（见 §3.3）。
 
@@ -415,14 +415,14 @@ ST 所有"插进聊天历史某一层"的机制共用一套底层设施：**exte
 
 ---
 
-## 11. 机制 → ctrcg 现状对照表（含 AI PC 落地建议）
+## 11. 机制 → trpg 现状对照表（含 AI PC 落地建议）
 
-> 现状引用均为本仓库代码（D:\code_study\TRCG，main 分支 @755d5f5）。
-> "AI PC" 指目标：把 `main.py:194-202` / `ctrcg/web/server.py:334-338` 中**只为同伴**构建的
+> 现状引用均为本仓库代码（D:\code_study\TRPG，main 分支 @755d5f5）。
+> "AI PC" 指目标：把 `main.py:194-202` / `trpg/web/server.py:334-338` 中**只为同伴**构建的
 > `make_pc_agent` 同样应用到玩家角色（当前玩家永远是人类操控：战斗走
 > `session.player_combat_turn`（session.py:680-703）菜单流，探索走 `ui.free_input`（session.py:414））。
 
-| # | SillyTavern 机制 | ctrcg 现状 | 差距与 AI PC 落地建议 |
+| # | SillyTavern 机制 | trpg 现状 | 差距与 AI PC 落地建议 |
 |---|---|---|---|
 | 1 | 角色卡常驻字段分层（description/personality/scenario 按固定顺序注入，§2/§3） | 无分层卡。同伴人设是模组 JSON 里的 `persona`/`voice` 两个字段（module_data.py:55-130），连同职业/战术/武器/义体**一次性烘进单条 system prompt**（agents.py:114-144）；DM 同理（agents.py:21-82） | 把每个 PC（含玩家角色）建模为 **chara_card_v3 式 dict**：description（设定/身世）、personality（性格摘要）、scenario（当前情境由引擎生成）、system_prompt/post_history_instructions 可选覆盖；组装器按 §3.2 顺序渲染，而非全部塞进 system |
 | 2 | `first_mes` / `alternate_greetings` | 无。开局呈现来自模组场景 `intro` 文本（session.py:127-137 `enter_scene`） | AI PC 可在开局生成 greeting 并支持 swipe 换开场；落地为 `enter_scene` 后追加 PC 自我介绍工具（如 `greet`） |
@@ -441,7 +441,7 @@ ST 所有"插进聊天历史某一层"的机制共用一套底层设施：**exte
 | 15 | Swipe（替身回复）/ Regenerate / Continue | **全无**。Agent 循环单次产出 final（loop.py:186-191），无重生成/续写入口 | AI PC 回合可生成 N 个候选动作（swipe 语义，玩家或 DM 挑选）；长回合被 `max_tokens=500`（agents.py:129）截断时用 Continue nudge 续写；`DuplicateCallGuard`（loop.py:59-77）保证重试不空转 |
 | 16 | 会话持久（chat jsonl / 消息级 include-exclude） | `Session` 事件日志 + 重放，不变量"模型可见 ⟺ 已记录"（events.py:1-70）；swipe 候选无处存放 | 日志加 `swipe` 事件类型；候选动作全量落日志再挑选，保持不变量 |
 | 17 | 生成类型门控（Triggers） | 无（单一生成类型） | 引入 `gen_type ∈ {normal, swipe, continue, impersonate}`，让世界书/AN 可按类型门控（如 swipe 时不重复注入 AN） |
-| 18 | Guard 插件（步数/超时/去重） | ST 无对应物，ctrcg 独有增强（loop.py:26-78：StepBudgetGuard 12 步、ToolTimeoutGuard 10s/交互 3600s、DuplicateCallGuard） | 保留；swipe/continue 生成同样过 guard 链 |
+| 18 | Guard 插件（步数/超时/去重） | ST 无对应物，trpg 独有增强（loop.py:26-78：StepBudgetGuard 12 步、ToolTimeoutGuard 10s/交互 3600s、DuplicateCallGuard） | 保留；swipe/continue 生成同样过 guard 链 |
 | 19 | 规则数值引擎化（ST 无此概念） | 一切掷骰在引擎（tools.py 原则注释；`skill_check`/`opposed_check` 等工具组） | 保持——AI PC 的所有动作仍经 `combat_action` 工具结算，宏/世界书只影响**叙事上下文**，不得替代引擎 |
 
 ### AI PC 最小落地清单（按依赖顺序）

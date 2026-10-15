@@ -1,5 +1,5 @@
 @echo off
-rem CTRCG 单人 AI 跑团 —— 双击启动网页版
+rem TRPG 单人 AI 跑团 —— 双击启动网页版
 rem 服务运行期间请保持本窗口开启；关闭窗口即停止服务。
 chcp 65001 >nul
 cd /d "%~dp0"

@@ -1,0 +1,1400 @@
+{
+  "id": "wyskakuj",
+  "title": "抢钱行动",
+  "en_title": "WYSKAKUJ Z FORSY!",
+  "module_id": "cpred-easy-mode",
+  "synopsis": "《赛博朋克 RED：轻松模式》的入门差事，改编为互动剧本。\n小队刚在南夜之城工业码头干完一票漂亮活，中间人 Lazlo 却用一次性手机打来电话：别去老地方拿钱，到海伍德工业区来。\n会面点上是假钞和 Leonard Houston 的枪口，小巷尽头是被拷打的中间人，最后一切都通向码头那个红门仓库。\n三条路，加上一条没人想到的第四选项——8 个结局等着你。",
+  "heroes": [
+    {
+      "id": "rockerboy_forty",
+      "name": "Forty",
+      "title": "摇滚客 · Forty",
+      "role": "rockerboy",
+      "role_rank": 4,
+      "hp": 40,
+      "stats": {
+        "int": 5,
+        "ref": 6,
+        "dex": 7,
+        "tech": 5,
+        "cool": 7,
+        "will": 8,
+        "luck": 5,
+        "move": 7,
+        "body": 3,
+        "emp": 6
+      },
+      "skills": {
+        "athletics": 2,
+        "brawling": 6,
+        "melee_weapon": 6,
+        "handgun": 6,
+        "play_instrument": 6,
+        "composition": 6,
+        "concentration": 2,
+        "conversation": 2,
+        "personal_grooming": 4,
+        "human_perception": 6,
+        "perception": 2,
+        "persuasion": 6,
+        "first_aid": 6,
+        "stealth": 2,
+        "local_expert": 4,
+        "education": 2,
+        "streetwise": 6
+      },
+      "desc": "摇滚客（摇滚女星）。轻甲 SP 11，带一把超重型手枪和一把大型近战武器；脑内装着内置智能体，痛觉被编辑器切掉了。对粉丝的魅力/共情检定 +2。"
+    },
+    {
+      "id": "solo_mover",
+      "name": "Mover",
+      "title": "独行侠 · Mover",
+      "role": "solo",
+      "role_rank": 4,
+      "hp": 45,
+      "stats": {
+        "int": 7,
+        "ref": 7,
+        "dex": 6,
+        "tech": 5,
+        "cool": 7,
+        "will": 6,
+        "luck": 6,
+        "move": 7,
+        "body": 7,
+        "emp": 3
+      },
+      "skills": {
+        "athletics": 2,
+        "brawling": 2,
+        "conceal_reveal": 8,
+        "concentration": 2,
+        "conversation": 2,
+        "education": 2,
+        "evasion": 6,
+        "first_aid": 6,
+        "handgun": 6,
+        "human_perception": 2,
+        "interrogation": 6,
+        "local_expert": 2,
+        "perception": 8,
+        "persuasion": 2,
+        "resist_torture_drugs": 6,
+        "shoulder_arms": 6,
+        "stealth": 6,
+        "tactics": 6
+      },
+      "desc": "独行侠。轻甲 SP 11，带霰弹枪和突击步枪；赛博眼让他看得比谁都远。战斗直觉让他的先攻 +4，感知 8 级全队最高。"
+    },
+    {
+      "id": "tech_torch",
+      "name": "Torch",
+      "title": "技术师 · Torch",
+      "role": "tech",
+      "role_rank": 4,
+      "hp": 35,
+      "stats": {
+        "int": 8,
+        "ref": 7,
+        "dex": 5,
+        "tech": 6,
+        "cool": 3,
+        "will": 3,
+        "luck": 7,
+        "move": 6,
+        "body": 6,
+        "emp": 5
+      },
+      "skills": {
+        "athletics": 2,
+        "brawling": 2,
+        "concentration": 2,
+        "conversation": 2,
+        "education": 6,
+        "electronics_security": 10,
+        "evasion": 6,
+        "first_aid": 6,
+        "forgery": 6,
+        "handgun": 6,
+        "human_perception": 2,
+        "local_expert": 2,
+        "perception": 2,
+        "persuasion": 2,
+        "pick_lock": 6,
+        "pick_pocket": 6,
+        "shoulder_arms": 6,
+        "stealth": 6
+      },
+      "desc": "技术师。轻甲 SP 11，带重型手枪和霰弹枪；电子学与安防练到 10 级，是队里唯一能拆开保险柜、安防系统和电子锁的人。"
+    },
+    {
+      "id": "medtech_redtail",
+      "name": "Redtail",
+      "title": "医疗师 · Redtail",
+      "role": "medtech",
+      "role_rank": 4,
+      "hp": 35,
+      "stats": {
+        "int": 8,
+        "ref": 5,
+        "dex": 5,
+        "tech": 8,
+        "cool": 5,
+        "will": 5,
+        "luck": 6,
+        "move": 6,
+        "body": 5,
+        "emp": 4
+      },
+      "skills": {
+        "athletics": 2,
+        "brawling": 2,
+        "concentration": 2,
+        "conversation": 6,
+        "deduction": 6,
+        "education": 6,
+        "electronics_security": 4,
+        "evasion": 6,
+        "first_aid": 2,
+        "human_perception": 6,
+        "local_expert": 2,
+        "paramedic": 6,
+        "perception": 6,
+        "persuasion": 5,
+        "resist_torture_drugs": 5,
+        "shoulder_arms": 6,
+        "stealth": 6
+      },
+      "desc": "医疗师。轻甲 SP 11，带霰弹枪；医疗救援 6 级、推理与感知 6 级，是唯一能用外科手段处理最严重致命伤的人（Lazlo 的手就靠她）。"
+    },
+    {
+      "id": "media_247",
+      "name": "24/7",
+      "title": "媒体人 · 24/7",
+      "role": "media",
+      "role_rank": 4,
+      "hp": 40,
+      "stats": {
+        "int": 7,
+        "ref": 5,
+        "dex": 5,
+        "tech": 4,
+        "cool": 8,
+        "will": 7,
+        "luck": 6,
+        "move": 7,
+        "body": 5,
+        "emp": 7
+      },
+      "skills": {
+        "athletics": 2,
+        "brawling": 2,
+        "composition": 7,
+        "conceal_reveal": 8,
+        "concentration": 2,
+        "conversation": 6,
+        "education": 2,
+        "evasion": 6,
+        "first_aid": 2,
+        "forgery": 6,
+        "handgun": 6,
+        "human_perception": 6,
+        "library_search": 4,
+        "local_expert": 6,
+        "melee_weapon": 6,
+        "perception": 8,
+        "persuasion": 6,
+        "stealth": 6
+      },
+      "desc": "媒体人。轻甲 SP 11，带重型手枪和大型近战武器；说服 6 级、魅力 8，信誉能力让她能靠名声与证据链施压，也能发动手里的舆论。"
+    }
+  ],
+  "start": "start",
+  "death_ending": "e_blood",
+  "endings_total": 8,
+  "nodes": {
+    "start": {
+      "chapter": "第一幕 · 来电",
+      "text": "南夜之城的工业码头从来不睡觉。吊车在雾里慢慢转，海水拍着混凝土，远处传来切割钢板的尖啸。\n安全屋里堆着上一票留下的空箱子、三罐温啤酒和一台总在雪花里跳新闻的旧电视。你们刚干完一票漂亮的：货出手了，钱在路上，今晚没人追你们。\n然后那部一次性手机响了。\n是 Lazlo——你们的中间人，这单活就是他介绍的。他一向只在两种情况下用这部手机：要么有大活，要么他快死了。\n「你们得换个地方拿钱，别去老地方了，」他说，声音比平时快，「到海伍德工业区来，我给你们发定位。」\n「一切都好，没问题。」\n他说了两次。「一切都好。」",
+      "prompt": "—— 电话还通着，你要说什么？ ——",
+      "choices": [
+        {
+          "text": "听他的声音——他到底怎么了？",
+          "check": {
+            "skill": "human_perception",
+            "dv": 17
+          },
+          "success": {
+            "goto": "c_read_ok",
+            "set": {
+              "read_lazlo": "1"
+            }
+          },
+          "fail": {
+            "goto": "c_read_fail"
+          }
+        },
+        {
+          "text": "不追问细节，先答应下来。",
+          "goto": "c_agree"
+        },
+        {
+          "text": "「换个地方？先让他把钱打过来。」",
+          "goto": "c_refuse"
+        }
+      ]
+    },
+    "c_read_ok": {
+      "text": "你听出来了。不是「有点紧张」——是有人把枪管抵在他脑袋上，而他正在把兄弟们往圈套里引。\n他的呼吸每隔几秒会断一下，那是努力压住颤抖的声音。\n你可以确定：Lazlo 正身处致命危险。而且如果他有危险，上一单的报酬和以后所有活计的前景也跟着危险。",
+      "next": "n_drive"
+    },
+    "c_read_fail": {
+      "text": "你只觉得他今天话少、语气怪。消息很简单——「你们得换个地方拿钱，别去老地方了。到海伍德工业区来，我给你们发定位。」——但他说得太快了，快得像在背台词。\n电话那头静了半秒，然后挂断。",
+      "next": "n_drive"
+    },
+    "c_agree": {
+      "text": "「行，海伍德。」你说。\nLazlo 像是松了口气，又像是被这句话噎住了。他报了个模糊的方位，说定位随后发来，然后匆匆挂断。\n安全屋里安静下来。电视里那个主播正在说，今晚夜之城的湿度是百分之九十四。",
+      "next": "n_drive"
+    },
+    "c_refuse": {
+      "text": "「换个地方？行啊，」你说，把脚从箱子上放下来，「先把上一单的钱打过来，剩下的见面再谈。」\n电话那头沉默了整整四秒。你能听见他的呼吸，还有别的什么声音——很轻，像金属在皮革上挪了一下。\n「……钱就在我手上，」Lazlo 终于说，「一万欧元，崭新的，就等你们来拿。你们来不来？」",
+      "prompt": "—— 他等着你回答 ——",
+      "choices": [
+        {
+          "text": "「……给我定位。」",
+          "goto": "n_drive"
+        },
+        {
+          "text": "「不对。你从来不这么说话。这单我不接。」",
+          "goto": "e_walkaway"
+        },
+        {
+          "text": "「你在替谁打电话？」逼他回答。",
+          "check": {
+            "skill": "interrogation",
+            "dv": 17
+          },
+          "success": {
+            "goto": "c_confess",
+            "set": {
+              "read_lazlo": "1"
+            }
+          },
+          "fail": {
+            "goto": "c_agree"
+          }
+        }
+      ]
+    },
+    "c_confess": {
+      "text": "「别问了。」Lazlo 的声音塌下去，「别问，行吗。」\n然后是第四秒——你听见一个陌生人凑近话筒，笑着说了句：「快点，中间人。」\n电话断了。\n现在你百分之百确定：这是个圈套。问题是，Lazlo 还在里面。",
+      "next": "n_drive"
+    },
+    "n_drive": {
+      "chapter": "第一幕 · 准备",
+      "text": "从南夜之城到海伍德工业区要横穿半个城市：高架上的车灯连成红色和白色的河，路边的全息广告在雨里闪着「你值得更好的义体」。\n你们有大约四十分钟。够不够准备，全看你们想得多细。",
+      "prompt": "—— 四十分钟，你们做什么？ ——",
+      "choices": [
+        {
+          "text": "先摸清那片街区的结构：出口、楼顶、视线死角。",
+          "require": {
+            "not_flags": [
+              "tried_layout"
+            ]
+          },
+          "set": {
+            "tried_layout": "1"
+          },
+          "check": {
+            "skill": "perception",
+            "dv": 17
+          },
+          "success": {
+            "goto": "prep_layout_ok",
+            "set": {
+              "adv_layout": "1"
+            }
+          },
+          "fail": {
+            "goto": "prep_layout_fail"
+          }
+        },
+        {
+          "text": "在车上把分工和退路排一遍。",
+          "require": {
+            "not_flags": [
+              "tried_tactics"
+            ]
+          },
+          "set": {
+            "tried_tactics": "1"
+          },
+          "check": {
+            "skill": "tactics",
+            "dv": 17
+          },
+          "success": {
+            "goto": "prep_tactics_ok",
+            "set": {
+              "adv_tactics": "1"
+            }
+          },
+          "fail": {
+            "goto": "prep_tactics_fail"
+          }
+        },
+        {
+          "text": "提前检查随身装备，把该调的调好。",
+          "require": {
+            "not_flags": [
+              "tried_gear"
+            ]
+          },
+          "set": {
+            "tried_gear": "1"
+          },
+          "check": {
+            "skill": "electronics_security",
+            "dv": 15
+          },
+          "success": {
+            "goto": "prep_gear_ok",
+            "set": {
+              "adv_gear": "1"
+            }
+          },
+          "fail": {
+            "goto": "prep_gear_fail"
+          }
+        },
+        {
+          "text": "够了，直接去。",
+          "goto": "n_meet"
+        }
+      ]
+    },
+    "prep_layout_ok": {
+      "text": "你调出旧城区的立体图。会面点是条死巷，两侧是早就停产的压缩机外壳，顶上盖着滴水的铁皮雨棚——只有两个出口，两边的楼顶都能俯瞰整条巷子。\n你现在知道枪会从哪边来，也知道该往哪里躲。",
+      "next": "n_drive"
+    },
+    "prep_layout_fail": {
+      "text": "雨太大，街区的图糊成一团。你只来得及看清大概方位：一片铁皮、几条断掉的巷子。",
+      "next": "n_drive"
+    },
+    "prep_tactics_ok": {
+      "text": "你在脑子里把队形排了一遍：谁先看箱子、谁盯出口、谁负责把中间人捞出来。\n如果这真是个圈套，你们至少不会是站着挨打的那一方。",
+      "next": "n_drive"
+    },
+    "prep_tactics_fail": {
+      "text": "车里太吵，无线电里在放一首你听不懂的歌。讨论到最后只确定了一件事：见机行事。",
+      "next": "n_drive"
+    },
+    "prep_gear_ok": {
+      "text": "你把弹匣、备用电池和那把小手电挨个过了一遍。顺手在防火墙上贴了块胶带——不是战术，是习惯。\n装备状态良好。",
+      "next": "n_drive"
+    },
+    "prep_gear_fail": {
+      "text": "你在红灯前才发现有个弹匣卡住了。等你把它敲顺，后面的车已经开始按喇叭。",
+      "next": "n_drive"
+    },
+    "n_meet": {
+      "chapter": "第二幕 · 会面",
+      "text": "会面点在一条深巷的尽头。头顶是滴水的铁皮雨棚，两侧是早就停产的压缩机外壳。\n一个戴兜帽的男人等在那儿，手里拎着一只沉重的箱子——箱子用手铐锁在他手腕上。\n「你们来得挺快。」他说，然后开始找钥匙。\n他翻遍一个个口袋。找了很久。钥匙终于摸出来了，又掉在地上。他弯腰去捡的时候，你听得见水滴的声音。",
+      "prompt": "—— 他还在找钥匙 ——",
+      "choices": [
+        {
+          "text": "盯着他看。这个「找钥匙」不对劲。",
+          "check": {
+            "skill": "perception",
+            "dv": 15
+          },
+          "success": {
+            "goto": "meet_observe",
+            "set": {
+              "saw_fumble": "1"
+            }
+          },
+          "fail": {
+            "goto": "meet_observe_fail"
+          }
+        },
+        {
+          "text": "上去，把手伸向箱子。",
+          "set": {
+            "took_case": "1"
+          },
+          "goto": "meet_take"
+        },
+        {
+          "text": "「箱子放地上，钥匙扔过来。」",
+          "goto": "meet_standoff"
+        }
+      ]
+    },
+    "meet_observe": {
+      "text": "你注意到了三件事。第一，他找钥匙的时间长得不正常。第二，他一直在往巷子两端瞟。第三，他左手的手腕上有一道很新的压痕——手铐的压痕，但不是这只箱子的。\n他在等什么。或者，他在等谁。",
+      "next": "n_case"
+    },
+    "meet_observe_fail": {
+      "text": "你只看到一个有点紧张的送货人。雨声盖住了巷子深处的一些别的动静。",
+      "next": "n_case"
+    },
+    "meet_take": {
+      "text": "你伸手接过箱子。金属的边角硌进掌心，很沉——一万欧元该有的分量。\n戴兜帽的男人松了手，退后半步，兜帽下的脸终于露出来一点：四十来岁，刮得很干净，眼神像在数数。\n「签字吧。」他说。\n然后他抬起右手，做了个手势。",
+      "next": "n_case"
+    },
+    "meet_standoff": {
+      "text": "「放地上。」你说。\n他愣了一下，然后笑了：「规矩不是这么走的，朋友。」\n但他还是蹲下去，把箱子放在湿地上。放下的那一刻，他的右手始终没有离开箱子的提手——而他的左手，正在往下够腰间那个鼓起的地方。",
+      "prompt": "—— 他的手正在往下够 ——",
+      "choices": [
+        {
+          "text": "先动手。",
+          "set": {
+            "opened_first": "1"
+          },
+          "goto": "n_ambush"
+        },
+        {
+          "text": "掀开外套，让他看见你的枪。",
+          "check": {
+            "skill": "persuasion",
+            "dv": 15
+          },
+          "success": {
+            "goto": "meet_intimidate"
+          },
+          "fail": {
+            "goto": "n_ambush"
+          }
+        },
+        {
+          "text": "退开，同时喊队友散开。",
+          "set": {
+            "adv_layout": "1"
+          },
+          "goto": "n_ambush"
+        }
+      ]
+    },
+    "meet_intimidate": {
+      "text": "他看见了。手停在腰上，没再往上，也没放下去。\n「……好，好。」他说，「我们讲道理。」\n但他一直在看你的身后。",
+      "next": "n_case"
+    },
+    "n_case": {
+      "text": "箱子开了。整整一万欧元，崭新的，按约定码得整整齐齐。\n钞票的味道很新。新得有点过头了。",
+      "prompt": "—— 你要验一验吗？ ——",
+      "choices": [
+        {
+          "text": "抽一张，用拇指搓过边缘。",
+          "check": {
+            "skill": "forgery",
+            "dv": 17
+          },
+          "success": {
+            "goto": "case_forge_ok",
+            "set": {
+              "knows_fake": "1"
+            }
+          },
+          "fail": {
+            "goto": "case_forge_fail"
+          }
+        },
+        {
+          "text": "收下，不动声色。",
+          "goto": "case_quiet"
+        },
+        {
+          "text": "当场问他：「这钱是假的吧。」",
+          "goto": "n_ambush"
+        }
+      ]
+    },
+    "case_forge_ok": {
+      "text": "你只用拇指搓了一下钞票的边缘就知道答案：纸张太滑，油墨在紫外下没有荧光带，水印印得比真钞还清楚。\n这一万欧元，是假钞。\n你可以当场把这件事说出来——而不是等对方先开火。",
+      "next": "n_ambush"
+    },
+    "case_forge_fail": {
+      "text": "钞票看起来没什么问题。它闻起来甚至有点像新钱。",
+      "next": "case_quiet"
+    },
+    "case_quiet": {
+      "text": "你把箱子扣上，什么都没说。\n戴兜帽的男人看着你，慢慢地点了点头，像是在确认一件他早就知道的事。\n然后他抬起右手，做了个手势。",
+      "next": "n_ambush"
+    },
+    "n_ambush": {
+      "chapter": "第二幕 · 伏击",
+      "text": "巷子两端的铁皮门同时被踹开。红灯从雾里渗进来，几个人影在维修隧道的拐角处散开——手上是制式武器，胸前是廉价的防弹衣。\n谁都没喊话，只有一句：「右边的，自动武器。」\n条子封住了所有出路的枪线。\n戴兜帽的男人已经退到墙根。现在你知道了：他是 Leonard Houston，NCPD，职业是警察，私下是个恶棍。",
+      "prompt": "—— 枪线封死了巷子，你怎么做？ ——",
+      "choices": [
+        {
+          "text": "滚向压缩机外壳后面。",
+          "check": {
+            "skill": "evasion",
+            "dv": 13
+          },
+          "success": {
+            "goto": "ambush_cover",
+            "set": {
+              "in_cover": "1"
+            }
+          },
+          "fail": {
+            "goto": "ambush_hit",
+            "damage": 8
+          }
+        },
+        {
+          "text": "直接冲 Houston——他是发号施令的那个。",
+          "check": {
+            "skill": "handgun",
+            "dv": 15
+          },
+          "success": {
+            "goto": "ambush_houston",
+            "set": {
+              "houston_down": "1"
+            }
+          },
+          "fail": {
+            "goto": "ambush_hit",
+            "damage": 12
+          }
+        },
+        {
+          "text": "原地喊话：「条子！你们知道自己在替谁干活吗？」",
+          "check": {
+            "skill": "persuasion",
+            "dv": 17
+          },
+          "success": {
+            "goto": "ambush_talk"
+          },
+          "fail": {
+            "goto": "ambush_hit",
+            "damage": 10
+          }
+        },
+        {
+          "text": "按出发前排好的战术打。",
+          "require": {
+            "flags": [
+              "adv_tactics"
+            ]
+          },
+          "set": {
+            "in_cover": "1"
+          },
+          "goto": "ambush_cover"
+        }
+      ]
+    },
+    "ambush_cover": {
+      "text": "你贴着湿冷的铁皮滑进死角。子弹在你头顶的雨棚上凿出一排洞，雨水和铁屑一起落下来。\n你有了个位置——一个能还击的位置。",
+      "next": "n_ambush_end"
+    },
+    "ambush_houston": {
+      "text": "你打中了。Houston 的兜帽掀开，人往后撞在墙上，手铐箱子从他手腕上拖出一道长长的血痕。\n包围圈乱了一瞬——有人喊了声「休斯顿！」——就是这一瞬，够你们把枪口转向出口。",
+      "next": "n_ambush_end"
+    },
+    "ambush_talk": {
+      "text": "「替谁干活？」你喊，「替几个连名字都不敢露的帮派混混？还是替一个把你们当耗材用的警督？」\n枪声稀了下来，稀了大概两秒。\n有人骂了一句脏话。有人退到了铁皮门后面。包围圈松了一个口子——不是投降，是他们开始算这笔账划不划算。",
+      "next": "n_ambush_end"
+    },
+    "ambush_hit": {
+      "text": "你慢了半拍。子弹打在你胸口那块夹克上，冲击力把你掀得向后趔趄，肺里的空气被打空了一半。\n护甲扛住了最要命的部分，但你知道自己中弹了。",
+      "next": "n_ambush_end"
+    },
+    "n_ambush_end": {
+      "text": "交火只持续了不到两分钟。等枪声停下来，巷子里多了一地弹壳、几摊血，和三个再也不会站起来的人。\n活下来的几个条子拖着伤员，从巷子的另一头跑了——他们跑得很熟练，像是练过很多次。\n然后你们听见了别的声音。\n小巷尽头的小房间里，有人在喊。被堵住嘴、又终于挣开的那种喊叫。",
+      "prompt": "—— 枪声刚停，你做什么？ ——",
+      "choices": [
+        {
+          "text": "先去抓一个还有气的条子。",
+          "check": {
+            "skill": "interrogation",
+            "dv": 17
+          },
+          "success": {
+            "goto": "interrogate_ok",
+            "set": {
+              "knows_hideout": "1"
+            }
+          },
+          "fail": {
+            "goto": "interrogate_fail"
+          }
+        },
+        {
+          "text": "不管他们，直接去看那个喊叫的人。",
+          "goto": "n_lazlo"
+        },
+        {
+          "text": "追出去，别让跑的条子回去报信。",
+          "check": {
+            "skill": "athletics",
+            "dv": 15
+          },
+          "success": {
+            "goto": "chase_ok"
+          },
+          "fail": {
+            "goto": "chase_fail"
+          }
+        }
+      ]
+    },
+    "interrogate_ok": {
+      "text": "你把他按在墙上。他伤得很重，眼神已经开始飘，但「你们的老窝在哪」这句话他还是听懂了。\n「码……码头，」他说，血从嘴角流下来，「最里面那个仓库。红门的那个。」\n然后他就不说话了。",
+      "next": "n_lazlo"
+    },
+    "interrogate_fail": {
+      "text": "你把他按在墙上。他不说。\n你用了些手段——而他本来就只剩一口气。\n最后你得到的只有一个名字，和一句没过脑子的话：「你以为……只有我们在拿钱？」\n他不说了。他也不用再说了。",
+      "next": "n_lazlo"
+    },
+    "chase_ok": {
+      "text": "你在巷口追上了最后一个。他回头看你一眼，把枪扔了，举起手——然后趁你分神，从消防梯上翻了出去。\n但他在墙上留下了一个东西：一张湿透的仓库进出单。南夜之城码头，红门仓库。",
+      "next": "n_lazlo"
+    },
+    "chase_fail": {
+      "text": "你追到巷口，只看见两盏尾灯拐过街角。\n他们跑掉了。他们都看清了你们的脸。",
+      "next": "n_lazlo"
+    },
+    "n_lazlo": {
+      "chapter": "第二幕 · 营救",
+      "text": "小房间的门是被从外面插上的。里面只有一盏挂在天花板上的工作灯，和一张被血浸透的椅子。\nLazlo 在椅子上。他的右手——那只原生手——肿成了一团看不出形状的东西，几根手指的关节已经不在原来的位置。他的左手不见了：那是他那只义手，被人从肘部下方砍了下来，粗暴地塞进他嘴里，用他被撕烂的 T 恤绑住，当作口塞。\n他抬起头，看见你们，眼睛立刻亮了。",
+      "prompt": "—— 他还活着，但只剩一口气 ——",
+      "choices": [
+        {
+          "text": "先处理那双手。",
+          "check": {
+            "skill": "first_aid",
+            "dv": 13
+          },
+          "success": {
+            "goto": "lazlo_aid_ok",
+            "set": {
+              "lazlo_favor": "1"
+            }
+          },
+          "fail": {
+            "goto": "lazlo_aid_fail"
+          }
+        },
+        {
+          "text": "外科级的处理——但他得忍住。",
+          "check": {
+            "skill": "paramedic",
+            "dv": 15
+          },
+          "success": {
+            "goto": "lazlo_medic_ok",
+            "set": {
+              "lazlo_favor": "1",
+              "lazlo_hand": "1"
+            }
+          },
+          "fail": {
+            "goto": "lazlo_aid_fail"
+          }
+        },
+        {
+          "text": "他的手机没了，用他的信用账户叫一辆战斗出租车。",
+          "goto": "lazlo_cab"
+        },
+        {
+          "text": "先不碰伤口，问他到底发生了什么。",
+          "goto": "lazlo_talk"
+        }
+      ]
+    },
+    "lazlo_aid_ok": {
+      "text": "你处理了那双手。异物取出、骨头复位、把碎掉的指节固定住——他能保住这只手，虽然这只手以后再也握不紧枪。\nLazlo 疼得把脏话骂成了一段诗。等他缓过来，他看着你说：「记着，你欠我的那笔账，现在反过来了。」\n按他的说法，这换来的是「至死不渝的感激和一份扎实的中间人恩情」。",
+      "next": "lazlo_talk"
+    },
+    "lazlo_medic_ok": {
+      "text": "你把断掉的义手从他嘴里取出来，做了真正的外科处理：止血、清创、把神经接口的残端封好。\n他这只手保下来了，接回去还能用。\nLazlo 看着自己那只接回去的手，很久没说话。然后他说：「行。以后你说什么，我听着。」",
+      "next": "lazlo_talk"
+    },
+    "lazlo_aid_fail": {
+      "text": "你手上的家伙不够用，或者不够快。Lazlo 疼得把脏话骂成了一段诗，但伤口没有真正处理好。\n「……算了，」他喘着气说，「先离开这儿。」",
+      "next": "lazlo_talk"
+    },
+    "lazlo_cab": {
+      "text": "他用信用账户叫了一辆战斗出租车。电话是他自己打不了的——他的手机也成了那把锤子的牺牲品。\n出租车会在七分钟后到。七分钟里，你们有一堆问题要问。",
+      "next": "lazlo_talk"
+    },
+    "lazlo_talk": {
+      "text": "「那帮人是 NCPD，」Lazlo 说，「领头的叫 Leonard Houston。他们从一个线人那儿拿到了整单活的情报——谁接的、什么时候交货、货放在哪。」\n「那个线人，」他顿了顿，「最好不是你们认识的人。」\n「他们抢了你们的钱，顺便把我挂在这儿当诱饵。」\n「但我知道他们把东西放哪了。码头最里面，一个红门的仓库——离你们上次得手的地方不远。」\n他咳了两声，然后咧嘴笑了，笑得满脸是血：\n「箱子里的钱是假的。别扔，说不定哪天还能派上用场。」\n「还有——最好别让他们重新集结、舔好伤口。他们清清楚楚知道你们是谁。」",
+      "next": "n_approach"
+    },
+    "n_approach": {
+      "chapter": "第三幕 · 仓库",
+      "text": "仓库在码头最里面，背后就是黑得像墨一样的海水。卸货区的灯有一半是坏的，剩下的把集装箱的影子拉得很长。\n卷帘门旁边停着两辆车——一辆是没挂牌的警用巡逻车，另一辆是某个倒霉蛋的摩托车。\n从这里开始，路有三条：杀进去、摸进去、或者谈进去。也许还有第四条，那要看你们能想出什么来。",
+      "prompt": "—— 你们怎么进去？ ——",
+      "choices": [
+        {
+          "text": "清除：直接杀进去。",
+          "set": {
+            "route_assault": "1"
+          },
+          "goto": "assault"
+        },
+        {
+          "text": "渗透：摸进去，把钱偷回来。",
+          "set": {
+            "route_ghost": "1"
+          },
+          "goto": "infiltrate"
+        },
+        {
+          "text": "外交：谈进去。",
+          "set": {
+            "route_deal": "1"
+          },
+          "goto": "diplo"
+        },
+        {
+          "text": "第四选项：你们自己有个主意。",
+          "set": {
+            "route_fourth": "1"
+          },
+          "goto": "fourth"
+        }
+      ]
+    },
+    "assault": {
+      "text": "你们没打算客气。\n卷帘门是整面墙唯一的入口，也是他们唯一需要守的地方——所以他们把枪口全对着它。\n第一轮，枪声很脆。",
+      "prompt": "—— 怎么开这个头？ ——",
+      "choices": [
+        {
+          "text": "踹开卷帘门，正面压制。",
+          "check": {
+            "skill": "shoulder_arms",
+            "dv": 15
+          },
+          "success": {
+            "goto": "assault_ok",
+            "set": {
+              "assault_good": "1"
+            }
+          },
+          "fail": {
+            "goto": "assault_bad",
+            "damage": 9
+          }
+        },
+        {
+          "text": "从卸货区的侧窗翻进去，打他们的后背。",
+          "check": {
+            "skill": "stealth",
+            "dv": 15
+          },
+          "success": {
+            "goto": "assault_ok",
+            "set": {
+              "assault_good": "1"
+            }
+          },
+          "fail": {
+            "goto": "assault_bad",
+            "damage": 7
+          }
+        },
+        {
+          "text": "先甩一颗闪光弹进去。",
+          "check": {
+            "skill": "athletics",
+            "dv": 13
+          },
+          "success": {
+            "goto": "assault_ok",
+            "set": {
+              "assault_good": "1"
+            }
+          },
+          "fail": {
+            "goto": "assault_bad",
+            "damage": 6
+          }
+        },
+        {
+          "text": "用巷子里那点情报，先敲掉他们的对讲机。",
+          "require": {
+            "flags": [
+              "knows_hideout"
+            ]
+          },
+          "set": {
+            "assault_good": "1"
+          },
+          "goto": "assault_ok"
+        }
+      ]
+    },
+    "assault_ok": {
+      "text": "开场很顺。集装箱之间的窄道把他们的火力切成了几段，你们一个一个地把它们敲掉。\n但他们知道这次已经无处可逃了。他们不打算便宜地卖掉自己的皮。",
+      "next": "assault_round2"
+    },
+    "assault_bad": {
+      "text": "开场就不顺。你暴露在灯光下整整两秒——两秒够一个训练过的警察打空半个弹匣。\n护甲替你挨了大部分，剩下的打在你身上。",
+      "next": "assault_round2"
+    },
+    "assault_round2": {
+      "text": "第二回合。\n然后摩托车撞窗的声音盖过了一切。\n一整面玻璃和铁框朝仓库里砸下来，一辆摩托从雨里飞进来，轮胎在水泥地上尖叫着横过去。骑手单手扶着车把，另一只手里是一支突击步枪。\n他们真的有个疯子。",
+      "prompt": "—— 摩托正在横冲，你怎么打？ ——",
+      "choices": [
+        {
+          "text": "打轮胎。",
+          "check": {
+            "skill": "handgun",
+            "dv": 17
+          },
+          "success": {
+            "goto": "assault_bike_down",
+            "set": {
+              "bike_down": "1"
+            }
+          },
+          "fail": {
+            "goto": "assault_bike_hit",
+            "damage": 13
+          }
+        },
+        {
+          "text": "先找掩体，等他冲过去再打。",
+          "check": {
+            "skill": "evasion",
+            "dv": 15
+          },
+          "success": {
+            "goto": "assault_bike_wait"
+          },
+          "fail": {
+            "goto": "assault_bike_hit",
+            "damage": 10
+          }
+        },
+        {
+          "text": "迎着摩托冲上去，在最近的距离清空弹匣。",
+          "check": {
+            "skill": "shoulder_arms",
+            "dv": 17
+          },
+          "success": {
+            "goto": "assault_bike_down",
+            "set": {
+              "bike_down": "1"
+            }
+          },
+          "fail": {
+            "goto": "e_blood",
+            "damage": 45
+          }
+        }
+      ]
+    },
+    "assault_bike_down": {
+      "text": "摩托在集装箱上撞出一声闷响。骑手被甩出去，突击步枪在地上滑了很远。\n仓库里安静下来。剩下的条子互相看了看，把枪口慢慢压低了。",
+      "next": "epilogue"
+    },
+    "assault_bike_wait": {
+      "text": "你贴着箱堆蹲下。摩托从你头顶上飞过去，撞在后面的铁皮墙上，骑手滚了两圈才停。\n他还想起来。他没成功。",
+      "next": "epilogue"
+    },
+    "assault_bike_hit": {
+      "text": "子弹打在摩托的车身上，溅出一串火星——但那支突击步枪已经转向你了。\n一整排子弹从你身边扫过去，把身后的板条箱打成了碎片。你还站着，但你不知道下一次还站不站得住。",
+      "next": "epilogue"
+    },
+    "infiltrate": {
+      "text": "钱在保险柜里。保险柜在办公室里。办公室在最里面，中间隔着四十米堆满集装箱的窄道，和至少六个拿着制式武器的条子。\n理论上什么都有可能。实际上，你最好别惊动他们。",
+      "prompt": "—— 摸进去，第一关是门口 ——",
+      "choices": [
+        {
+          "text": "等换岗的间隙溜进去。",
+          "check": {
+            "skill": "stealth",
+            "dv": 17
+          },
+          "success": {
+            "goto": "infil_in"
+          },
+          "fail": {
+            "goto": "assault",
+            "set": {
+              "route_assault": "1"
+            }
+          }
+        },
+        {
+          "text": "从仓库顶上的通风口翻进去。",
+          "check": {
+            "skill": "athletics",
+            "dv": 15
+          },
+          "success": {
+            "goto": "infil_in",
+            "set": {
+              "infil_high": "1"
+            }
+          },
+          "fail": {
+            "goto": "assault",
+            "set": {
+              "route_assault": "1"
+            }
+          }
+        },
+        {
+          "text": "先把外面那辆巡逻车的警报弄响，调开他们。",
+          "require": {
+            "flags": [
+              "adv_gear"
+            ]
+          },
+          "set": {
+            "infil_distract": "1"
+          },
+          "goto": "infil_in"
+        }
+      ]
+    },
+    "infil_in": {
+      "text": "你在黑暗中前行。水从屋顶滴下来，正好盖住你的脚步。\n办公室里那盏灯还亮着，保险柜就摆在办公桌后面，比你想的更旧，也更沉。\n门口六米外有个守卫在打哈欠。",
+      "prompt": "—— 保险柜在那儿 ——",
+      "choices": [
+        {
+          "text": "上电子破解。",
+          "check": {
+            "skill": "electronics_security",
+            "dv": 15
+          },
+          "success": {
+            "goto": "infil_open",
+            "set": {
+              "safe_open": "1"
+            }
+          },
+          "fail": {
+            "goto": "infil_alert",
+            "damage": 6
+          }
+        },
+        {
+          "text": "老办法，撬。",
+          "check": {
+            "skill": "pick_lock",
+            "dv": 17
+          },
+          "success": {
+            "goto": "infil_open",
+            "set": {
+              "safe_open": "1"
+            }
+          },
+          "fail": {
+            "goto": "infil_alert",
+            "damage": 6
+          }
+        },
+        {
+          "text": "从那个打哈欠的守卫身上摸钥匙。",
+          "check": {
+            "skill": "pick_pocket",
+            "dv": 15
+          },
+          "success": {
+            "goto": "infil_open",
+            "set": {
+              "safe_open": "1",
+              "keys_lifted": "1"
+            }
+          },
+          "fail": {
+            "goto": "infil_alert",
+            "damage": 8
+          }
+        }
+      ]
+    },
+    "infil_open": {
+      "text": "保险柜开了。里面是那笔钱——真钱，用橡皮筋捆着，散发着一股旧钞票的味道。\n你把它塞进背包。现在只剩最后一件事：出去。",
+      "prompt": "—— 带着钱出去 ——",
+      "choices": [
+        {
+          "text": "原路返回，一声不响。",
+          "check": {
+            "skill": "stealth",
+            "dv": 15
+          },
+          "success": {
+            "goto": "epilogue",
+            "set": {
+              "clean_getaway": "1"
+            }
+          },
+          "fail": {
+            "goto": "infil_alert",
+            "damage": 7
+          }
+        },
+        {
+          "text": "从正面走出去——你穿着夹克，没人会看你第二眼。",
+          "check": {
+            "skill": "acting",
+            "dv": 15
+          },
+          "success": {
+            "goto": "epilogue",
+            "set": {
+              "clean_getaway": "1"
+            }
+          },
+          "fail": {
+            "goto": "infil_alert",
+            "damage": 9
+          }
+        }
+      ]
+    },
+    "infil_alert": {
+      "text": "有东西响了——一个开关、一盏感应灯、或者只是有人回头看了一眼。\n然后整座仓库的脚步声都朝你这边过来。\n你手上有一笔钱，一个背包，和六把正在转向你的枪。",
+      "next": "assault"
+    },
+    "diplo": {
+      "text": "你把自己暴露在枪口下。\n门开了一条缝，里面的人显然没想到你们会敲门。有人低声骂了一句，然后是几句快速的商量。\n最后出来一个人：西装外套、警徽摘了、右手一直没离开大腿外侧。\n「你们挺有种，」他说，「说说看。」",
+      "prompt": "—— 怎么谈？ ——",
+      "choices": [
+        {
+          "text": "先谈事实：钱是假的，你们的收据是假的，这事儿谁都不干净。",
+          "check": {
+            "skill": "persuasion",
+            "dv": 15
+          },
+          "success": {
+            "goto": "diplo_edge"
+          },
+          "fail": {
+            "goto": "diplo_tough"
+          }
+        },
+        {
+          "text": "直接亮牌：巷子里死了三个人，你们还可以死更多。",
+          "check": {
+            "skill": "interrogation",
+            "dv": 15
+          },
+          "success": {
+            "goto": "diplo_edge"
+          },
+          "fail": {
+            "goto": "diplo_tough"
+          }
+        },
+        {
+          "text": "先把那半箱钞票验一遍。",
+          "check": {
+            "skill": "forgery",
+            "dv": 13
+          },
+          "success": {
+            "goto": "diplo_verify"
+          },
+          "fail": {
+            "goto": "diplo_tough"
+          }
+        },
+        {
+          "text": "提出五五分成，各回各家。",
+          "goto": "diplo_accept"
+        }
+      ]
+    },
+    "diplo_verify": {
+      "text": "你当着他们的面抽出一张钞票，用拇指搓过边缘。\n「这张是真的，」你说，「所以你们手上只有一半真钱。而我们手上还有一箱子假钞，和三个死在巷子里的同事。」\n谈判代表的脸色变了。",
+      "next": "diplo_edge"
+    },
+    "diplo_edge": {
+      "text": "谈判代表沉默了几秒，然后回头喊了句什么。\n里面传来一阵压低声音的争吵。\n「……头儿说可以再谈谈。」他转回来，「你们想要多少？」",
+      "prompt": "—— 他们在等你的报价 ——",
+      "choices": [
+        {
+          "text": "「全部。钱是雇我们的人给的。」",
+          "check": {
+            "skill": "persuasion",
+            "dv": 17
+          },
+          "success": {
+            "goto": "diplo_win",
+            "set": {
+              "deal_best": "1"
+            }
+          },
+          "fail": {
+            "goto": "diplo_tough"
+          }
+        },
+        {
+          "text": "「七三。你们三。」",
+          "check": {
+            "skill": "persuasion",
+            "dv": 15
+          },
+          "success": {
+            "goto": "diplo_win"
+          },
+          "fail": {
+            "goto": "diplo_tough"
+          }
+        },
+        {
+          "text": "「五五。就这样。」",
+          "goto": "diplo_accept"
+        }
+      ]
+    },
+    "diplo_tough": {
+      "text": "谈判代表摇了摇头。里面有人把枪栓拉了一下，声音在铁皮墙上弹了回来。\n「行。」他说，「大家都别装体面了。」\n他把条件抬高了：钱可以还你们三成，剩下的算医药费和「封口费」。\n要么接受，要么——他拍了拍大腿外侧。",
+      "prompt": "—— 三成，或者开打 ——",
+      "choices": [
+        {
+          "text": "接受三成。至少活着把钱带回去一部分。",
+          "goto": "diplo_accept30"
+        },
+        {
+          "text": "「谈崩了。」",
+          "set": {
+            "route_assault": "1"
+          },
+          "goto": "assault"
+        }
+      ]
+    },
+    "diplo_accept": {
+      "text": "「五五分成，各回各家。」\n谈判代表看了你很久，然后伸出手。\n「……行。」他说，「今天谁都不想再死人。」\n他们从保险柜里数出五千欧元，装在另一个箱子里推过来。箱子很沉，钱是真的。",
+      "next": "epilogue"
+    },
+    "diplo_accept30": {
+      "text": "「三成。」你说，「行。」\n谈判代表笑了一下，那种笑不太好看。他们数出三千欧元推过来。\n钱是真的。代价是你得记住这张脸，以及他从你手上拿走的那七千。",
+      "next": "epilogue"
+    },
+    "diplo_win": {
+      "variants": [
+        {
+          "require": {
+            "flags": [
+              "hero_rockerboy_forty"
+            ]
+          },
+          "text": "谈判代表回头喊了一句，里面吵得更凶了，然后他转回来，把整只箱子拎了出来。\n「拿去。」他说，「但记住——今天这事儿，谁都没赢。你们只是没输。」\n然后他停住了。里面又出来一个人，盯着你看了三秒，突然开口：「……你是 Forty。」\n接下来的事顺利得不像话：钱还了，巡逻车的记录也删了。\n「下次别在台上唱我们，」那个粉丝说，「唱点好听的。」"
+        },
+        {
+          "require": {
+            "flags": [
+              "hero_media_247"
+            ]
+          },
+          "text": "谈判代表回头喊了一句，里面吵得更凶了，然后他转回来，把整只箱子拎了出来。\n「拿去。」他说，「但记住——今天这事儿，谁都没赢。你们只是没输。」\n然后他看见了你胸口那台还在录的摄像机，脸上的表情一寸一寸地垮了下去。\n「……把它关了。」\n「不关。」你说。\n箱子推过来的时候，多了一千欧元——封口费，明码标价。"
+        }
+      ],
+      "text": "谈判代表回头喊了一句，里面吵得更凶了，然后他转回来，把整只箱子拎了出来。\n「拿去。」他说，「但记住——今天这事儿，谁都没赢。你们只是没输。」\n一整箱钱放在你们脚边。",
+      "next": "epilogue"
+    },
+    "fourth": {
+      "text": "你们没走那三条路。\n你们有别的打算——也许是把那辆巡逻车的电池拆下来接在卷帘门上，也许是让楼上的人用全息广告牌把整片码头照成白天，也许是给其中一个条子打个电话，告诉他 Houston 已经死了。\n剩下的交给你了：想做什么，就去做。",
+      "prompt": "—— 你的计划是什么？ ——",
+      "choices": [
+        {
+          "text": "先把计划里最危险的那一步做掉。",
+          "check": {
+            "skill": "tactics",
+            "dv": 15
+          },
+          "success": {
+            "goto": "fourth_mid",
+            "set": {
+              "fourth_good": "1"
+            }
+          },
+          "fail": {
+            "goto": "fourth_mid",
+            "damage": 6
+          }
+        },
+        {
+          "text": "先用嘴把局面稳住，再动手。",
+          "check": {
+            "skill": "conversation",
+            "dv": 15
+          },
+          "success": {
+            "goto": "fourth_mid",
+            "set": {
+              "fourth_good": "1"
+            }
+          },
+          "fail": {
+            "goto": "fourth_mid",
+            "damage": 4
+          }
+        },
+        {
+          "text": "直接赌一把，硬来。",
+          "check": {
+            "skill": "athletics",
+            "dv": 17
+          },
+          "success": {
+            "goto": "fourth_mid",
+            "set": {
+              "fourth_good": "1"
+            }
+          },
+          "fail": {
+            "goto": "fourth_mid",
+            "damage": 11
+          }
+        }
+      ]
+    },
+    "fourth_mid": {
+      "text": "计划推进到一半。到目前为止，事情大致按你想的走——大致。\n仓库里的灯一盏一盏地灭下去，最后只剩办公室那一扇窗还亮着。\n现在是最难的那一步：收尾。",
+      "prompt": "—— 最后一步 ——",
+      "choices": [
+        {
+          "text": "在没人反应过来之前，把整件事做完。",
+          "check": {
+            "skill": "concentration",
+            "dv": 17
+          },
+          "success": {
+            "goto": "epilogue",
+            "set": {
+              "fourth_clean": "1"
+            }
+          },
+          "fail": {
+            "goto": "fourth_mess",
+            "damage": 10
+          }
+        },
+        {
+          "text": "留一条退路，哪怕计划要打个折扣。",
+          "check": {
+            "skill": "evasion",
+            "dv": 15
+          },
+          "success": {
+            "goto": "epilogue",
+            "set": {
+              "fourth_clean": "1"
+            }
+          },
+          "fail": {
+            "goto": "fourth_mess",
+            "damage": 8
+          }
+        }
+      ]
+    },
+    "fourth_mess": {
+      "text": "计划在这里拐了个弯，拐得比你想的急。\n有人开了一枪——不是你。然后一切就都开始往坏的方向滚。\n但你还在，钱也还在附近。你有一次机会把它捡回来。",
+      "next": "assault"
+    },
+    "epilogue": {
+      "chapter": "尾声 · 后果",
+      "text": "天快亮了。海水还是黑的，但码头尽头的天边开始泛出一层脏兮兮的橙。\n你们身上有硝烟味、血味，以及那种干完一票之后特有的、空落落的疲惫。\n钱到手了。问题只剩下一个：这件事会怎么收尾。",
+      "branch": [
+        {
+          "require": {
+            "flags": [
+              "clean_getaway"
+            ]
+          },
+          "goto": "e_ghost"
+        },
+        {
+          "require": {
+            "flags": [
+              "route_fourth"
+            ]
+          },
+          "goto": "e_fourth"
+        },
+        {
+          "require": {
+            "flags": [
+              "deal_best"
+            ]
+          },
+          "goto": "e_deal_better"
+        },
+        {
+          "require": {
+            "flags": [
+              "route_assault"
+            ]
+          },
+          "goto": "e_wipeout"
+        },
+        {
+          "require": {
+            "flags": [
+              "route_deal"
+            ]
+          },
+          "goto": "e_deal"
+        }
+      ],
+      "next": "e_paid"
+    },
+    "e_walkaway": {
+      "text": "你把电话挂了。\n安全屋里的电视还在说湿度百分之九十四。你们把剩下的啤酒喝完，谁都没提 Lazlo。\n第二天早上，海伍德工业区的一条小巷里发现了一具尸体。中间人，手被人敲碎了，义手不见了。\n没人认领。也没人来敲你们的门——因为从今天起，没有人会把活派给你们了。\n你们活着，而且很干净。干净得像个从没进过这行的人。",
+      "ending": true,
+      "title": "这单我不接",
+      "rank": "C"
+    },
+    "e_deal": {
+      "text": "你们和一群腐败的警察握了手。\n五千欧元，一个不流血的清晨，以及一张谁也说不清的脸。\nHouston 站在仓库门口看着你们离开，手一直插在口袋里——那只手后来在你们的梦里出现过很多次。\nLazlo 拿到了他的救命之恩，你们拿到了你们的钱。\n街上没人知道昨晚码头发生过什么。这大概就是夜之城里「最好」的结局：所有人都活着，而真相像所有的钱一样，被分成了两半。",
+      "ending": true,
+      "title": "五五分成",
+      "rank": "B"
+    },
+    "e_deal_better": {
+      "text": "你们一分不少地把整箱钱拎了出来。\n谈判代表的脸很难看，但他还是把箱子推了过来。他甚至替你们叫了车。\n第二天，码头那件事在警局的记录里变成了一次「与不明武装人员的偶发冲突」，而死掉的三名警员被追认为「在执行公务中殉职」。\nLazlo 在病床上把这件事讲给了每一个愿意听的人——讲的时候，他总会提到你们。\n在夜之城，一个好名声比一把好枪值钱，而你们今晚两样都拿到了。",
+      "ending": true,
+      "title": "更好的条件",
+      "rank": "A"
+    },
+    "e_ghost": {
+      "text": "没有枪声。没有脚印。没有目击者。\n仓库里的六个警察一直到换岗才发现保险柜是空的，而那时候你们已经把背包扔在了安全屋的地板上，正在开今天的第一瓶啤酒。\n钱一分没少，人一个没伤——除了他们自己的自尊。\n那笔钱后来在几个人的账上转了六道手，干净得像刚印出来的。\n夜之城的规矩是：能打的人很多，但能不打就赢的人，才是真正让人睡不着觉的那种。",
+      "ending": true,
+      "title": "夜之城的鬼",
+      "rank": "A"
+    },
+    "e_wipeout": {
+      "text": "仓库里最后站着的是你们。\n摩托还在冒烟，突击步枪躺在地上，那些「执行公务」的人一个一个地不再动了。\n你们把那笔钱从保险柜里拖出来，然后在警察到来之前消失在南夜之城的雾里。\n一周后，NCPD 把这件事归进了「帮派火并」。三个月后，那批死者的同伙开始在酒吧里打听「那天晚上到底是谁」。\n你们赢了，而且赢得很彻底。彻底到有人会一直记得。",
+      "ending": true,
+      "title": "一个不留",
+      "rank": "B"
+    },
+    "e_fourth": {
+      "text": "没有人预料到你们会这么做——包括你自己。\n计划在最后一刻差点散架，但你没有让它散。\n等一切结束，钱在手上，人在外面，而仓库里的那六个警察到现在都没弄明白刚才到底发生了什么。\nLazlo 后来把这件事讲了整整一年，每次讲都会多出一个细节。\n在夜之城，人们不会记住「又一个打赢了的雇佣兵」，但他们会记住一个从没人想到过的办法。\n你写下的是自己的结局——这才是这个行当里最贵的东西。",
+      "ending": true,
+      "title": "第四选项",
+      "rank": "S"
+    },
+    "e_paid": {
+      "text": "不管这团乱麻走向何方，你们拿到了报酬。\n那笔被卷走的钱回到了手上，代价是一箱子假钞、一条被打烂的小巷，和几个再也回不了家的腐败条子。\n赏金跟着你们走：每个参与者的脑袋值一千欧元，而那个在小巷里从 Houston 手上接过箱子的人——他值两千。\n朋友和仇人都会出现在这条街的以后：活下来的那些举杯庆祝，活不下来的那些人的同伙，正在阴影里咬着牙。\n欢迎来到血染之时。这地方乱成了一锅粥——但你活下来了，还赚到了钱。",
+      "ending": true,
+      "title": "拿到报酬",
+      "rank": "B"
+    },
+    "e_blood": {
+      "text": "你听见自己的心跳，慢了下来。\n雨还在下，落在你脸上，你数不清那是雨还是别的什么。\n有人在你旁边喊你的名字，声音很远。\nLazlo 活着走出了那条巷子。那笔钱最后也回到了小队手上。\n只是你不在名单里。\n夜之城的每一面墙上都写着同一个道理：这个世界不欠你一条命——它只是暂时没有收走而已。",
+      "ending": true,
+      "title": "血染之时",
+      "rank": "D"
+    }
+  }
+}

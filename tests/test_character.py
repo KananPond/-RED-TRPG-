@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from helpers import ScriptRng, make_pc                    # noqa: E402
 
-from ctrcg.rules import data as D                          # noqa: E402
-from ctrcg.rules.character import (COND_CONTROLLED, COND_DEAD,  # noqa: E402
+from trpg.rules import data as D                          # noqa: E402
+from trpg.rules.character import (COND_CONTROLLED, COND_DEAD,  # noqa: E402
                                    COND_PRONE, COND_STABILIZED,
                                    COND_UNCONSCIOUS, Character, LOCATIONS)
 
@@ -827,7 +827,7 @@ class TestConstructors(unittest.TestCase):
         self.assertEqual(Character.hp_for(c.stat("body"), c.stat("will")), 35)
 
     def test_from_statblock_armor_name_resolves(self):
-        """生产缺陷（ctrcg/rules/character.py:775）：``from_statblock`` 把
+        """生产缺陷（trpg/rules/character.py:775）：``from_statblock`` 把
         ``block["armor_name"]``（显示名「凯夫拉」/「轻型防弹夹克」）直接塞进
         ``armor_key``，而 ``armor_name()`` 是拿 ``armor_key`` 查 ``D.ARMORS``。
         结果：NPC 的 SP 是对的，但战况板/简报永远显示「护甲 无护甲 SP 7」。"""

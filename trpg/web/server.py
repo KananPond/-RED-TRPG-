@@ -25,6 +25,7 @@ from ..campaign.cordis import Cordis
 from ..campaign.loader import Module
 from ..config import LLM_PROVIDERS, LLMConfig
 from ..game import state as G
+from .. import __version__
 from ..game.session import GameSession
 from ..game.story import (StorySession, ending_ids, iter_story_files,
                           load_story_file, load_unlocks, record_unlock)
@@ -98,10 +99,9 @@ fixer（中间人/掮客）、nomad（游牧民）、rockerboy（摇滚客）。
 medium_armorjack(中型防弹衣 SP12), heavy_armorjack(重型防弹衣 SP13),
 bulletproof_shield(防弹盾 SP10)。
 武器 key：brawling, light_melee, medium_melee, heavy_melee, very_heavy_melee,
-medium_pistol, heavy_pistol, very_heavy_pistol, smg, heavy_smg, shotgun,
-assault_rifle, sniper_rifle, bow, crossbow。
+medium_pistol, heavy_pistol, very_heavy_pistol, shotgun, assault_rifle。
 义体 key：internal_agent, pain_editor, cyberaudio, cyberoptics, neural_link,
-subdermal_armor, muscle_enhance, cyberarm。
+subdermal_armor, muscle_enhance, cyberarm, tool_hand。
 技能白名单（41 项）：accounting, acting, athletics, brawling, bribery, bureaucracy,
 business, composition, conceal_reveal, concentration, conversation, criminology,
 cryptography, dancing, deduction, drive_land_vehicle, education,
@@ -537,7 +537,7 @@ def build_session(state: G.GameState, ui: WebUI, llm_cfg: LLMConfig | None,
 
     AI PC（aipc-design §0/§4.1）：仅当 llm_cfg 非 None 且 state.aipc_enabled 时
     才挂 AIPCController；开关关闭时全部新分支短路，行为与基线完全一致。
-    本阶段接缝只做参数与降级通路——ctrcg.st / ctrcg.game.aipc 由后续集成落地，
+    本阶段接缝只做参数与降级通路——trpg.st / trpg.game.aipc 由后续集成落地，
     未就绪（ImportError）、attach 返回 None（玩家名与同伴冲突，§2.1）或
     卡/persona 数据无效时，回退人类操控并在 UI 说明。"""
     module = module or state.module
@@ -772,7 +772,7 @@ def generate_module(app: AppState, spec: dict) -> tuple[Module | None, list[str]
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
     app: AppState  # 由 make_server 注入
-    server_version = "CTRCG/1.4"
+    server_version = "TRPG/" + ".".join(__version__.split(".")[:2])
 
     # ------------------------------------------------------------ 工具
     def _json(self, obj, status: int = 200) -> None:

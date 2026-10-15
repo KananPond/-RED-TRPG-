@@ -4,14 +4,14 @@ import json
 import random
 import unittest
 
-from ctrcg.harness.adapter import OpenAICompatibleAdapter, ScriptedAdapter
-from ctrcg.harness.events import Session, safe_filename
-from ctrcg.harness.loop import (
+from trpg.harness.adapter import OpenAICompatibleAdapter, ScriptedAdapter
+from trpg.harness.events import Session, safe_filename
+from trpg.harness.loop import (
     Agent, DefaultAgentLoop, DuplicateCallGuard, StepBudgetGuard,
     ToolTimeoutGuard, TruncateCompactor, estimate_tokens,
 )
-from ctrcg.harness.models import ModelResponse, ToolCall
-from ctrcg.harness.registry import ToolRegistry
+from trpg.harness.models import ModelResponse, ToolCall
+from trpg.harness.registry import ToolRegistry
 
 
 def make_registry():
@@ -170,7 +170,7 @@ class TestEndpointValidation(unittest.TestCase):
 
     def test_private_blocked_by_default(self):
         old = dict(__import__("os").environ)
-        __import__("os").environ.pop("CTRCG_LLM_ALLOW_PRIVATE", None)
+        __import__("os").environ.pop("TRPG_LLM_ALLOW_PRIVATE", None)
         try:
             with self.assertRaises(ValueError):
                 OpenAICompatibleAdapter("http://127.0.0.1:11434/v1", "k")
@@ -182,12 +182,12 @@ class TestEndpointValidation(unittest.TestCase):
 
     def test_private_allowed_with_opt_in(self):
         import os
-        os.environ["CTRCG_LLM_ALLOW_PRIVATE"] = "1"
+        os.environ["TRPG_LLM_ALLOW_PRIVATE"] = "1"
         try:
             a = OpenAICompatibleAdapter("http://127.0.0.1:11434/v1", "k")
             self.assertTrue(a.base_url.endswith("/v1"))
         finally:
-            os.environ.pop("CTRCG_LLM_ALLOW_PRIVATE", None)
+            os.environ.pop("TRPG_LLM_ALLOW_PRIVATE", None)
 
     def test_public_ok(self):
         a = OpenAICompatibleAdapter("https://api.deepseek.com/v1", "k")

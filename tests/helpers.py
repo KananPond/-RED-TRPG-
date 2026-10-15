@@ -41,8 +41,8 @@ RED_MODULE_PATH = MODULES_DIR / RED_MODULE_ID / "module.json"
 
 #: LLM 相关环境变量（测试必须离线：进入服务器/会话夹具前清空）
 LLM_ENV_VARS: tuple[str, ...] = (
-    "CTRCG_LLM_API_KEY", "CTRCG_LLM_BASE_URL", "CTRCG_LLM_MODEL",
-    "CTRCG_LLM_PROVIDER", "CTRCG_LLM_ALLOW_PRIVATE",
+    "TRPG_LLM_API_KEY", "TRPG_LLM_BASE_URL", "TRPG_LLM_MODEL",
+    "TRPG_LLM_PROVIDER", "TRPG_LLM_ALLOW_PRIVATE",
     "DEEPSEEK_API_KEY", "ZHIPUAI_API_KEY", "ZHIPU_API_KEY",
     "MOONSHOT_API_KEY", "MINIMAX_API_KEY",
 )
@@ -105,7 +105,7 @@ def red_module_data() -> dict:
 
 def red_module():
     """加载随包发行的 RED 模组实例。"""
-    from ctrcg.campaign.loader import Module
+    from trpg.campaign.loader import Module
     mod, errors, _warnings = Module.from_file(RED_MODULE_PATH)
     if mod is None:                      # pragma: no cover —— 发行数据损坏
         raise AssertionError(f"内置 RED 模组未通过校验：{errors}")
@@ -234,7 +234,7 @@ def fixture_module_data() -> dict:
 
 
 def fixture_module():
-    from ctrcg.campaign.loader import Module
+    from trpg.campaign.loader import Module
     data = fixture_module_data()
     mod, errors, _w = Module.from_dict(data)
     if mod is None:                      # pragma: no cover —— 夹具自身损坏
@@ -262,7 +262,7 @@ def make_pc(name: str = "Kyle", role: str = "solo", stats: dict | None = None,
 
     与移植前同名同位置，但参数改为 RED 口径：职业 role + 十项属性 + 技能等级。
     """
-    from ctrcg.rules.character import Character
+    from trpg.rules.character import Character
     s = dict(DEFAULT_STATS)
     s.update(stats or {})
     c = Character.create(
@@ -285,8 +285,8 @@ def make_pc(name: str = "Kyle", role: str = "solo", stats: dict | None = None,
 
 def make_npc(key: str = "corrupt_cop", tag: str = "", **overrides):
     """按 ``D.NPCS`` 数据块构造敌人。"""
-    from ctrcg.rules.character import Character
-    from ctrcg.rules import data as D
+    from trpg.rules.character import Character
+    from trpg.rules import data as D
     block = dict(D.NPCS[key])
     block.update(overrides)
     return Character.from_statblock(key, block, tag=tag)
@@ -294,7 +294,7 @@ def make_npc(key: str = "corrupt_cop", tag: str = "", **overrides):
 
 def make_companions(module=None, kinds=None) -> list:
     """按模组的 ``default_companions`` 装配 AI 队友（或指定 pregen key）。"""
-    from ctrcg.rules.character import Character
+    from trpg.rules.character import Character
     mod = module or fixture_module()
     keys = list(kinds) if kinds else list(mod.default_companions)
     return [Character.from_pregen(k, mod.pregens[k], kind="companion")
@@ -308,13 +308,13 @@ def make_state(seed: int = 5, module=None, player=None, companions=None,
 
     收敛了移植前的三份 ``make_state``：玩家 + 模组默认队友 + 注入种子的 RNG。
     """
-    from ctrcg.game import state as G
+    from trpg.game import state as G
     if module is None:
         module = red_module() if red else fixture_module()
     if player is None:
         key = module.pregens and (list(module.pregens)[0]) or None
         if key:
-            from ctrcg.rules.character import Character
+            from trpg.rules.character import Character
             player = Character.from_pregen(key, module.pregens[key], player=True)
             player.name = "Kyle"
         else:
@@ -326,7 +326,7 @@ def make_state(seed: int = 5, module=None, player=None, companions=None,
 
 # ================================================================ UI 桩
 def _auto_ui():
-    from ctrcg.ui.cli import AutoUI
+    from trpg.ui.cli import AutoUI
     return AutoUI()
 
 
@@ -454,10 +454,10 @@ def make_agent_session(handler=None, state=None, ui=None, script=None,
     ``test_game`` / ``test_social`` / ``test_npc_agent`` / ``test_aipc`` 里
     各有一份，且都往提示词里塞旧规则的资源提示；现统一到 RED 口径。
     """
-    from ctrcg.game.agents import make_dm_agent, make_pc_agent
-    from ctrcg.game.session import GameSession
-    from ctrcg.harness.adapter import ScriptedAdapter
-    from ctrcg.harness.loop import DefaultAgentLoop
+    from trpg.game.agents import make_dm_agent, make_pc_agent
+    from trpg.game.session import GameSession
+    from trpg.harness.adapter import ScriptedAdapter
+    from trpg.harness.loop import DefaultAgentLoop
 
     state = state if state is not None else make_state()
     ui = ui if ui is not None else _auto_ui()
@@ -563,7 +563,7 @@ class WebServerCase(unittest.TestCase):
     unlocks_path: str = "saves/story_endings.json"
 
     def setUp(self):
-        from ctrcg.web.server import AppState, make_server
+        from trpg.web.server import AppState, make_server
         self._saved_env = strip_llm_env()
         self._saved_cwd = os.getcwd()
         self._td = tempfile.TemporaryDirectory()

@@ -21,12 +21,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import (MODULES_DIR, RED_MODULE_ID, fixture_module_data,  # noqa: E402
                      red_module, red_module_data)
 
-from ctrcg.campaign import module_data as M               # noqa: E402
-from ctrcg.campaign.cordis import (ACTIVE, DISPOSED,      # noqa: E402
+from trpg.campaign import module_data as M               # noqa: E402
+from trpg.campaign.cordis import (ACTIVE, DISPOSED,      # noqa: E402
                                    PENDING, BUILTIN_IDS, Cordis)
-from ctrcg.campaign.loader import (BUILTIN_MODULE_IDS, Module,  # noqa: E402
+from trpg.campaign.loader import (BUILTIN_MODULE_IDS, Module,  # noqa: E402
                                    validate_module)
-from ctrcg.harness.usage import TokenMeter                # noqa: E402
+from trpg.harness.usage import TokenMeter                # noqa: E402
 
 
 def builtin_json() -> dict:
@@ -288,7 +288,7 @@ class TestCustomNpcInCombat(unittest.TestCase):
         return mod
 
     def test_custom_npc_fights(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         from helpers import make_state
         mod = self._module()
         st = make_state(module=mod)
@@ -306,7 +306,7 @@ class TestCustomNpcInCombat(unittest.TestCase):
         self.assertLessEqual(boss.hp_cur, 60)
 
     def test_custom_npc_statblock_shape(self):
-        from ctrcg.rules.character import Character
+        from trpg.rules.character import Character
         block = self._module().custom_npcs["ogre_king"]
         c = Character.from_statblock("ogre_king", block)
         self.assertEqual(c.kind, "npc")

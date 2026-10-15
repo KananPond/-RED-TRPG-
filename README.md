@@ -1,9 +1,9 @@
-# CTRCG —— 单人 AI 跑团（《赛博朋克 RED》）
+# TRPG —— 单人 AI 跑团（《赛博朋克 RED》）
 
 一个可以**单人游玩**的桌面角色扮演游戏。DM 与同桌的其他角色都由 AI Agent 扮演，
 舞台是 **2045 年（血染之时）的夜之城**，规则是
 **《赛博朋克 RED》（Cyberpunk RED）**——以免费入门的**轻松模式（Easy Mode）**口径为准
-（引擎版本 `ctrcg` 2.0.0，存档 `ruleset = "cyberpunk-red"`）。
+（引擎版本 `trpg` 2.0.0，存档 `ruleset = "cyberpunk-red"`）。
 
 你要做的只有一件事：接下这单活，然后活着把钱拿到手。
 
@@ -48,8 +48,11 @@ python main.py --web
 # 打开 http://127.0.0.1:8500 （自动打开浏览器；--port 可改端口，--no-open 不自动打开）
 ```
 
-**开始页**有四个入口：
+**开始页**有五个入口：
 
+- **剧本模式**（互动剧）：分支选择 · 多结局。内置剧本《抢钱行动》——同一部轻松模式
+  手册的入门差事，改写成 70 个节点、**8 个结局**的节点图。不需要 LLM 也能玩，
+  详见下文「剧本模式」。
 - **新的冒险**：选择模组（内置《赛博朋克 RED：轻松模式》、AI 生成或导入的原子模组，
   Cordis 式注册表原子化加载），进入角色创建；规范见
   [MODULE_SPEC.md](MODULE_SPEC.md)。
@@ -69,8 +72,13 @@ python main.py --web
 底部为行动按钮或自由输入框。刷新/断线自动回放全部事件；"放弃本局"可重开；
 冒险结束（通关或全灭）进入终幕结算卡。
 
-> **界面预览待补**：旧规则版本的截图已随 5e 素材一并移除，《赛博朋克 RED》版
-> 界面出图后再补进 `docs/screenshots/`，故本文暂不放置界面预览。
+### 界面预览
+
+开始页（带夜之城背板 / 纯色两种外观）：
+
+![开始页](docs/screenshots/home-city.png)
+
+![开始页（纯色）](docs/screenshots/home-dark.png)
 
 ### 终端版
 
@@ -141,9 +149,10 @@ python main.py --check-llm      # 验证 LLM 端点连通性
 
 **义体、装备与经济**
 
-- 货币是**欧元（eb）**。武器 15 种、护甲 6 种、装备 14 种、**义体 8 件**
-  （内置智能体 / 赛博痛觉编辑器 / 赛博听觉组件 / 赛博光学组件 / 神经接口 /
-  皮下护甲 / 肌肉强化 / 义体手臂）各有明码标价。
+- 货币是**欧元（eb）**。武器 **10 种**（徒手 + 4 档近战 + 3 档手枪 + 霰弹枪 +
+  突击步枪——远程武器正好是轻松模式第 19 页射程表列出的三类）、护甲 6 种、
+  装备 20 种、**义体 9 件**（内置智能体 / 赛博痛觉编辑器 / 赛博听觉组件 /
+  赛博光学组件 / 神经接口 / 皮下护甲 / 肌肉强化 / 义体手臂 / 工具手）各有明码标价。
 - **义体与人性**：人性上限 = **共情 × 10**；每件义体按标价扣除人性，**共情随人性下降**，
   人性归零即赛博精神病。
 - 战斗外可用「购买」清单补给（弹药、急救包、医疗包等），修复护甲 10 eb 一件。
@@ -174,7 +183,9 @@ python main.py --check-llm      # 验证 LLM 端点连通性
 这些子系统**没有**出现在《Cyberpunk RED Easy Mode》里，本引擎也**不实现**，
 剧本中不会出现，也不应写进自制模组：
 
-- **自动武器与压制射击**（连发扫射、霰弹弹丸、榴弹与爆炸物）；
+- **自动武器与压制射击**（连发扫射、霰弹弹丸、榴弹与爆炸物）——因此数据表里
+  **没有**冲锋枪、狙击步枪、弓弩、榴弹与火箭：`D.WEAPONS` 只保留轻松模式实际
+  列出的 10 种武器，`D.RANGED_DV` 只有手枪 / 霰弹枪 / 突击步枪三条射程表；
 - **网络空间与接入**（网络行者职业只保留名称与定位，不做赛博空间战斗）；
 - **载具战斗**（摩托、汽车、飞行器只作叙事与移动力来源）；
 - **武术**（martial arts 专有招式）；
@@ -203,8 +214,8 @@ python main.py --check-llm      # 验证 LLM 端点连通性
 
 - **两场遭遇**：`e_alley_ambush`——警察人数为**玩家角色数 + 2**（含 Houston；按 1 玩家 +
   2 队友配置为 5 人），敌人重伤会试图撤离、逃走的条子会在终章仓库再次出现；
-  `e_warehouse`——3 名腐败警察 + **第二回合撞窗冲进来的摩托增援**（突击步枪 / SP 11 /
-  移动力 20 / 能双手离把驾驶摩托）。
+  `e_warehouse`——守军同样是**玩家角色数 + 2** 名腐败警察（3 人队 = 5 名），外加
+  **第二回合撞窗冲进来的摩托增援**（突击步枪 / SP 11 / 移动力 20 / 能双手离把驾驶摩托）。
 - **五名预设角色**（轻松模式的建卡方式，PW 用卡面值）：
   摇滚客 **Forty（PW 40）**、独行侠 **Mover（PW 45）**、
   技术师 **Torch（PW 35）**、医疗师 **Redtail（PW 35）**、
@@ -218,8 +229,38 @@ python main.py --check-llm      # 验证 LLM 端点连通性
   卡面死亡豁免项 = 体格，并且每个印出的技能基础值 = 挂钩属性 + 技能等级。
   （引擎的通用建卡口径与卡面一致：PW = 10 + 5 × ⌈(体格 + 意志力) ÷ 2⌉。）
 - 此前随 5e 版本发行的全部模组目录（`blue-watch`、`starfall`、`saltmist`、
-  `mistgate`、`embergate`、`generated-saltmarsh-siren-song`）与该模组的历史
-  剧情图 `story_last_watch.json` **均已删除**；剧情图引擎本身保留，但不再内置剧情数据。
+  `mistgate`、`embergate`、`generated-saltmarsh-siren-song`）与它们的剧情图
+  **均已删除**；剧情图引擎保留下来，并补上了 RED 版的互动剧本（见下节）。
+
+## 剧本模式（互动剧）
+
+除了 AI 跑团，同一部模组还带一份**自写的分支剧本**：不依赖 LLM，纯节点图演绎。
+选择会写入旗标并改变后续可选分支，检定按 RED 口径掷 `1d10 + 属性 + 技能` 对抗难度值，
+走到的结局记进「结局图鉴」（`saves/story_endings.json`）。
+
+| 项 | 值 |
+|---|---|
+| 剧本 | 《抢钱行动》（*WYSKAKUJ Z FORSY!*）——轻松模式手册的入门差事 |
+| 数据 | `modules/cpred-easy-mode/story_wyskakuj.json` |
+| 节点 | 70 |
+| 结局 | 8 |
+| 主角 | 五名预设角色任选（Forty / Mover / Torch / Redtail / 24/7），属性与技能与角色卡一致 |
+
+八条线：**这单我不接**（`walkaway`）、**五五分成**（`deal`）、**更好的条件**（`deal_better`）、
+**夜之城的鬼**（`ghost`，全程没开枪）、**一个不留**（`wipeout`）、**第四选项**（`fourth`，
+自己发明的打法）、**拿到报酬**（`paid`，通用收尾）、**血染之时**（`blood`，死亡结局）。
+
+结构照手册来：来电（情绪解读）→ 出发前准备（踩点 / 排战术 / 检装备，各换一个有利条件）→
+会面与巷中伏击（假钞、审讯、追逃）→ 营救中间人（急救 / 医疗救援 / 战斗出租车）→
+**清除 / 渗透 / 外交 / 第四选项**四条路 → 尾声结算。外交线上，摇滚客与媒体人当谈判代表
+时有各自专属的桥段；伏击里接过箱子的人，尾声中身价翻倍。
+
+终端：
+
+```bash
+python main.py --story                          # 列出全部剧本后选一个
+python main.py --story --story-id wyskakuj      # 直接指定
+```
 
 ## 玩家指令
 
@@ -252,9 +293,9 @@ python main.py --check-llm      # 验证 LLM 端点连通性
 或用环境变量：
 
 ```bash
-set CTRCG_LLM_BASE_URL=https://api.deepseek.com/v1
-set CTRCG_LLM_API_KEY=sk-...
-set CTRCG_LLM_MODEL=deepseek-chat
+set TRPG_LLM_BASE_URL=https://api.deepseek.com/v1
+set TRPG_LLM_API_KEY=sk-...
+set TRPG_LLM_MODEL=deepseek-chat
 python main.py --web
 ```
 
@@ -268,7 +309,7 @@ award_ip / confrontation / request_roll`——**没有**属性对抗型的独立
 ## 项目结构
 
 ```
-ctrcg/
+trpg/
   rules/     # 《赛博朋克 RED》引擎：dice(检定/暴击/幸运) / data(属性·技能·武器·义体·致命伤表)
              #   / character(角色卡·伤势·稳定·IP) / combat(网格与遭遇·射程·擒抱·掩体)
   campaign/  # 模组体系：module_data(内置剧本数据) / loader(规范校验) / cordis(Context+Fiber 插件注册表)
@@ -282,7 +323,9 @@ MODULE_SPEC.md  # 模组开发规范（根目录，版本 3.0）
 main.py      # 入口（--web / --module / --demo / --offline / --new / --load / --seed / --check-llm / --port）
 tests/       # 单元+集成测试（含 HTTP 驱动的完整剧本通关）
 HARNESS.md   # Agent 核心循环与 deepseek-harness 的架构对照
-docs/        # 设计文档：AIPC / 同伴与 NPC Agent / 战术地图 / SillyTavern 组装线
+docs/        # 设计文档：AIPC / 同伴与 NPC Agent / 战术地图 / SillyTavern 组装线 + screenshots/
+.reference/  # 规则书 PDF（本地参考资料，体积大不入库）
+_archive/    # 开发过程归档：移植规格 / PDF 反推 / 验收脚本（不入库）
 ```
 
 ## 测试
@@ -319,9 +362,9 @@ Web 层（阻塞应答、HTTP 端点、SSE 历史重放、设置校验、模拟 
 
 ## 凭据与安全
 
-- API Key 只从环境变量 `CTRCG_LLM_API_KEY` 读取，源码/示例中不出现任何真实凭据。
+- API Key 只从环境变量 `TRPG_LLM_API_KEY` 读取，源码/示例中不出现任何真实凭据。
 - LLM 端点默认禁止解析到私网/环回/链路本地地址（防 SSRF），本机模型服务需
-  显式设置 `CTRCG_LLM_ALLOW_PRIVATE=1` 放行；重定向逐跳复检。
+  显式设置 `TRPG_LLM_ALLOW_PRIVATE=1` 放行；重定向逐跳复检。
 
 ## 发行与许可
 

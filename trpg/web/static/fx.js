@@ -1,18 +1,18 @@
 /* ═══════════════════════════════════════════════════════════════
-   CTRCG 视听特效引擎（零外部资产）：
+   TRPG 视听特效引擎（零外部资产）：
    - AudioFX：WebAudio 实时合成的音效（骰子/命中/暴击/治疗/提升/终局…）
    - DiceFX：d10 检定动画（暴击成功 10 金色爆辉、暴击失败 1 裂纹）
    - AvatarFX：职业（role）程序化 SVG 头像（赛博朋克 RED 的十个职业）
    - Flourish：改进点 IP 提升华彩 / 终局卡
-   设置持久化于 localStorage（ctrcg.sound / ctrcg.volume）。
+   设置持久化于 localStorage（trpg.sound / trpg.volume）。
    ═══════════════════════════════════════════════════════════════ */
 "use strict";
 
 /* ───────────────────────── 音效引擎 ───────────────────────── */
 const AudioFX = {
   ctx: null, master: null,
-  enabled: localStorage.getItem("ctrcg.sound") !== "off",
-  volume: Math.min(1, Math.max(0, Number(localStorage.getItem("ctrcg.volume") ?? 0.7))),
+  enabled: localStorage.getItem("trpg.sound") !== "off",
+  volume: Math.min(1, Math.max(0, Number(localStorage.getItem("trpg.volume") ?? 0.7))),
 
   ensure() {
     if (!this.ctx) {
@@ -31,13 +31,13 @@ const AudioFX = {
   },
   setEnabled(v) {
     this.enabled = v;
-    localStorage.setItem("ctrcg.sound", v ? "on" : "off");
+    localStorage.setItem("trpg.sound", v ? "on" : "off");
     if (v) this.ensure();
     this._applyGain();
   },
   setVolume(v) {
     this.volume = v;
-    localStorage.setItem("ctrcg.volume", String(v));
+    localStorage.setItem("trpg.volume", String(v));
     this._applyGain();
   },
   /* 首次用户手势后解锁 AudioContext（浏览器自动播放策略） */
@@ -450,7 +450,7 @@ const Flourish = {
 /* ───────────────────────── 新手引导 ───────────────────────── */
 const Tour = {
   show() {
-    if (localStorage.getItem("ctrcg.tour.done")) return;
+    if (localStorage.getItem("trpg.tour.done")) return;
     const el = document.getElementById("tour");
     if (!el) return;
     el.innerHTML = `
@@ -472,7 +472,7 @@ const Tour = {
       </div>`;
     el.classList.remove("hidden");
     el.querySelector("#tour-ok").addEventListener("click", () => {
-      localStorage.setItem("ctrcg.tour.done", "1");
+      localStorage.setItem("trpg.tour.done", "1");
       el.classList.add("hidden");
       AudioFX.click();
     });

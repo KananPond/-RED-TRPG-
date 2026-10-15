@@ -6,7 +6,7 @@
 默认使用的 ``M.BUILTIN``）。正常游玩不应看到它。
 
 因此这里只保留**最小可运行**的内容：2 个场景、1 场遭遇、2 名预设角色，
-数值全部取自 :mod:`ctrcg.rules.data`，口径为《赛博朋克 RED》轻松模式
+数值全部取自 :mod:`trpg.rules.data`，口径为《赛博朋克 RED》轻松模式
 （十项属性 / 41 项技能 / 难度值 DV / 生命值 PW / 护甲 SP / 改进点 IP / 欧元 eb）。
 
 导出名与旧版保持一致（``MODULE/COMPANIONS/NPCS/ENCOUNTERS/SCENES/EPILOGUE/

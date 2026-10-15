@@ -969,7 +969,7 @@ async function refreshState() {
   S.eurobucks = eddies;
   if (st.module_title) {
     $("#brand-title").textContent = st.module_title;
-    document.title = st.module_title + " · CTRCG 跑团手记";
+    document.title = st.module_title + " · TRPG 跑团手记";
   }
   $("#flag-list").innerHTML = "";
   const keys = Object.entries(st.flags || {});

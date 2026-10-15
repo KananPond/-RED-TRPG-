@@ -293,7 +293,7 @@ def make_pc_agent(comp: dict, level: int, weapons: list[str], slots_hint: str,
     """同伴（非玩家 PC）的**独立 Agent**（docs/companion-npc-agents.md §1）。
 
     SillyTavern 架构与玩家版 make_aipc_agent 同一条组装线：
-    system_prompt 经 ctrcg.st.assemble_system 按〔ST 规格 §3.2〕默认序组装——
+    system_prompt 经 trpg.st.assemble_system 按〔ST 规格 §3.2〕默认序组装——
     main（PC_SYSTEM_TEMPLATE 经 template_vars 预格式化；模组可用卡 system_prompt
     覆盖并展开 {{original}}）→ 对话示例（mes_example，<START> 分块）；
     人设/语气进模板槽位后以空副本传卡，避免同一段文本双份进提示词。
@@ -400,7 +400,7 @@ def make_aipc_agent(ch: Character, card: CharacterCard,
     """玩家角色的 AI 代打 Agent（docs/aipc-design.md §2.1）。
 
     与同伴版 make_pc_agent 的差异：
-    - system_prompt 经 ctrcg.st.assemble_system 按〔ST 规格 §3.2〕Prompt Manager
+    - system_prompt 经 trpg.st.assemble_system 按〔ST 规格 §3.2〕Prompt Manager
       默认序组装：main（PC_SYSTEM_TEMPLATE 经 template_vars 预格式化，卡
       system_prompt 可覆盖并展开 {{original}}）→ persona → scenario（"Scenario: …"）
       → 对话示例，全文过宏渲染（{{user}}/{{char}}/{{roll::…}} 等）。

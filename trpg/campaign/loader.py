@@ -1,6 +1,6 @@
 """原子化模组：数据类、JSON 规范校验与加载。
 
-每个模组是一个自包含的 JSON 文件（新规范见 ``_work/design/PORT_SPEC.md`` §3），
+每个模组是一个自包含的 JSON 文件（新规范见 ``_archive/design/PORT_SPEC.md`` §3），
 可引用规则层内置的 NPC 数据表（``D.NPCS``），也可在文件内定义 ``custom_npcs``
 使模组完全自包含。
 

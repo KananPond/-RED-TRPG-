@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ctrcg"
+name = "trpg"
 version = "2.0.0"
-description = "CTRCG —— 单人 AI 跑团：完整《赛博朋克 RED》规则引擎 + AI 主持人/队友（夜之城 2045）"
+description = "TRPG —— 单人 AI 跑团：完整《赛博朋克 RED》规则引擎 + AI 主持人/队友（夜之城 2045）"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "KananPond" }]
@@ -20,8 +20,8 @@ classifiers = [
 ]
 
 [tool.setuptools]
-packages = ["ctrcg", "ctrcg.rules", "ctrcg.campaign", "ctrcg.harness",
-            "ctrcg.game", "ctrcg.st", "ctrcg.ui", "ctrcg.web"]
+packages = ["trpg", "trpg.rules", "trpg.campaign", "trpg.harness",
+            "trpg.game", "trpg.st", "trpg.ui", "trpg.web"]
 
 [project.urls]
-Homepage = "https://github.com/KananPond/CTRCG"
+Homepage = "https://github.com/KananPond/TRPG"

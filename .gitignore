@@ -11,3 +11,6 @@ dist/
 # 本地参考资料 / 素材（体积大，不入库）
 _local/
 Additional Ressources/
+# 归档：移植规格 / PDF 反推等开发过程资料，与权限修复记录（不入库）
+_archive/
+_acl-recovery/

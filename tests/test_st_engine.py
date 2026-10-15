@@ -14,8 +14,8 @@ import sys
 import unittest
 from types import SimpleNamespace
 
-from ctrcg.rules.character import Character
-from ctrcg.st import (CharacterCard, Injection, MacroContext, Persona, WIResult,
+from trpg.rules.character import Character
+from trpg.st import (CharacterCard, Injection, MacroContext, Persona, WIResult,
                       WLEntry, WorldInfo, assemble_system, build_context_block,
                       card_from_companion, card_from_player, engine_worldinfo,
                       fit_to_budget, inject_at_depth, merge, render, scan,
@@ -550,14 +550,14 @@ class TestPackage(unittest.TestCase):
     """再导出完整性与分层约束（st 不得依赖 game 层）。"""
 
     def test_reexports_complete(self):
-        import ctrcg.st as st_pkg
+        import trpg.st as st_pkg
         for name in st_pkg.__all__:
             self.assertTrue(hasattr(st_pkg, name), name)
 
     def test_st_does_not_import_game_layer(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        code = ("import sys; import ctrcg.st; "
-                "assert 'ctrcg.game' not in sys.modules, 'st 依赖了 game 层'; "
+        code = ("import sys; import trpg.st; "
+                "assert 'trpg.game' not in sys.modules, 'st 依赖了 game 层'; "
                 "print('layering-ok')")
         proc = subprocess.run([sys.executable, "-c", code], cwd=root,
                               capture_output=True, text=True, timeout=60)

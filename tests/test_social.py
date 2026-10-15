@@ -2,7 +2,7 @@
 
 整层与规则无关，移植只换状态夹具、同伴名字与提示词标记。
 
-⚠ 现状：``ctrcg/game/social.py:292`` 的 ``_wi_context`` 仍在读
+⚠ 现状：``trpg/game/social.py:292`` 的 ``_wi_context`` 仍在读
 ``module.companions``——PORT_SPEC §3 已把该字段换成 ``pregens`` +
 ``default_companions``，``Module`` 上根本没有 ``companions``。于是每个同伴的
 社交回合在 ``loop.run`` 之前就抛 ``AttributeError``，而 ``_pc_social_turn`` /
@@ -20,8 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from helpers import (DM_MARK, is_fresh_run, make_agent_session,  # noqa: E402
                      make_state, message_system)
-from ctrcg.harness.models import ModelResponse, ToolCall  # noqa: E402
-from ctrcg.ui.cli import AutoUI                           # noqa: E402
+from trpg.harness.models import ModelResponse, ToolCall  # noqa: E402
+from trpg.ui.cli import AutoUI                           # noqa: E402
 
 
 # ---------------------------------------------------------------- 能力探针
@@ -93,7 +93,7 @@ def ally_lines(ui):
 # ================================================================ 接线（总是跑）
 class TestSocialWiring(unittest.TestCase):
     def test_scripted_mode_has_no_social_layer(self):
-        from ctrcg.game.session import GameSession
+        from trpg.game.session import GameSession
         st = make_state()
         session = GameSession(st, AutoUI(), loop=None)
         self.assertIsNone(session.social)
@@ -153,7 +153,7 @@ class TestSocialWiring(unittest.TestCase):
 # ================================================================ 缺陷钉死
 class TestSocialBugReport(unittest.TestCase):
     def test_wi_context_reads_pregens_not_the_deleted_companions_field(self):
-        """生产缺陷（ctrcg/game/social.py:292）：``_wi_context`` 读
+        """生产缺陷（trpg/game/social.py:292）：``_wi_context`` 读
         ``s.module.companions``；PORT_SPEC §3 已删掉 ``Module.companions``
         （改 ``pregens`` + ``default_companions``），因此对任何同伴都会
         ``AttributeError: 'Module' object has no attribute 'companions'``。

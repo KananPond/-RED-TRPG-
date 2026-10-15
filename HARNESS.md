@@ -1,6 +1,6 @@
 # Agent Harness 设计 —— 参考 deepseek-harness
 
-本项目的 Agent 核心循环（`ctrcg/harness/`）在架构理念上参考了
+本项目的 Agent 核心循环（`trpg/harness/`）在架构理念上参考了
 [DeepSeek Harness（dsh）](https://github.com/deepseek-ai/deepseek-harness)——
 DeepSeek 开源的"一切皆插件（Everything is a Plugin）"Agent 框架。
 我们用 Python 实现了其中一个面向游戏引擎的精简变体。
@@ -10,7 +10,7 @@ DeepSeek 开源的"一切皆插件（Everything is a Plugin）"Agent 框架。
 **模型可见 ⟺ 已记录（model-visible ⟺ logged）**
 
 任何送入模型的消息，都能从 Session 事件日志逐条重放重建。
-`ctrcg/harness/events.py` 的 `Session` 把每条消息、每次工具调用/结果、
+`trpg/harness/events.py` 的 `Session` 把每条消息、每次工具调用/结果、
 每次 guard 干预都写成带序号的事件（可选 JSONL 持久化到 `saves/logs/`），
 `replay_messages()` 可随时重放重建完整消息序列。测试
 `test_harness.py::test_tool_call_then_final` 直接验证该不变量。
@@ -106,7 +106,7 @@ run(agent, session, task):
   库，用组合与按次注入表达同样的"可替换"边界。Cordis 本体的语义
   （Context 服务容器、插件即函数、Fiber 三态 PENDING/ACTIVE/DISPOSED、
   副作用 LIFO 回滚、依赖就绪自动激活、服务消失时依赖方连坐处置）已按
-  检索到的官方教程在 `ctrcg/campaign/cordis.py` 中对模组加载层做了忠实
+  检索到的官方教程在 `trpg/campaign/cordis.py` 中对模组加载层做了忠实
   的 Python 变体实现。
 - dsh 的 Session 有 SQLite 持久化与多 SDK 投影；本项目使用 JSONL 事件流
   （每事件一行），足够游戏审计与重放。
@@ -120,15 +120,15 @@ run(agent, session, task):
 循环接入 DeepSeek：
 
 ```
-CTRCG_LLM_BASE_URL=https://api.deepseek.com/v1
-CTRCG_LLM_API_KEY=<你的密钥>            # 只放环境变量，绝不入库
-CTRCG_LLM_MODEL=deepseek-chat
+TRPG_LLM_BASE_URL=https://api.deepseek.com/v1
+TRPG_LLM_API_KEY=<你的密钥>            # 只放环境变量，绝不入库
+TRPG_LLM_MODEL=deepseek-chat
 ```
 
 不配置则自动落入剧本模式（模组数据驱动 DM + 启发式队友 AI），
 两种模式共用同一规则引擎与剧情数据。`python main.py --check-llm`
 可验证端点连通性。连接本机模型（Ollama/LM Studio）需显式设置
-`CTRCG_LLM_ALLOW_PRIVATE=1`（SSRF 加固的例外开关，见 `adapter.py`）。
+`TRPG_LLM_ALLOW_PRIVATE=1`（SSRF 加固的例外开关，见 `adapter.py`）。
 
 ## 参考来源
 

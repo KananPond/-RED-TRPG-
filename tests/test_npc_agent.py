@@ -3,7 +3,7 @@
 * **NPC = DM 控制的 SubAgent**：DM 的 ``npc_dialogue`` 工具按需拉起 NPC 子代理，
   子代理只拿 ``say`` 一件工具；台词渲染到桌面、进 NPC 持久会话、并入桌面账本
   （DM 下回合"听得见"）；未知 NPC / LLM 不可达 / 剧本模式时优雅降级。
-* **非玩家 PC = 独立 Agent**：同伴 agent 走 ``ctrcg.st`` 组装线（角色卡字段
+* **非玩家 PC = 独立 Agent**：同伴 agent 走 ``trpg.st`` 组装线（角色卡字段
   ``mes_example`` / ``book``），桌边回合注入世界书上下文。
 * **默认剧本**：``main.DEFAULT_MODULE_ID`` 与 ``BUILTIN_IDS`` 都指向随包发行的
   RED 模组；modules 目录缺失时仍能回退到代码内置数据。
@@ -22,11 +22,11 @@ from helpers import (DM_MARK, NPC_MARK, fixture_module_data,  # noqa: E402
                      is_fresh_run, make_agent_session, make_state,
                      message_system)
 
-from ctrcg.campaign.loader import Module, validate_module  # noqa: E402
-from ctrcg.harness.models import ModelResponse, ToolCall   # noqa: E402
-from ctrcg.rules import data as D                          # noqa: E402
-from ctrcg.st import card_from_companion, card_from_npc    # noqa: E402
-from ctrcg.ui.cli import AutoUI                            # noqa: E402
+from trpg.campaign.loader import Module, validate_module  # noqa: E402
+from trpg.harness.models import ModelResponse, ToolCall   # noqa: E402
+from trpg.rules import data as D                          # noqa: E402
+from trpg.st import card_from_companion, card_from_npc    # noqa: E402
+from trpg.ui.cli import AutoUI                            # noqa: E402
 
 NPC_ID = "salt_officer"
 NPC_NAME = "Salter"
@@ -127,7 +127,7 @@ class TestNpcSubagent(unittest.TestCase):
         self.assertEqual(session.table_log, [])
 
     def test_scripted_mode_has_no_npc_director(self):
-        from ctrcg.game.session import GameSession
+        from trpg.game.session import GameSession
         session = GameSession(make_state(), AutoUI(), loop=None)
         self.assertIsNone(session.npc_director)
         res = session.tools._tool_npc_dialogue(NPC_ID, "说话")
@@ -201,7 +201,7 @@ class TestCyberpunkRedDefault(unittest.TestCase):
 
     def test_default_module_id_and_builtin_ids(self):
         import main as entry
-        from ctrcg.campaign.cordis import BUILTIN_IDS
+        from trpg.campaign.cordis import BUILTIN_IDS
         self.assertEqual(entry.DEFAULT_MODULE_ID, "cpred-easy-mode")
         self.assertIn("cpred-easy-mode", BUILTIN_IDS)
         self.assertEqual(BUILTIN_IDS, {"cpred-easy-mode"})
@@ -218,12 +218,12 @@ class TestCyberpunkRedDefault(unittest.TestCase):
             self.assertEqual(mod.source, "builtin")
             self.assertEqual(mod.id, entry.DEFAULT_MODULE_ID)
             # 兜底走的是代码内置数据（与磁盘 JSON 是同一规范的两份实现）
-            from ctrcg.campaign import module_data as M
+            from trpg.campaign import module_data as M
             self.assertEqual([s["id"] for s in mod.scenes],
                              [s["id"] for s in M.SCENES])
 
     def test_code_builtin_data_is_red_valid(self):
-        from ctrcg.campaign import module_data as M
+        from trpg.campaign import module_data as M
         self.assertIn("赛博朋克 RED", M.MODULE["title"])
         self.assertNotIn("蓝望塔", M.MODULE["title"])
         self.assertEqual(M.BUILTIN.id, "cpred-easy-mode")

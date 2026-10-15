@@ -18,10 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import ScriptRng, make_state                # noqa: E402
 from test_combat import PISTOL, corridor, duel, make_foe, make_pc  # noqa: E402,F401
 
-from ctrcg.rules import data as D                        # noqa: E402
-from ctrcg.rules.character import (AIMED_SHOT_PENALTY,   # noqa: E402
+from trpg.rules import data as D                        # noqa: E402
+from trpg.rules.character import (AIMED_SHOT_PENALTY,   # noqa: E402
                                    COND_PRONE, LOCATIONS)
-from ctrcg.rules.combat import (METERS_PER_CELL,         # noqa: E402
+from trpg.rules.combat import (METERS_PER_CELL,         # noqa: E402
                                 BattleGrid, Encounter)
 
 
@@ -129,7 +129,7 @@ class TestGridMovement(unittest.TestCase):
         self.assertEqual(enc.speed_left[pc.name], 0)
 
     def test_move_onto_an_occupied_cell_is_refused(self):
-        """生产缺陷（ctrcg/rules/combat.py:842 与 BattleGrid.path）：``path`` 把终点格
+        """生产缺陷（trpg/rules/combat.py:842 与 BattleGrid.path）：``path`` 把终点格
         排除在「已占用」检查之外（``nxt != goal``），``move`` 又只校验 ``blocked``，
         于是可以把棋子走到同伴/敌人身上——前端地图与战况板依赖的「一格一子」
         不变量会被打破。"""
@@ -229,7 +229,7 @@ class TestRangeGates(unittest.TestCase):
             self.assertEqual(res["meters"], cells * 2)
 
     def test_melee_out_of_reach_is_refused(self):
-        """生产缺陷（ctrcg/rules/combat.py:506-515）：白刃战分支只做「攻击 vs 闪避」
+        """生产缺陷（trpg/rules/combat.py:506-515）：白刃战分支只做「攻击 vs 闪避」
         对抗检定，**不检查距离**；网格模式下隔着 8 米（4 格）也能挥刀命中。
         RED 要求近战武器必须贴身（相邻格）才能攻击。修复后本用例会变成
         unexpected success。"""
@@ -330,7 +330,7 @@ class TestDeploymentFromSceneMap(unittest.TestCase):
     """场景 ``map`` 声明 → ``BattleGrid`` + 棋子布点。"""
 
     def test_deploy_from_state_uses_the_scene_map(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         st = make_state()
         enc = G.build_encounter("e1", st)
         self.assertEqual((enc.grid.w, enc.grid.h), (11, 8))
@@ -343,7 +343,7 @@ class TestDeploymentFromSceneMap(unittest.TestCase):
             self.assertFalse(enc.grid.blocked((x, y)))
 
     def test_deploy_respects_declared_enemy_spawns(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         st = make_state()
         enc = G.build_encounter("e1", st)
         enc.begin()
@@ -352,7 +352,7 @@ class TestDeploymentFromSceneMap(unittest.TestCase):
         self.assertTrue(placed <= {(9, 2), (9, 5)})
 
     def test_allies_start_on_the_left_edge_when_undeclared(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         st = make_state()
         enc = G.build_encounter("e1", st)
         enc.begin()
@@ -360,7 +360,7 @@ class TestDeploymentFromSceneMap(unittest.TestCase):
             self.assertEqual(enc.positions[ally.name][0], 1)
 
     def test_theater_mode_when_the_scene_has_no_map(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         st = make_state()
         st.scene_id = "s2"                                  # 场景 s2 没有 map
         enc = G.build_encounter("e1", st)
@@ -368,7 +368,7 @@ class TestDeploymentFromSceneMap(unittest.TestCase):
         self.assertEqual(enc.measure(enc.allies[0], enc.enemies[0]), 13)
 
     def test_map_state_meters_per_cell(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         st = make_state()
         st.map = G.build_map_state(st.module, st.module.scene_by_id("s1"), st.party())
         brief = st.map_brief()
@@ -377,7 +377,7 @@ class TestDeploymentFromSceneMap(unittest.TestCase):
         self.assertIn("1格=2米", st.map_digest())
 
     def test_no_two_tokens_share_a_cell(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         st = make_state()
         st.map = G.build_map_state(st.module, st.module.scene_by_id("s1"), st.party())
         cells = [tuple(t["cell"]) for t in st.map["tokens"].values()]

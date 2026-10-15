@@ -1,10 +1,10 @@
-# AI PC（AI 驱动的玩家角色）设计 —— 以 SillyTavern 机制落地 ctrcg
+# AI PC（AI 驱动的玩家角色）设计 —— 以 SillyTavern 机制落地 trpg
 
 > 实现依据：`docs/sillytavern-architecture.md`（下称〔ST 规格〕，引用格式 §N）与仓库代码
 > （main @755d5f5，行号为该快照行号）。本文是唯一实现蓝图；〔ST 规格〕§11 的"落地建议"
 > 在本文中逐条收敛为可编码的签名与分支。
 >
-> **铁律**：LLM 只决策；一切掷骰与数值由引擎结算（`ctrcg/game/tools.py:1-5` 原则）。
+> **铁律**：LLM 只决策；一切掷骰与数值由引擎结算（`trpg/game/tools.py:1-5` 原则）。
 > 宏 `{{roll}}`、世界书、提示词组装只影响**叙事上下文**，永不替代结算路径。
 >
 > **基线验证（本设计期间实跑）**：`DEEPSEEK_API_KEY= python -m pytest tests/ -q`
@@ -33,7 +33,7 @@
 > loop.py:184 过滤静默吞掉 explore_act）；④aipc 偏好改独立端点 `/api/settings/aipc`
 > （apply_llm_settings 缺密钥早退 server.py:167-168 不落盘，rev2 的测试前提不成立）；
 > ⑤战斗救援能力缺口如实声明（combat_action 的 use_item 无 target、枚举无 stabilize，
-> tools.py:257-258）；⑥pyproject.toml packages 补 `ctrcg.st`；⑦改进点花费静默
+> tools.py:257-258）；⑥pyproject.toml packages 补 `trpg.st`；⑦改进点花费静默
 > （原"system_line 通知"不实）、创建/读档两条路径的卡面数值补差抽成公共 fixup
 > （此前一条路径补、另一条不补）、assemble_system 增 template_vars（模板实有 9 个
 > 占位符）、`_post_beat` 内部重取 scene（session.py:454）、战斗期 say 不进 table_log
@@ -43,8 +43,8 @@
 
 ## 0. 总体方案
 
-一句话：**新增纯机制库 `ctrcg/st/`（角色卡/persona/宏/世界书/提示词组装/预算裁剪）+
-编排层 `ctrcg/game/aipc.py`（AIPCController），把 `session.py` 的 6 类人类交互点改为
+一句话：**新增纯机制库 `trpg/st/`（角色卡/persona/宏/世界书/提示词组装/预算裁剪）+
+编排层 `trpg/game/aipc.py`（AIPCController），把 `session.py` 的 6 类人类交互点改为
 `if self.aipc: ...` 分支，AI PC 以"第 4 名同伴"的身份复用既有同伴基础设施
 （pc_agents 注册表、pc_session、register_pc_tools、社交反应波、启发式兜底）。**
 
@@ -62,13 +62,13 @@
 | 群聊 talkativeness（§9） | 社交层 speakers 扩为全队 + 卡带 `talkativeness` | P0 先"进波"；概率激活数值化 P2 |
 | Swipe（§10） | AI PC 行动候选 | P2；单候选兜底 |
 
-分层约束：`ctrcg/st/` **不得 import `ctrcg.game.*`**（纯机制、可单测）；控制器在
-`ctrcg/game/aipc.py`，单向依赖 st。这样"开关关闭=st 全部零参与"。
+分层约束：`trpg/st/` **不得 import `trpg.game.*`**（纯机制、可单测）；控制器在
+`trpg/game/aipc.py`，单向依赖 st。这样"开关关闭=st 全部零参与"。
 
 **依赖与密钥约束**：全部新代码仅用 stdlib（dataclasses/random/datetime/re/itertools，
 零第三方依赖，与 pyproject 现状一致）；不引入任何新密钥面——AI PC 配置块
 （开关/persona/角色卡）均为非敏感叙事文本，密钥继续只经环境变量与运行时内存
-（`ctrcg/config.py:1-2`、`web/server.py:36,107` 既有约定）。
+（`trpg/config.py:1-2`、`web/server.py:36,107` 既有约定）。
 
 开关语义（贯穿全文）：`GameSession.aipc: AIPCController | None`。为 None 时，
 **所有**新分支短路，行为与 755d5f5 完全一致；`build_session`（web/server.py:317）仅在
@@ -76,17 +76,17 @@
 
 ---
 
-## 1. 新包 `ctrcg/st/`：模块划分与公开签名
+## 1. 新包 `trpg/st/`：模块划分与公开签名
 
-### 1.0 `ctrcg/st/__init__.py`
+### 1.0 `trpg/st/__init__.py`
 
-只做再导出（保持 `from ctrcg.st import CharacterCard, render, scan, assemble_system` 可用）：
+只做再导出（保持 `from trpg.st import CharacterCard, render, scan, assemble_system` 可用）：
 `card.CharacterCard, Persona, card_from_companion, card_from_player`；
 `macros.MacroContext, render`；`worldinfo.WLEntry, WorldInfo, WIResult, wi_from_book,
 engine_worldinfo, scan, merge`；`assemble.Injection, assemble_system, build_context_block,
 inject_at_depth, fit_to_budget, split_examples`。
 
-### 1.1 `ctrcg/st/card.py` —— 角色卡与用户 persona
+### 1.1 `trpg/st/card.py` —— 角色卡与用户 persona
 
 字段子集 = 〔ST 规格 §2.2〕中"进提示词"的字段 + 存放扩展字段的 `extensions`。
 不引入的字段：`creator_notes/tags/creator/character_version/assets/…`（spec 明言不进 prompt）。
@@ -136,7 +136,7 @@ class Persona:
     def from_dict(cls, d: dict | None) -> "Persona": ...  # None → 匿名空 persona
 ```
 
-### 1.2 `ctrcg/st/macros.py` —— 宏引擎
+### 1.2 `trpg/st/macros.py` —— 宏引擎
 
 语法遵〔ST 规格 §6.1〕：`{{name}}` 大小写不敏感；参数 `::`；嵌套**先内后外**（最深 2 层，
 超出按字面保留）；`\{\{text\}\}` 转义；未识别宏原样保留（不静默删除，便于发现问题）。
@@ -170,7 +170,7 @@ def render(text: str, ctx: MacroContext, *, rng: random.Random | None = None,
 宏骰只是叙事佐料（如"掷出 7 的先攻直觉"），**不进入任何结算路径**；结算骰一律在
 工具/引擎内完成。所有宏展开无 token 成本（纯字符串）。
 
-### 1.3 `ctrcg/st/worldinfo.py` —— 世界书（P1）
+### 1.3 `trpg/st/worldinfo.py` —— 世界书（P1）
 
 数据模型与激活算法照〔ST 规格 §5.1/§5.2/§5.3〕实现，字段取子集：
 
@@ -238,7 +238,7 @@ P1 接线：`AIPCController` 每回合把 `engine_worldinfo(state)` 与玩家 `c
 `module.handbook()`（loader.py:191-204）保持不动，P1 不改变 DM 行为基线，仅在
 上下文块"加餐"，关闭 AI PC 时该加餐同样短路（世界书属于 st，随 aipc 门控）。
 
-### 1.4 `ctrcg/st/assemble.py` —— 提示词组装与按深度注入、预算裁剪
+### 1.4 `trpg/st/assemble.py` —— 提示词组装与按深度注入、预算裁剪
 
 ```python
 @dataclass(frozen=True, order=True)
@@ -303,7 +303,7 @@ def fit_to_budget(sections: list[tuple[str, str]], budget_tokens: int) -> list[t
 
 ## 2. AI PC 控制器：嵌入 session.py 的每个人类交互点
 
-### 2.1 `ctrcg/game/aipc.py` —— AIPCController
+### 2.1 `trpg/game/aipc.py` —— AIPCController
 
 ```python
 class AIPCController:
@@ -654,7 +654,7 @@ data["aipc"] = {
   `description / personality / mes_example / system_prompt`（各 ≤2000 字符，纯文本），
   `card_from_player(ch, …)` 组卡；AI PC 开关 `aipc_enabled` 亦随 start spec 传入。
 - **终端建卡**：P0 不加交互项（`create_player_console` 不动），终端玩家用环境变量
-  `CTRCG_AIPC=1` 开启 + 兜底卡（card_from_player 的默认文案：职业·街头身份 + TACTICS）
+  `TRPG_AIPC=1` 开启 + 兜底卡（card_from_player 的默认文案：职业·街头身份 + TACTICS）
   （终端模式无旁听指令，/退出 走 Ctrl+C，见 §2.1 poll_command）。
 - **同伴**：`card_from_companion(module.companions[i])` 仅 P1 世界书挂载时消费；
   P0 同伴提示词构造路径不动（make_pc_agent，agents.py:117-129 原样保留）。
@@ -758,12 +758,12 @@ data["aipc"] = {
 
 | 文件 | 内容 |
 |---|---|
-| `ctrcg/st/__init__.py` | 再导出（§1.0） |
-| `ctrcg/st/card.py` | `CharacterCard` / `Persona` / `card_from_companion` / `card_from_player` |
-| `ctrcg/st/macros.py` | `MacroContext` / `render` |
-| `ctrcg/st/worldinfo.py` | `WLEntry` / `WorldInfo` / `WIResult` / `wi_from_book` / `engine_worldinfo` / `scan` / `merge`（P1 完成度） |
-| `ctrcg/st/assemble.py` | `Injection` / `assemble_system` / `build_context_block` / `inject_at_depth` / `fit_to_budget` / `split_examples` |
-| `ctrcg/game/aipc.py` | `AIPCController`（attach/explore_beat/combat_turn/refresh/poll_command 转发/reaction_speakers） |
+| `trpg/st/__init__.py` | 再导出（§1.0） |
+| `trpg/st/card.py` | `CharacterCard` / `Persona` / `card_from_companion` / `card_from_player` |
+| `trpg/st/macros.py` | `MacroContext` / `render` |
+| `trpg/st/worldinfo.py` | `WLEntry` / `WorldInfo` / `WIResult` / `wi_from_book` / `engine_worldinfo` / `scan` / `merge`（P1 完成度） |
+| `trpg/st/assemble.py` | `Injection` / `assemble_system` / `build_context_block` / `inject_at_depth` / `fit_to_budget` / `split_examples` |
+| `trpg/game/aipc.py` | `AIPCController`（attach/explore_beat/combat_turn/refresh/poll_command 转发/reaction_speakers） |
 | `tests/test_aipc.py` | §5 全表 |
 | `docs/aipc-design.md` | 本文 |
 
@@ -771,23 +771,23 @@ data["aipc"] = {
 
 | 文件 | 改动 |
 |---|---|
-| `ctrcg/game/session.py` | `__init__` 增加 `self.aipc=None` 属性（构造后由 attach 赋值）；`ai_explore_turns` 三段化 + `_handle_explore_command`/`_post_beat` 抽取（`_post_beat` 内部按 scene_id 重取 scene（session.py:454）、返回 "end" 并向上传播，session.py:459-460）；从 `open_shop` 抽出非交互 `buy_good(key)`（§2.3）；抽卡面数值补差 helper 供交互路径与 aipc 花费分支共用（§2.9）；`player_combat_turn` 顶部分支（§2.5）；`_reaction_prompt` 玩家分支门控（§2.6）；休整/修甲的玩家分支（§2.8 表）；`resolve_pending_choices` 的玩家分支（§2.9）；`enter_scene` 末尾 `aipc.refresh()`（§2.2） |
-| `ctrcg/game/tools.py` | `_ask_player_roll` 门控加 aipc 条件（§2.3）；新增 `register_aipc_tools`（say 带桌面记账、explore_intent、explore_act 含非交互 buy）+ `_aipc_say`/`_tool_explore_act` |
-| `ctrcg/game/social.py` | `reaction_wave` speakers 改 `party() ∩ pc_agents`（§2.6）；**`_debate_round` 的 `by_name` 从 `state.companions` 改为 `party() ∩ pc_agents` 查找**（否则玩家被邀请进辩论却永远无法发言、首轮即"被说服"，social.py:198-204）；`beat` trigger 文案参数化（默认值不变）；talkativeness 钩子留 P2 |
-| `ctrcg/game/state.py` | `GameState` 三个新字段；`save_game`/`load_game` 的 `aipc` 块（§3.1/§3.2） |
-| `ctrcg/ui/webui.py` | `_command` 槽 + `post_command`/`poll_command`；`resolve` 支持 `kind="command"`（§2.8） |
-| `ctrcg/web/server.py` | 新增 `GET/POST /api/settings/aipc`（apply_llm_settings 零改动，§4.1）；`llm_settings_view` 增 aipc；`start` 透传建卡字段与开关（缺省取 `aipc_prefs`）；`build_session` 挂控制器；`snapshot` 增 `aipc`；`POST /api/answer` 旁听分派 |
-| `pyproject.toml` | `[tool.setuptools] packages` 追加 `"ctrcg.st"`（现清单硬编码七包，缺新包则 pip 安装产物缺 ctrcg/st；build_release.py 的全目录打包不受影响） |
-| `ctrcg/web/charbuild.py` | `build_character` 透传卡叙事字段（≤2000 字符校验）（§3.3） |
-| `ctrcg/web/static/index.html` | 设置页「AI 玩家角色」field；建卡两输入；ask-form label（§4.2） |
-| `ctrcg/web/static/app.js` | `renderSettings` aipc 回填、start 提交体、mode-badge、旁听指令常驻表单（§4.2） |
-| `main.py` | `--aipc` 开关 + `CTRCG_AIPC=1` 环境变量：CLI 模式下 `build_ai_stack` 后同款 attach（§3.3）；`build_companions` 不动 |
-| `ctrcg/game/agents.py` | 不改模板常量；导出 `PC_SYSTEM_TEMPLATE` 供 assemble 作 `main_default`（现已模块级常量，零改动即可 import） |
+| `trpg/game/session.py` | `__init__` 增加 `self.aipc=None` 属性（构造后由 attach 赋值）；`ai_explore_turns` 三段化 + `_handle_explore_command`/`_post_beat` 抽取（`_post_beat` 内部按 scene_id 重取 scene（session.py:454）、返回 "end" 并向上传播，session.py:459-460）；从 `open_shop` 抽出非交互 `buy_good(key)`（§2.3）；抽卡面数值补差 helper 供交互路径与 aipc 花费分支共用（§2.9）；`player_combat_turn` 顶部分支（§2.5）；`_reaction_prompt` 玩家分支门控（§2.6）；休整/修甲的玩家分支（§2.8 表）；`resolve_pending_choices` 的玩家分支（§2.9）；`enter_scene` 末尾 `aipc.refresh()`（§2.2） |
+| `trpg/game/tools.py` | `_ask_player_roll` 门控加 aipc 条件（§2.3）；新增 `register_aipc_tools`（say 带桌面记账、explore_intent、explore_act 含非交互 buy）+ `_aipc_say`/`_tool_explore_act` |
+| `trpg/game/social.py` | `reaction_wave` speakers 改 `party() ∩ pc_agents`（§2.6）；**`_debate_round` 的 `by_name` 从 `state.companions` 改为 `party() ∩ pc_agents` 查找**（否则玩家被邀请进辩论却永远无法发言、首轮即"被说服"，social.py:198-204）；`beat` trigger 文案参数化（默认值不变）；talkativeness 钩子留 P2 |
+| `trpg/game/state.py` | `GameState` 三个新字段；`save_game`/`load_game` 的 `aipc` 块（§3.1/§3.2） |
+| `trpg/ui/webui.py` | `_command` 槽 + `post_command`/`poll_command`；`resolve` 支持 `kind="command"`（§2.8） |
+| `trpg/web/server.py` | 新增 `GET/POST /api/settings/aipc`（apply_llm_settings 零改动，§4.1）；`llm_settings_view` 增 aipc；`start` 透传建卡字段与开关（缺省取 `aipc_prefs`）；`build_session` 挂控制器；`snapshot` 增 `aipc`；`POST /api/answer` 旁听分派 |
+| `pyproject.toml` | `[tool.setuptools] packages` 追加 `"trpg.st"`（现清单硬编码七包，缺新包则 pip 安装产物缺 trpg/st；build_release.py 的全目录打包不受影响） |
+| `trpg/web/charbuild.py` | `build_character` 透传卡叙事字段（≤2000 字符校验）（§3.3） |
+| `trpg/web/static/index.html` | 设置页「AI 玩家角色」field；建卡两输入；ask-form label（§4.2） |
+| `trpg/web/static/app.js` | `renderSettings` aipc 回填、start 提交体、mode-badge、旁听指令常驻表单（§4.2） |
+| `main.py` | `--aipc` 开关 + `TRPG_AIPC=1` 环境变量：CLI 模式下 `build_ai_stack` 后同款 attach（§3.3）；`build_companions` 不动 |
+| `trpg/game/agents.py` | 不改模板常量；导出 `PC_SYSTEM_TEMPLATE` 供 assemble 作 `main_default`（现已模块级常量，零改动即可 import） |
 | `README.md` / `CHANGELOG.md` | 功能说明 + 版本条目 |
 
-**不改**：`ctrcg/harness/loop.py`、`adapter.py`、`events.py`、`registry.py`、`usage.py`
-（P1 才给 loop.run 加可选 `post_build` kwarg）；`ctrcg/rules/*`（数值引擎零触碰）；
-`ctrcg/campaign/*`（模组格式零改动——同伴 persona/voice 继续作卡字段来源）。
+**不改**：`trpg/harness/loop.py`、`adapter.py`、`events.py`、`registry.py`、`usage.py`
+（P1 才给 loop.run 加可选 `post_build` kwarg）；`trpg/rules/*`（数值引擎零触碰）；
+`trpg/campaign/*`（模组格式零改动——同伴 persona/voice 继续作卡字段来源）。
 
 ---
 

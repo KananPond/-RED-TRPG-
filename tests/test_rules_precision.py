@@ -21,12 +21,12 @@ from helpers import ScriptRng, make_pc                    # noqa: E402
 from test_combat import (MELEE, PISTOL, corridor, duel,   # noqa: E402
                          make_foe)
 
-from ctrcg.rules import data as D                          # noqa: E402
-from ctrcg.rules.character import (AIMED_SHOT_PENALTY,     # noqa: E402
+from trpg.rules import data as D                          # noqa: E402
+from trpg.rules.character import (AIMED_SHOT_PENALTY,     # noqa: E402
                                    COND_CONTROLLED, COND_DEAD,
                                    COND_STABILIZED, COND_UNCONSCIOUS,
                                    Character, LOCATIONS)
-from ctrcg.rules.combat import METERS_PER_CELL, Encounter  # noqa: E402
+from trpg.rules.combat import METERS_PER_CELL, Encounter  # noqa: E402
 
 
 def num(part: str) -> int:
@@ -54,7 +54,7 @@ class TestAttackArithmetic(unittest.TestCase):
         self.assertEqual(aimed["dv"], plain["dv"] + 8)
 
     def test_melee_penalty_applies_to_melee_attacks(self):
-        """生产缺陷（ctrcg/rules/combat.py:497-499 与 506-515）：``attack`` 把
+        """生产缺陷（trpg/rules/combat.py:497-499 与 506-515）：``attack`` 把
         ``melee_penalty()`` 累加进局部变量 ``penalty``，但白刃战分支走的是
         ``att.opposed_check()``（只读 ``check_penalty()``），``penalty`` 在近战
         路径上从不被使用。于是致命伤「肌肉拉伤：近战武器攻击 −2」永远不生效，

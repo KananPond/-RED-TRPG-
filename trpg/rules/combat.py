@@ -534,8 +534,8 @@ class Encounter:
         penalty = AIMED_SHOT_PENALTY if aimed else 0
         if kind == "melee":
             penalty += att.melee_penalty()
-        location = "head" if aimed and weapon.get("kind") in ("pistol", "smg",
-                                                              "shotgun", "rifle", "bow") else "torso"
+        location = "head" if aimed and weapon.get("kind") in ("pistol", "shotgun",
+                                                              "rifle") else "torso"
         entry = {"attacker": att.name, "target": tgt.name, "weapon": weapon_key,
                  "weapon_name": weapon.get("name", weapon_key),
                  "aimed": bool(aimed), "location": location}

@@ -1,6 +1,6 @@
-# CTRCG 模组（剧本）开发规范
+# TRPG 模组（剧本）开发规范
 
-**版本 3.0（《赛博朋克 RED》口径）**　适用引擎：`ctrcg` ≥ 2.0（当前 2.0.0，`ruleset = "cyberpunk-red"`）
+**版本 3.0（《赛博朋克 RED》口径）**　适用引擎：`trpg` ≥ 2.0（当前 2.0.0，`ruleset = "cyberpunk-red"`）
 
 一个**模组（剧本）**是一个自包含的 JSON 文件：`modules/<模组id>/module.json`。
 引擎按《赛博朋克 RED》轻松模式口径运行剧本：所有骰点、伤害、护甲磨损、伤势、
@@ -361,27 +361,30 @@ stealth 潜行, streetwise 地下世界知识, tactics 战术, tracking 追踪`
 cop 警察, corporate 公司人, fixer 中间人, nomad 游牧民, rockerboy 摇滚客`
 ——轻松模式给出五名预设角色（摇滚客/独行侠/技术师/医疗师/媒体人）。
 
-### 武器（15）
+### 武器（10）
 `brawling 徒手, light_melee 轻型近战, medium_melee 中型近战, heavy_melee 重型近战,
 very_heavy_melee 超重型近战, medium_pistol 中型手枪, heavy_pistol 重型手枪,
-very_heavy_pistol 超重型手枪, smg 冲锋枪, heavy_smg 重型冲锋枪, shotgun 霰弹枪,
-assault_rifle 突击步枪, sniper_rifle 狙击步枪, bow 弓, crossbow 弩`
+very_heavy_pistol 超重型手枪, shotgun 霰弹枪, assault_rifle 突击步枪`
+远程武器只有手枪 / 霰弹枪 / 突击步枪三类——正是轻松模式第 19 页「远程战斗难度值」
+表列出的全部。冲锋枪、狙击步枪、弓弩、榴弹与火箭不在轻松模式里，模组不得声明。
 
 ### 护甲（6）
 `leather 皮衣(SP4), kevlar 凯夫拉(7), light_armorjack 轻型防弹夹克(11),
 medium_armorjack 中型防弹衣(12), heavy_armorjack 重型防弹衣(13),
 bulletproof_shield 防弹盾(10)`
 
-### 义体（8）
+### 义体（9）
 `internal_agent 内置智能体, pain_editor 赛博痛觉编辑器, cyberaudio 赛博听觉组件,
 cyberoptics 赛博光学组件, neural_link 神经接口, subdermal_armor 皮下护甲,
-muscle_enhance 肌肉强化, cyberarm 义体手臂`
+muscle_enhance 肌肉强化, cyberarm 义体手臂, tool_hand 工具手`
 （人性损失 7-14 不等；人性上限 = 共情 × 10。）
 
-### 装备（14）
+### 装备（20）
 `ammo 弹药, first_aid_kit 急救包, medkit 医疗包, flashlight 手电, rope 绳索,
 radio 对讲机, agent 智能体, video_camera 摄像机, glow_paint 荧光喷漆,
-instrument 乐器, amp 便携音箱, handcuffs 手铐, fake_id 伪造证件, binoculars 望远镜`
+instrument 乐器, amp 便携音箱, handcuffs 手铐, fake_id 伪造证件, binoculars 望远镜,
+burner_phone 一次性手机, duct_tape 强力胶带, road_flare 道路照明弹,
+recorder 录音机, toolkit 工具箱, medkit_full 医疗工具组`
 
 ### 内置敌人（4）
 `corrupt_cop 腐败警察（凯夫拉 SP7、超重型手枪）, houston Leonard Houston（同上）,

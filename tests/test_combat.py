@@ -23,11 +23,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import (ScriptRng, fixture_module_data,  # noqa: E402
                      make_pc)                          # noqa: F401  (转出)
 
-from ctrcg.rules import data as D                         # noqa: E402
-from ctrcg.rules.character import (COND_CONTROLLED,        # noqa: E402
+from trpg.rules import data as D                         # noqa: E402
+from trpg.rules.character import (COND_CONTROLLED,        # noqa: E402
                                    COND_PRONE, COND_UNCONSCIOUS,
                                    Character, LOCATIONS)
-from ctrcg.rules.combat import (METERS_PER_CELL, BattleGrid,  # noqa: E402
+from trpg.rules.combat import (METERS_PER_CELL, BattleGrid,  # noqa: E402
                                 Encounter)
 
 PISTOL = "heavy_pistol"        # 3d6，LA 2，pistol
@@ -348,7 +348,7 @@ class TestAttackResolution(unittest.TestCase):
         self.assertNotIn("dodged", ranged(pc, enc, ScriptRng([8, 3, 3, 3])))
 
     def test_firing_spends_ammo(self):
-        """生产缺陷（ctrcg/rules/combat.py:483-521）：``attack`` 结算命中与伤害，
+        """生产缺陷（trpg/rules/combat.py:483-521）：``attack`` 结算命中与伤害，
         但从不扣减 ``Character.ammo``；``reload``（同文件 :636）却会把弹匣装满。
         结果弹匣只是叙事装饰——一把 8 发的手枪可以无限开火。"""
         pc = make_pc(weapons=[PISTOL], skills={"handgun": 6})
@@ -894,7 +894,7 @@ class TestEncounterAssembly(unittest.TestCase):
     """``state.build_encounter`` 用模组数据装配遭遇。"""
 
     def test_build_from_module_fixture(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         from helpers import make_state
         st = make_state()
         enc = G.build_encounter("e1", st)
@@ -905,13 +905,13 @@ class TestEncounterAssembly(unittest.TestCase):
         self.assertEqual(enc.grid.w, 11)
 
     def test_unknown_encounter_rejected(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         from helpers import make_state
         with self.assertRaises(G.EncounterBuildError):
             G.build_encounter("不存在", make_state())
 
     def test_unknown_enemy_rejected(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         from helpers import make_state
         st = make_state()
         st.module.encounters["e_bad"] = {"enemies": [["幽灵", 1]]}
@@ -919,7 +919,7 @@ class TestEncounterAssembly(unittest.TestCase):
             G.build_encounter("e_bad", st)
 
     def test_multi_count_gets_tags_and_no_cell_collisions(self):
-        from ctrcg.game import state as G
+        from trpg.game import state as G
         from helpers import make_state
         enc = G.build_encounter("e1", make_state())
         names = [c.name for c in enc.enemies]
@@ -930,7 +930,7 @@ class TestEncounterAssembly(unittest.TestCase):
         self.assertEqual(len(cells), len(set(cells)))           # 不叠格
 
     def test_module_fixture_passes_validation(self):
-        from ctrcg.campaign.loader import validate_module
+        from trpg.campaign.loader import validate_module
         errors, _warnings = validate_module(fixture_module_data())
         self.assertEqual(errors, [])
 

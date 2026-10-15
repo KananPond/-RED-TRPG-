@@ -95,7 +95,7 @@ def build_companions(module, spec: dict, player_key: str) -> list[Character]:
 def build_aipc_card(spec: dict, name: str = "") -> dict | None:
     """从 start spec 提取玩家人设，产出 AI PC 的角色卡素材（aipc-design §3.3/§4.1）。
 
-    返回与 st.card.CharacterCard.from_dict 兼容的序列化形态：st（ctrcg.st.card）
+    返回与 st.card.CharacterCard.from_dict 兼容的序列化形态：st（trpg.st.card）
     未落地时以纯 dict 暂存于 GameState.aipc_card 并随存档往返，由
     server.build_session 接缝在 st 就绪后重建为 CharacterCard。
     四个字段全为空时返回 None——接缝将回退 card_from_player(state.player) 的

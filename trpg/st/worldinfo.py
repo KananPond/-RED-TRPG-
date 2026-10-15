@@ -12,7 +12,7 @@
 - recursive_scanning=True 时支持一轮递归（已激活内容参与下一轮扫描，
   直接命中条目优先于递归命中条目；P1 范围 0/1 轮）。
 
-分层约束：本包不得 import ctrcg.game.*——engine_worldinfo 只鸭子引用
+分层约束：本包不得 import trpg.game.*——engine_worldinfo 只鸭子引用
 state.module / state.scene_id / state.flags。
 """
 
@@ -192,7 +192,7 @@ def wi_from_book(book: dict) -> WorldInfo:
 
 def engine_worldinfo(state) -> WorldInfo:
     """引擎状态 WI 化（〔aipc 设计 §1.3/§11 #6〕）。state 鸭子引用
-    （module / scene_id / flags），不 import ctrcg.game.*：
+    （module / scene_id / flags），不 import trpg.game.*：
 
     - 当前场景：constant 条目（id/地点/intro 摘要，order 高）；
     - 剧情旗标：每条旗标一个 selective 条目（键=旗标键与其值），内容=值；

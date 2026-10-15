@@ -1,9 +1,9 @@
-"""ctrcg.st —— SillyTavern 式提示词机制纯库（docs/aipc-design.md §1.0）。
+"""trpg.st —— SillyTavern 式提示词机制纯库（docs/aipc-design.md §1.0）。
 
 角色卡 / persona / 宏 / 世界书 / 提示词组装 / 按深度注入 / 预算裁剪。
-分层约束：本包只依赖 stdlib、ctrcg.rules 与 ctrcg.harness，
-**不得 import ctrcg.game.***（纯机制、可单测）；
-编排层在 ctrcg/game/aipc.py（P1），单向依赖本包。
+分层约束：本包只依赖 stdlib、trpg.rules 与 trpg.harness，
+**不得 import trpg.game.***（纯机制、可单测）；
+编排层在 trpg/game/aipc.py（P1），单向依赖本包。
 开关关闭（无 AIPCController）时本包全部零参与。
 规则词汇口径：《赛博朋克 RED》——技能用 D.SKILLS 的中文名，
 难度值一律写 DV（worldinfo.engine_worldinfo），货币为欧元（eb）。

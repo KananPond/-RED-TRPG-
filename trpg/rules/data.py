@@ -2,7 +2,7 @@
 
 数据来源：R. Talsorian Games《Cyberpunk RED》与免费入门册
 《Cyberpunk RED Easy Mode》（本仓库以其中文版为准：
-``模组/Cyberpunk_RED_Easy_Mode_CN.pdf``）。
+``.reference/Cyberpunk_RED_Easy_Mode_CN.pdf``）。
 
 口径约定（中文版译自波兰文版，缩写沿用其含义）：
 
@@ -14,8 +14,8 @@
 * ``RUCH``　机动
 
 本模块只放**静态数据**：属性/技能/职业/武器/护甲/装备/义体/难度值/伤势/
-致命伤/掩体/敌人。所有算术与结算都在 :mod:`ctrcg.rules.character` 与
-:mod:`ctrcg.rules.combat`。
+致命伤/掩体/敌人。所有算术与结算都在 :mod:`trpg.rules.character` 与
+:mod:`trpg.rules.combat`。
 """
 
 from __future__ import annotations
@@ -195,18 +195,15 @@ RANGED_DV: dict[str, tuple] = {
     "pistol": (13, 15, 20, 25, 30, 30, None, None),
     "shotgun": (13, 15, 20, 25, 30, 35, None, None),
     "rifle": (17, 16, 15, 13, 15, 20, 25, 30),
-    # 轻松模式只列出手枪/霰弹枪/突击步枪；以下按主规则书同源口径补全
-    "smg": (15, 13, 15, 20, 25, 25, 30, None),
-    "bow": (15, 13, 15, 20, 25, 30, 35, 40),
-    "grenade": (16, 15, 15, 17, 20, 25, None, None),
-    "rocket": (17, 16, 15, 15, 20, 25, 30, 35),
+    # 轻松模式第 19 页「远程战斗难度值」表只有三类：手枪 / 霰弹枪 / 突击步枪。
+    # 冲锋枪、狙击步枪、弓弩、榴弹、火箭都不在轻松模式里 —— 不予实现，
+    # 剧本与模组也不得声明（见 README「明确未实现」）。
 }
 
 #: 武器类别中文名
 WEAPON_TYPES: dict[str, str] = {
     "pistol": "手枪", "shotgun": "霰弹枪", "rifle": "突击步枪",
-    "smg": "冲锋枪", "bow": "弓弩", "grenade": "榴弹",
-    "rocket": "火箭", "melee": "近战", "brawling": "斗殴",
+    "melee": "近战", "brawling": "斗殴",
 }
 
 # =====================================================================
@@ -443,30 +440,19 @@ WEAPONS: dict[str, dict] = {
                      "ammo": 8, "skill": "handgun", "cost": 100},
     "very_heavy_pistol": {"name": "超重型手枪", "kind": "pistol", "dmg": "4d6",
                           "rof": 1, "ammo": 8, "skill": "handgun", "cost": 100},
-    "smg": {"name": "冲锋枪", "kind": "smg", "dmg": "2d6", "rof": 1, "ammo": 30,
-            "skill": "handgun", "cost": 100, "autofire": True},
-    "heavy_smg": {"name": "重型冲锋枪", "kind": "smg", "dmg": "3d6", "rof": 1,
-                  "ammo": 40, "skill": "handgun", "cost": 100, "autofire": True},
     "shotgun": {"name": "霰弹枪", "kind": "shotgun", "dmg": "5d6", "rof": 1,
                 "ammo": 4, "skill": "shoulder_arms", "cost": 500},
     "assault_rifle": {"name": "突击步枪", "kind": "rifle", "dmg": "5d6", "rof": 1,
-                      "ammo": 25, "skill": "shoulder_arms", "cost": 500,
-                      "autofire": True},
-    "sniper_rifle": {"name": "狙击步枪", "kind": "rifle", "dmg": "5d6", "rof": 1,
-                     "ammo": 4, "skill": "shoulder_arms", "cost": 500},
-    "bow": {"name": "弓", "kind": "bow", "dmg": "4d6", "rof": 1, "ammo": None,
-            "skill": "shoulder_arms", "cost": 100},
-    "crossbow": {"name": "弩", "kind": "bow", "dmg": "4d6", "rof": 1, "ammo": None,
-                 "skill": "shoulder_arms", "cost": 100},
+                      "ammo": 25, "skill": "shoulder_arms", "cost": 500},
 }
 
 #: 近战武器（按伤害从高到低，用于「身上最好的近战武器」）
 MELEE_ORDER: tuple[str, ...] = ("very_heavy_melee", "heavy_melee",
                                 "medium_melee", "light_melee", "brawling")
 #: 远程武器（按伤害从高到低）
-RANGED_ORDER: tuple[str, ...] = ("sniper_rifle", "assault_rifle", "shotgun",
+RANGED_ORDER: tuple[str, ...] = ("assault_rifle", "shotgun",
                                  "very_heavy_pistol", "heavy_pistol",
-                                 "medium_pistol", "smg", "bow", "crossbow")
+                                 "medium_pistol")
 
 # =====================================================================
 # 护甲（OB / SP）

@@ -5,7 +5,7 @@
   SSRF 加固：协议白名单 + 主机解析边界校验（默认阻断私网/环回/链路本地/
   保留地址，防 DNS rebinding 首跳）+ 重定向逐跳复检。
   需要连接本机模型服务（Ollama/LM Studio 等）时，操作者可显式设置
-  CTRCG_LLM_ALLOW_PRIVATE=1 自担风险放行。
+  TRPG_LLM_ALLOW_PRIVATE=1 自担风险放行。
 - ScriptedAdapter：固定脚本/回调，用于测试与离线演示。
 """
 
@@ -27,7 +27,7 @@ _ALLOWED_SCHEMES = {"http", "https"}
 
 
 def _allow_private() -> bool:
-    return os.environ.get("CTRCG_LLM_ALLOW_PRIVATE", "").strip().lower() in ("1", "true", "yes")
+    return os.environ.get("TRPG_LLM_ALLOW_PRIVATE", "").strip().lower() in ("1", "true", "yes")
 
 
 def _assert_host_allowed(host: str) -> None:
@@ -44,7 +44,7 @@ def _assert_host_allowed(host: str) -> None:
                 or ip.is_reserved or ip.is_multicast):
             raise ValueError(
                 f"LLM 端点解析到受限地址 {ip}（私网/环回/链路本地）已阻断。"
-                f"如需连接本机模型服务，请显式设置 CTRCG_LLM_ALLOW_PRIVATE=1。")
+                f"如需连接本机模型服务，请显式设置 TRPG_LLM_ALLOW_PRIVATE=1。")
 
 
 def _validate_endpoint(base_url: str) -> None:

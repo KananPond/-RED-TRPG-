@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from helpers import ScriptRng                      # noqa: E402
 
-from ctrcg.rules import data as D                  # noqa: E402
-from ctrcg.rules.dice import (DiceResult, check_roll, count_faces, d10,  # noqa: E402
+from trpg.rules import data as D                  # noqa: E402
+from trpg.rules.dice import (DiceResult, check_roll, count_faces, d10,  # noqa: E402
                               damage_roll, opposed_roll, parse_expr, roll)
 
 
@@ -165,7 +165,7 @@ class TestBreakdownAudit(unittest.TestCase):
         return int(m.group(0))
 
     def test_labels_name_stat_and_skill(self):
-        from ctrcg.rules.character import Character
+        from trpg.rules.character import Character
         c = Character.create(
             name="Kyle", role="solo",
             stats={"int": 5, "ref": 6, "dex": 6, "tech": 4, "cool": 5,
@@ -180,7 +180,7 @@ class TestBreakdownAudit(unittest.TestCase):
         self.assertEqual(self._num(res.breakdown[1]), c.skill("handgun"))
 
     def test_flat_modifier_entry_equals_total_minus_die(self):
-        from ctrcg.rules.character import Character
+        from trpg.rules.character import Character
         c = Character.create(
             name="Kyle", role="solo",
             stats={"int": 5, "ref": 6, "dex": 6, "tech": 4, "cool": 5,
@@ -195,7 +195,7 @@ class TestBreakdownAudit(unittest.TestCase):
                              extra if res.crit_success or res.crit_failure else 0)
 
     def test_breakdown_sums_to_total_without_crit(self):
-        from ctrcg.rules.character import Character
+        from trpg.rules.character import Character
         c = Character.create(
             name="Kyle", role="solo",
             stats={"int": 5, "ref": 6, "dex": 6, "tech": 4, "cool": 5,

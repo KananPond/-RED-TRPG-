@@ -1,11 +1,12 @@
 """剧本模式（互动剧）：图校验、结局可达性、引擎演绎、结局图鉴、Web 端到端。
 
 剧本数据与 Godot 版共享同一份 JSON（放在 ``modules/<id>/story_*.json``），
-节点语义见 ``ctrcg/game/story.py`` 的模块文档。引擎本身与规则无关，只有
+节点语义见 ``trpg/game/story.py`` 的模块文档。引擎本身与规则无关，只有
 检定口径是 RED 的（``1d10 + 属性 + 技能`` vs 难度值 DV，必须**高于** DV）。
 
-仓库里不再内置任何剧本文件，所以本文件用 ``helpers.story_data()`` 造一份
-自包含的 RED 剧本，并把 Web 端到端跑在**临时 cordis 根**上。
+仓库内置的剧本是 ``modules/cpred-easy-mode/story_wyskakuj.json``（《抢钱行动》）；
+本文件不依赖它，而是用 ``helpers.story_data()`` 造一份自包含的 RED 剧本夹具，
+并把 Web 端到端跑在**临时 cordis 根**上（夹具固定 4 结局，与内置剧本解耦）。
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import (ScriptedUI, WebServerCase, story_data,  # noqa: E402
                      story_service_data, temp_cordis_root)
 
-from ctrcg.game.story import (StorySession, ending_ids, load_stories,  # noqa: E402
+from trpg.game.story import (StorySession, ending_ids, load_stories,  # noqa: E402
                               load_story_file, load_unlocks, reachable_endings,
                               record_unlock, validate_story)
 
@@ -143,7 +144,7 @@ class TestStoryEngine(unittest.TestCase):
         self.assertEqual(a["title"], b["title"])
 
     def test_ending_carries_its_node_id(self):
-        """生产缺陷（ctrcg/game/story.py:332-333）：``StorySession.run`` 在结局
+        """生产缺陷（trpg/game/story.py:332-333）：``StorySession.run`` 在结局
         节点上直接 ``return node``，而 ``node`` 是 ``nodes[id]`` 的值本身、**不带
         自己的 id**。于是 ``web/server.py:390-399`` 里
         ``ending.get("id", "")`` 永远得到空串：
@@ -319,7 +320,7 @@ class TestStoryWeb(WebServerCase):
         self.assertEqual(state["story"]["id"], STORY_ID)
 
     def test_ending_identity_and_unlock_persisted(self):
-        """生产缺陷（ctrcg/game/story.py:332 + ctrcg/web/server.py:390-399）：
+        """生产缺陷（trpg/game/story.py:332 + trpg/web/server.py:390-399）：
         引擎返回的结局节点不带 id → ``game_over.ending.id`` 恒为 ""，
         ``record_unlock(story_id, "")`` 又因空 id 早退（story.py:226），
         于是「结局图鉴」永远不解锁、``saves/story_endings.json`` 永远为空。

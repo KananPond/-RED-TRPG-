@@ -3,7 +3,7 @@
 字段子集 = 〔ST 规格 §2.2〕中"进提示词"的字段 + 存放扩展字段的 extensions；
 不引入 creator_notes/tags/creator/character_version/assets 等不进 prompt 的字段。
 
-分层约束：本包不得 import ctrcg.game.*（纯机制、可单测）——
+分层约束：本包不得 import trpg.game.*（纯机制、可单测）——
 card_from_player 只鸭子引用 rules.character.Character 的属性；
 TACTICS 风格摘要由调用方（game 层）经 tactics 参数注入。
 """
@@ -233,7 +233,7 @@ def card_from_player(ch: Character, *, description: str = "", personality: str =
     空则用引擎兜底文案：description=职业 + 十项属性行，personality=TACTICS 职业战术摘要。
 
     tactics 由调用方传入（game.agents.TACTICS.get(role)）——st 层不得 import
-    ctrcg.game.*，故不在此直接引用；缺省时给一行按职业行事的通用文案。
+    trpg.game.*，故不在此直接引用；缺省时给一行按职业行事的通用文案。
     """
     role_cn = _role_name(getattr(ch, "role", "")) or "边缘行者"
     handle = str(getattr(ch, "handle", "") or "")

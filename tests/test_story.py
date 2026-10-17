@@ -275,6 +275,44 @@ class TestStoryWeb(WebServerCase):
         self.assertEqual(status, 400)
         self.assertIn("不存在", body["error"])
 
+    def test_state_exposes_pending_in_story_mode(self):
+        """回归：剧本模式的 /api/state 也必须给 pending。
+
+        快照此前只给跑团对局附带 pending，剧本模式恒为 None——刷新页面时
+        前端就只能靠 SSE 历史重放重建选项。同时断言「作答后立刻推进到下一问」：
+        剧本引擎是毫秒级的，前端据此（而非超时）清掉"DM 裁定中"。
+        """
+        status, body = self.post("/api/story/start",
+                                 {"story_id": STORY_ID, "hero_index": 0, "seed": 7})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["state"]["mode"], "story")
+
+        pending = None
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            status, state = self.get("/api/state")
+            pending = state.get("pending")
+            if pending:
+                break
+            time.sleep(0.02)
+        self.assertIsNotNone(pending, "剧本模式应当有待答问题")
+        self.assertEqual(pending["kind"], "choose")
+        self.assertTrue(pending["options"])
+
+        status, _ = self.post("/api/answer", {"index": 0})
+        self.assertEqual(status, 200)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            asks = [e for e in self.app.ui.history if e["t"] == "ask"]
+            over = [e for e in self.app.ui.history if e["t"] == "game_over"]
+            if len(asks) >= 2 or over:
+                break
+            time.sleep(0.02)
+        asks = [e for e in self.app.ui.history if e["t"] == "ask"]
+        over = [e for e in self.app.ui.history if e["t"] == "game_over"]
+        self.assertTrue(len(asks) >= 2 or over,
+                        "作答后应当推进到下一问或直接结束，而不是停在原地")
+
     def test_full_story_flow_over_http(self):
         status, body = self.post("/api/story/start",
                                  {"story_id": STORY_ID, "hero_index": 0,

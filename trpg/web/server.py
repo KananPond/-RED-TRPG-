@@ -6,7 +6,8 @@
 AI PC：GET/POST /api/settings/aipc（AI 代打开关 + 玩家 persona，非敏感叙事文本），
       独立端点持久化到 saves/llm_config.json 的 "aipc" 键——不走 apply_llm_settings
       （其缺密钥时早退不落盘），无 LLM 时开关同样可保存（docs/aipc-design.md §4.1）。
-用量：GET /api/usage、POST /api/usage/clear（TokenMeter 持久化到 saves/）。
+用量：GET /api/usage（明细 + 按日聚合 + GitHub 式热力图）、POST /api/usage/clear。
+余额：GET /api/balance（供应商账户余额，只读、带 60 秒缓存，?refresh=1 强制刷新）。
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import random
 import re
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -29,8 +31,10 @@ from .. import __version__
 from ..game.session import GameSession
 from ..game.story import (StorySession, ending_ids, iter_story_files,
                           load_story_file, load_unlocks, record_unlock)
+from ..harness.balance import fetch_balance
 from ..harness.usage import TokenMeter
 from ..rules import data as D
+from ..rules.combat import METERS_PER_CELL
 from ..ui.charcreate import (build_from_pregen, default_companion_keys,
                              pregens_of)
 from ..ui.webui import AbortGame, WebUI
@@ -122,6 +126,8 @@ class AppState:
         self.thread: threading.Thread | None = None
         self.cordis = Cordis(cordis_root)
         self.meter = TokenMeter("saves/token_usage.json")
+        self.balance_cache: dict = {"ts": 0.0, "data": None}   # 余额：60 秒内存缓存
+        self.balance_ttl = 60.0
         self.unlocks_path = unlocks_path
         self._runtime_key: str | None = None       # 仅内存，不落盘
         self._persisted: dict = self._load_llm_settings()
@@ -237,6 +243,19 @@ class AppState:
             "aipc": {"enabled": bool(self.aipc_prefs.get("enabled")),
                      "persona": str(self.aipc_prefs.get("persona") or "")},
         }
+
+    # ------------------------------------------------------------ 账户余额
+    def balance_view(self, refresh: bool = False) -> dict:
+        """账户余额（只读）。60 秒内存缓存：界面轮询不会把余额接口打爆。"""
+        now = time.time()
+        cached = self.balance_cache.get("data")
+        if (not refresh and cached is not None
+                and now - float(self.balance_cache.get("ts") or 0) < self.balance_ttl):
+            return {**cached, "cached": True}
+        data = fetch_balance(self.llm_cfg)
+        data = {**data, "cached": False, "fetched_at": round(now, 3)}
+        self.balance_cache = {"ts": now, "data": data}
+        return data
 
     # ------------------------------------------------------------ 对局
     def start(self, spec: dict) -> tuple[bool, str | None, dict]:
@@ -445,6 +464,9 @@ class AppState:
                                    "title": hero.get("title", ""),
                                    "hp": self.story.hp,
                                    "hp_max": self.story.hp_max}},
+                # 与跑团快照同口径：最后一条 ask 兜底（刷新页面后重建选项，
+                # 不必只依赖 SSE 历史重放）
+                "pending": _last_ask(self.ui),
             })
             return base
         if self.session is None:
@@ -465,7 +487,12 @@ class AppState:
             "eurobucks": eddies,
             "flags": st.flags,
             "encounter_title": enc.title if enc else None,
+            # 战斗标记：顶栏「保存」据此提示"本回合开始时落盘"（战斗期指令槽
+            # 由 session.player_combat_turn 在回合开头 poll）
+            "in_encounter": enc is not None,
             "party": [_member_payload(c, c is st.player) for c in party],
+            # 快照兜底：刷新页面后重建行动条（待答问题 + 行动经济）
+            "pending": _last_ask(self.ui),
         })
         # AI PC 模式（§4.1）：enabled=控制器已挂载（真正接管）；requested=开关已开
         # 但本局降级为人类操控（LLM 未配置/组件未就绪/名字冲突），前端据此说明
@@ -474,9 +501,21 @@ class AppState:
             "requested": bool(getattr(st, "aipc_enabled", False)),
             "player": st.player.name,
         }
-        # 战术地图快照（docs/battlemap-design.md §4）：SSE map 事件的重放兜底
-        base["map"] = st.map_brief()
+        # 战术地图快照（docs/battlemap-design.md §4）：SSE map 事件的重放兜底；
+        # 战斗中带上掩体实时耐久（VTT 掩体块/耐久条的数据源）
+        base["map"] = st.map_brief(self.session.encounter)
         return base
+
+
+def _last_ask(ui) -> dict | None:
+    """事件流里最后一条 ``ask``（刷新页面后重建行动条的兜底数据）。"""
+    if ui is None:
+        return None
+    for ev in reversed(getattr(ui, "history", []) or []):
+        if ev.get("t") == "ask":
+            return {"kind": ev.get("kind"), "prompt": ev.get("prompt", ""),
+                    "options": list(ev.get("options") or [])}
+    return None
 
 
 def _cn(conds) -> list[str]:
@@ -512,6 +551,15 @@ def _member_payload(c, is_player: bool) -> dict:
         "cyberware": [D.CYBERWARE[x]["name"] for x in c.cyberware
                       if x in D.CYBERWARE],
         "weapons": [D.WEAPONS[w]["name"] for w in c.weapons if w in D.WEAPONS],
+        # 武器明细：VTT 悬停射程判定与作战卷宗用（kind 用于查射程表）
+        "weapon_details": [{"key": w, "name": D.WEAPONS[w]["name"],
+                            "kind": D.WEAPONS[w].get("kind", ""),
+                            "dmg": D.WEAPONS[w].get("dmg", ""),
+                            "rof": int(D.WEAPONS[w].get("rof", 1) or 1),
+                            "ammo": c.ammo.get(w) if hasattr(c, "ammo") else None}
+                           for w in c.weapons if w in D.WEAPONS],
+        "skills": {k: int(v) for k, v in
+                   (getattr(c, "skill_levels", {}) or {}).items()},
         "stats": {k: c.stat(k) for k in D.STAT_ORDER},
         # 人生之路（轻松模式建卡时投骰的履历，第 29-34 页）
         "lifepath": c.lifepath_lines() if hasattr(c, "lifepath_lines") else [],
@@ -709,6 +757,15 @@ def meta_payload(app: AppState) -> dict:
                   for k, v in D.ROLES.items()],
         "difficulty": [{"dv": dv, "name": v["name"], "desc": v["desc"]}
                        for dv, v in sorted(D.DIFFICULTY.items())],
+        # 掩体材质 → 耐久（第 21 页表）：VTT 画掩体的单一数据源，
+        # 前端不重复硬编码，避免与 rules/data.py 漂移
+        "cover_materials": [{"material": k, "hp": int(v)}
+                            for k, v in D.COVER.items()],
+        # 远程射程带（第 19 页表）：VTT 悬停提示「这个距离打不打得到」
+        "range_bands": [{"lo": int(lo), "hi": int(hi)}
+                        for lo, hi in D.RANGE_BANDS],
+        "ranged_dv": {k: list(v) for k, v in D.RANGED_DV.items()},
+        "meters_per_cell": METERS_PER_CELL,
         "weapons": [{"key": k, "name": v["name"], "kind": v.get("kind", ""),
                      "dmg": v.get("dmg", ""), "rof": v.get("rof", 0),
                      "ammo": v.get("ammo"), "cost": v.get("cost", 0),
@@ -823,7 +880,16 @@ class Handler(BaseHTTPRequestHandler):
             ui = self.app.ui
             return self._json({"pending": ui.pending_view() if ui else None})
         if path == "/api/usage":
-            return self._json(self.app.meter.summary())
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[-1])
+            try:
+                days = int((query.get("days") or ["371"])[0])
+            except ValueError:
+                days = 371
+            return self._json(self.app.meter.summary(days=max(7, min(days, 400))))
+        if path == "/api/balance":
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[-1])
+            refresh = (query.get("refresh") or ["0"])[0] not in ("", "0", "false")
+            return self._json(self.app.balance_view(refresh=refresh))
         if path == "/api/saves":
             saves = []
             sdir = Path("saves")

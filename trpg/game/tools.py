@@ -569,8 +569,11 @@ class GameTools:
             if weapon and weapon not in pc.weapons:
                 return {"ok": False, "error": f"没有武器 {weapon}"
                         f"（拥有：{'、'.join(pc.weapons) or '徒手'}）"}
-            return enc.attack_action(who, t, weapon or None,
-                                     aimed=bool(aimed), luck=int(luck or 0))
+            r = enc.attack_action(who, t, weapon or None,
+                                  aimed=bool(aimed), luck=int(luck or 0))
+            # 命中可能被掩体挡下 → 掩体耐久变化，棋盘即时刷新
+            self._sync_map(r)
+            return r
         if action == "grab":
             t = _need(enc, target)
             return enc.grab(who, t) if isinstance(t, Character) else t

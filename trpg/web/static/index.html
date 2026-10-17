@@ -4,196 +4,413 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CPRED · 赛博朋克 RED · TRPG 跑团手记</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23c8443c' d='M12 1 3 6.2v11.6L12 23l9-5.2V6.2L12 1z'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23ff4d6d' d='M12 1 3 6.2v11.6L12 23l9-5.2V6.2L12 1z'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 
-<!-- ═══════════════ 开始页：主页 / 新的冒险 / 存档 / 帮助 / 设置 ═══════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════
+     大厅外壳：左侧固定导航栏 + 右侧可滚动视图区
+     视图：主页 / 新的冒险 / 剧本 / 存档 / 数据看板 / 帮助 / 设置
+     ═══════════════════════════════════════════════════════════════ -->
 <div id="start-screen">
 
-  <!-- 主页 -->
-  <section id="view-home" class="start-view">
-    <div class="home-head">
-      <p class="home-kicker">TRPG 跑团手记 · 夜之城 2045</p>
-      <h1 class="brand-logo" aria-label="CYBERPUNK RED">CYBERPUNK <span class="brand-x">RED</span></h1>
-      <p class="home-sub">单 人 A I 跑 团 · 赛 博 朋 克 R E D</p>
-      <p class="home-rule"><span>◆</span></p>
-    </div>
-    <nav class="home-menu">
-      <button class="home-btn" data-view="story">
-        <span class="hb-icon">❖</span><b>剧本模式</b><small>互动剧 · 分支选择 · 多结局</small>
+  <aside class="rail">
+    <button class="rail-brand" data-view="home" title="回到主页">
+      <svg class="rail-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <path class="mark-body" d="M12 1 3 6.2v11.6L12 23l9-5.2V6.2L12 1z"/>
+        <path class="mark-inner" d="M12 4 6 7.5v9L12 20l6-3.5v-9L12 4z"/>
+      </svg>
+      <span class="rail-brand-text">
+        <b>CYBERPUNK</b>
+        <small>RED · 轻松模式</small>
+      </span>
+    </button>
+
+    <nav class="rail-nav" aria-label="主导航">
+      <button class="home-btn" data-view="home">
+        <span class="hb-icon">◈</span>
+        <span class="hb-main"><b>主页</b><small>最近旅程 · 快速开团</small></span>
       </button>
       <button class="home-btn" data-view="new">
-        <span class="hb-icon">✶</span><b>新的冒险</b><small>选择模组 · 创建角色</small>
+        <span class="hb-icon">✶</span>
+        <span class="hb-main"><b>新的冒险</b><small>选模组 · 建卡</small></span>
+      </button>
+      <button class="home-btn" data-view="story">
+        <span class="hb-icon">❖</span>
+        <span class="hb-main"><b>剧本模式</b><small>互动剧 · 分支结局</small></span>
       </button>
       <button class="home-btn" data-view="saves">
-        <span class="hb-icon">❧</span><b>存档</b><small>继续上次的旅程</small>
+        <span class="hb-icon">❧</span>
+        <span class="hb-main"><b>存档</b><small>续档 · 管理</small></span>
+      </button>
+      <button class="home-btn" data-view="stats">
+        <span class="hb-icon">▦</span>
+        <span class="hb-main"><b>数据看板</b><small>token 热力图 · 余额</small></span>
       </button>
       <button class="home-btn" data-view="help">
-        <span class="hb-icon">✎</span><b>帮助</b><small>玩法 · 规则速查</small>
+        <span class="hb-icon">✎</span>
+        <span class="hb-main"><b>帮助</b><small>操作 · 规则速查</small></span>
       </button>
       <button class="home-btn" data-view="settings">
-        <span class="hb-icon">⚙</span><b>设置</b><small>API 配置 · Token 用量</small>
+        <span class="hb-icon">⚙</span>
+        <span class="hb-main"><b>设置</b><small>API · AI 代打 · 音效</small></span>
       </button>
     </nav>
-    <p class="home-foot" id="home-status"></p>
-  </section>
 
-  <!-- 新的冒险 -->
-  <section id="view-new" class="start-view panel hidden">
-    <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
-      <h2 class="panel-title">新的冒险</h2><span class="panel-nav-sp"></span></div>
-
-    <div class="field">
-      <label>模组（原子化加载 · Cordis 注册表）</label>
-      <div id="module-list" class="module-list"></div>
-      <div class="row-btns">
-        <button class="btn ghost" id="btn-gen-module">✦ AI 生成模组</button>
-        <button class="btn ghost" id="btn-import-module">⇩ 导入模组</button>
-        <button class="btn ghost" id="btn-refresh-modules">↻ 刷新</button>
-      </div>
-      <div id="gen-form" class="subform hidden">
-        <p class="hint">用当前接入的 LLM 按规范生成一个全新模组（约 1~2 分钟）。规范见「帮助」。</p>
-        <input type="text" id="gen-theme" placeholder="主题，如：月夜狼人村庄的三幕恐怖故事">
-        <input type="text" id="gen-hints" placeholder="附加要求（可空）：基调、怪物、结局倾向…">
-        <div class="row-btns"><button class="btn solid" id="gen-go">开始生成</button></div>
-        <p class="hint" id="gen-msg"></p>
-      </div>
-      <div id="import-form" class="subform hidden">
-        <p class="hint">粘贴符合规范的模组 JSON（规范见「帮助」页）。</p>
-        <textarea id="import-json" rows="6" placeholder='{"id":"my_quest", ...}'></textarea>
-        <div class="row-btns"><button class="btn solid" id="import-go">校验并导入</button></div>
-        <p class="hint" id="import-msg"></p>
-      </div>
+    <div class="rail-foot">
+      <div id="rail-usage" class="rail-usage"></div>
+      <p class="rail-status" id="home-status"></p>
     </div>
+  </aside>
 
-    <div class="divider"></div>
-    <h2 class="panel-title">创建你的角色</h2>
-    <div id="create-form"></div>
-  </section>
+  <main class="shell-main">
 
-  <!-- 剧本模式（互动剧） -->
-  <section id="view-story" class="start-view panel hidden">
-    <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
-      <h2 class="panel-title">剧本模式 · 互动剧</h2><span class="panel-nav-sp"></span></div>
-    <p class="hint">自写分支剧本：你的选择决定走向；检定由规则引擎掷骰，PW 归零即进入死亡结局。
-    结局图鉴记录你达成的每一种结局。</p>
-    <div id="story-list"><p class="hint">正在读取…</p></div>
-  </section>
+    <!-- ───────────── 主页 ───────────── -->
+    <section id="view-home" class="start-view view-home">
+      <header class="hero">
+        <div class="hero-sky" aria-hidden="true">
+          <span class="hs-star s1"></span><span class="hs-star s2"></span>
+          <span class="hs-star s3"></span><span class="hs-star s4"></span>
+          <span class="hs-star s5"></span><span class="hs-star s6"></span>
+        </div>
+        <p class="hero-kicker">单人 AI 跑团 · 夜之城 2045 · 血染之时</p>
+        <h1 class="hero-title">CYBERPUNK <span class="hero-x">RED</span></h1>
+        <p class="hero-sub">1d10 + 属性 + 技能 vs 难度值 DV · 无等级 · 改进点成长</p>
+        <div class="hero-actions">
+          <button class="btn primary lg" data-view="new">开始新的冒险</button>
+          <button class="btn ghost lg" data-view="stats">查看用量与余额</button>
+        </div>
+        <div class="hero-city" aria-hidden="true"></div>
+      </header>
 
-  <!-- 存档 -->
-  <section id="view-saves" class="start-view panel hidden">
-    <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
-      <h2 class="panel-title">存档</h2><span class="panel-nav-sp"></span></div>
-    <div id="saves-body"><p class="hint">正在读取…</p></div>
-  </section>
+      <div class="home-grid">
+        <div class="home-col">
+          <div class="section-head">
+            <p class="section-label">最近一次旅程</p>
+            <button class="btn quiet tiny" data-view="saves">全部存档 →</button>
+          </div>
+          <div id="home-continue" class="hidden"></div>
 
-  <!-- 帮助 -->
-  <section id="view-help" class="start-view panel hidden">
-    <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
-      <h2 class="panel-title">帮助</h2><span class="panel-nav-sp"></span></div>
-    <div class="help-body">
-      <h3>模式</h3>
-      <p>· <b>剧本模式（互动剧）</b>：自写分支剧本（随模组分发）。选择主角后由你的选择决定走向，
-      检定由规则引擎掷骰，PW 归零即死亡结局；结局图鉴记录进度。<br>
-      · <b>AI 模式</b>：DM 与队友由 AI Agent 扮演。直接输入行动或对白，DM 裁决后由规则引擎执行。<br>
-      · <b>经典模式（离线）</b>：未接入 LLM 时按模组数据推进，规则引擎代管剧情与队友。</p>
-      <h3>玩法</h3>
-      <p>建卡不掷骰：从模组的<b>预设角色</b>（职业、十项属性、技能与装备都已定好）里挑一个，
-      填上你的名字或街头绰号，再点几名预设角色作为 AI 队友同行。<br>
-      探索时直接输入行动或对白（AI 模式），或按菜单选择（经典模式）；战斗按回合从底部按钮选择动作。
-      指令：<code>/状态 /背包 /义体 /急救 /稳定 /休整 /购买 /存档 /退出</code>。</p>
-      <h3>规则速查（赛博朋克 RED · 轻松模式）</h3>
-      <p>· 技能检定 = <b>1d10 + 属性 + 技能等级</b>，必须<b>高于</b>难度值 DV（PT）才算成功；平手时防守方获胜。
-      难度值五档：13 日常 / 15 困难 / 17 专业 / 21 英雄 / 24 不可思议。<br>
-      · 掷出 <b>10</b> 暴击成功（再掷一颗 d10 相加），掷出 <b>1</b> 暴击失败（再掷一颗 d10 相减）。
-      没有优势/劣势：可投入幸运点（每点 +1）、辅助技能 +1、投入四倍时间 +1。<br>
-      · PW（生命值）= 10 + 5 × ⌈(体格 + 意志力) ÷ 2⌉；PW 掉到一半即<b>重伤</b>（所有检定 -2），掉到 1 以下<b>濒死</b>（-4，移动 -6）。<br>
-      · 伤害先扣护甲 SP（每次挡下伤害后 SP -1，即磨损），再扣 PW；白刃战无视一半护甲。
-      伤害骰出现两个 6 即触发<b>致命伤</b>（2d6 表，附加无视护甲的伤害）。<br>
-      · 濒死时每回合开始掷生存检定（1d10，低于门槛 10 + 累积 + 致命伤才活下来，掷出 10 自动失败）；
-      <code>/稳定</code> 可把门槛归零，<code>/休整</code> 每个完整休息日恢复等于体格的 PW。<br>
-      · 成长用<b>改进点 IP</b>（没有等级与经验值）：技能 = 20 × 新等级（×2 技能翻倍），
-      职业特殊能力 = 60 × 新等级；属性不可提升。货币是<b>欧元（eb）</b>。<br>
-      · 义体（cyberware）提供强化，但每件都扣<b>人性</b>；人性上限 = 共情 × 10。</p>
-      <h3>接入 DeepSeek / GLM / Kimi / MiniMax</h3>
-      <p>到「设置 → API 配置」选择供应商并填入密钥即可；也支持环境变量方式
-      （<code>TRPG_LLM_API_KEY</code> 或供应商官方变量如 <code>DEEPSEEK_API_KEY</code>）。
-      所有供应商统一走 OpenAI 兼容 <code>/chat/completions</code> 协议。</p>
-      <h3>自己写模组</h3>
-      <p>每个模组是一个自包含 JSON 文件：<code>modules/&lt;id&gt;/module.json</code>，
-      放入后即可被加载。完整规范见项目内 <code>docs/MODULE_SPEC.md</code>，
-      内置模组 <code>modules/cpred-easy-mode/module.json</code> 就是现成模板
-      （含 <code>pregens</code> 预设角色与 <code>default_companions</code>）；
-      也可在「新的冒险」页用 AI 一键生成。</p>
-    </div>
-    <div id="rulebook" class="help-body"></div>
-  </section>
+          <p class="section-label mt">快捷入口</p>
+          <div class="launch-grid">
+            <button class="launch-card" data-view="story">
+              <span class="lc-icon">❖</span>
+              <b>剧本模式</b>
+              <small>自写分支剧本，8 个结局，检定由规则引擎掷骰</small>
+            </button>
+            <button class="launch-card" data-view="new">
+              <span class="lc-icon">✶</span>
+              <b>新的冒险</b>
+              <small>选择模组与预设角色，AI 队友同行</small>
+            </button>
+            <button class="launch-card" data-view="saves">
+              <span class="lc-icon">❧</span>
+              <b>存档</b>
+              <small>随时存档，战斗于本回合开始时落盘</small>
+            </button>
+            <button class="launch-card" data-view="stats">
+              <span class="lc-icon">▦</span>
+              <b>数据看板</b>
+              <small>token 用量热力图 · 账户余额 · 调用明细</small>
+            </button>
+            <button class="launch-card" data-view="settings">
+              <span class="lc-icon">⚙</span>
+              <b>设置</b>
+              <small>接入 DeepSeek / GLM / Kimi，AI 代打与音效</small>
+            </button>
+            <button class="launch-card" data-view="help">
+              <span class="lc-icon">✎</span>
+              <b>帮助</b>
+              <small>操作方式、规则速查与模组编写规范</small>
+            </button>
+          </div>
+        </div>
 
-  <!-- 设置 -->
-  <section id="view-settings" class="start-view panel hidden">
-    <div class="panel-nav"><button class="btn ghost back-home">← 返回</button>
-      <h2 class="panel-title">设置</h2><span class="panel-nav-sp"></span></div>
-
-    <div class="field">
-      <label>API 配置（OpenAI 兼容协议 · /chat/completions）</label>
-      <div id="provider-cards" class="card-row"></div>
-      <div class="settings-grid">
-        <div><label class="mini">API 地址</label><input type="text" id="set-base"></div>
-        <div><label class="mini">模型</label><input type="text" id="set-model" list="model-list">
-          <datalist id="model-list"></datalist></div>
-        <div><label class="mini">API 密钥</label><input type="password" id="set-key"
-          placeholder="仅保存在本服务内存中，不会落盘"></div>
+        <aside class="home-aside">
+          <section class="card home-usage-card">
+            <div class="card-head">
+              <h3>用量概览</h3>
+              <button class="btn quiet tiny" data-view="stats">看板 →</button>
+            </div>
+            <div id="home-usage" class="home-usage"></div>
+          </section>
+          <section class="card home-brief-card">
+            <div class="card-head"><h3>本局速览</h3></div>
+            <div class="home-brief">
+              <p><span>规则</span>《赛博朋克 RED》轻松模式</p>
+              <p><span>舞台</span>2045 年 · 夜之城</p>
+              <p><span>剧本</span>《抢钱行动》三幕六场</p>
+              <p><span>操作</span>数字键选行动 · 滚轮缩放地图</p>
+            </div>
+          </section>
+        </aside>
       </div>
-      <div class="row-btns">
-        <button class="btn solid" id="set-save">保存配置</button>
-        <button class="btn ghost" id="set-test">测试连接</button>
-      </div>
-      <p class="hint" id="set-msg"></p>
-      <p class="hint" id="set-env-hint"></p>
-    </div>
+    </section>
 
-    <div class="field">
-      <label>AI 玩家角色（AI 代打 · 实验性）</label>
-      <label class="toggle"><input type="checkbox" id="aipc-on">
-        <span>让 AI 代打你的角色（需要已接入 LLM）</span></label>
-      <label class="mini" for="aipc-persona">你的 persona（可空）</label>
-      <textarea id="aipc-persona" rows="3" maxlength="1000"
-        placeholder="希望队伍如何称呼/看待「玩家」：来历、口癖、相处方式……"></textarea>
-      <div class="row-btns">
-        <button class="btn solid" id="aipc-save">保存 AI 代打设置</button>
-      </div>
-      <p class="hint" id="aipc-llm-hint"></p>
-      <p class="hint" id="aipc-msg"></p>
-    </div>
+    <!-- ───────────── 新的冒险 ───────────── -->
+    <section id="view-new" class="start-view hidden">
+      <header class="page-head">
+        <div>
+          <p class="page-kicker">NEW RUN</p>
+          <h2 class="page-title">新的冒险</h2>
+          <p class="page-sub">选一个模组，从预设角色里挑人，填个绰号就能上工</p>
+        </div>
+        <button class="btn ghost back-home">← 返回主页</button>
+      </header>
 
-    <div class="field">
-      <label>音效</label>
-      <div class="sound-row">
-        <label class="toggle"><input type="checkbox" id="snd-on">
-          <span>游戏音效（合成音源，无外部文件）</span></label>
-        <label class="mini" style="display:flex;align-items:center;gap:10px;min-width:220px">
-          音量<input type="range" id="snd-vol" min="0" max="100" value="70" style="flex:1">
-        </label>
-        <button class="btn ghost" id="snd-test" style="width:auto;padding:7px 14px">试听</button>
-      </div>
-      <div class="hint">骰子、命中、暴击、改进点与终局各有音效；设置保存在本浏览器。</div>
-    </div>
+      <div class="stack">
+        <section class="card">
+          <div class="card-head">
+            <h3>模组</h3>
+            <div class="row-btns">
+              <button class="btn ghost tiny" id="btn-gen-module">✦ AI 生成</button>
+              <button class="btn ghost tiny" id="btn-import-module">⇩ 导入</button>
+              <button class="btn ghost tiny" id="btn-refresh-modules">↻ 刷新</button>
+            </div>
+          </div>
+          <div id="module-list" class="module-list"></div>
 
-    <div class="divider"></div>
-    <div class="field">
-      <label>Token 用量记录</label>
-      <div id="usage-box"><p class="hint">正在读取…</p></div>
-      <div class="row-btns">
-        <button class="btn ghost" id="usage-refresh">↻ 刷新</button>
-        <button class="btn ghost" id="usage-clear">清空记录</button>
+          <div id="gen-form" class="subform hidden">
+            <p class="hint">用当前接入的 LLM 按规范生成一个全新模组（约 1~2 分钟）。规范见「帮助」。</p>
+            <input type="text" id="gen-theme" placeholder="主题，如：月夜狼人村庄的三幕恐怖故事">
+            <input type="text" id="gen-hints" placeholder="附加要求（可空）：基调、怪物、结局倾向…">
+            <div class="row-btns"><button class="btn solid" id="gen-go">开始生成</button></div>
+            <p class="hint" id="gen-msg"></p>
+          </div>
+          <div id="import-form" class="subform hidden">
+            <p class="hint">粘贴符合规范的模组 JSON（规范见「帮助」页）。</p>
+            <textarea id="import-json" rows="6" placeholder='{"id":"my_quest", ...}'></textarea>
+            <div class="row-btns"><button class="btn solid" id="import-go">校验并导入</button></div>
+            <p class="hint" id="import-msg"></p>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h3>创建你的角色</h3></div>
+          <div id="create-form"></div>
+        </section>
       </div>
-    </div>
-  </section>
+    </section>
+
+    <!-- ───────────── 剧本模式 ───────────── -->
+    <section id="view-story" class="start-view hidden">
+      <header class="page-head">
+        <div>
+          <p class="page-kicker">INTERACTIVE FICTION</p>
+          <h2 class="page-title">剧本模式 · 互动剧</h2>
+          <p class="page-sub">你的选择决定走向；检定由规则引擎掷骰，PW 归零即进入死亡结局</p>
+        </div>
+        <button class="btn ghost back-home">← 返回主页</button>
+      </header>
+      <div class="stack">
+        <div id="story-list"><p class="hint">正在读取…</p></div>
+      </div>
+    </section>
+
+    <!-- ───────────── 存档 ───────────── -->
+    <section id="view-saves" class="start-view hidden">
+      <header class="page-head">
+        <div>
+          <p class="page-kicker">SAVED RUNS</p>
+          <h2 class="page-title">存档</h2>
+          <p class="page-sub">读档后战斗遭遇会从头开始，探索进度保留</p>
+        </div>
+        <button class="btn ghost back-home">← 返回主页</button>
+      </header>
+      <div class="stack">
+        <div id="saves-body"><p class="hint">正在读取…</p></div>
+      </div>
+    </section>
+
+    <!-- ───────────── 数据看板 ───────────── -->
+    <section id="view-stats" class="start-view hidden">
+      <header class="page-head">
+        <div>
+          <p class="page-kicker">TELEMETRY</p>
+          <h2 class="page-title">数据看板</h2>
+          <p class="page-sub">token 用量热力图 · 账户余额 · 调用明细</p>
+        </div>
+        <div class="page-actions">
+          <div class="seg" id="heat-range">
+            <button type="button" data-days="120">近 4 个月</button>
+            <button type="button" data-days="210">近 7 个月</button>
+            <button type="button" data-days="371" class="on">近一年</button>
+          </div>
+          <button class="btn ghost back-home">← 返回</button>
+        </div>
+      </header>
+
+      <div id="kpi-row" class="kpi-row"></div>
+
+      <div class="stats-grid">
+        <section class="card heat-card">
+          <div class="card-head">
+            <h3>token 用量热力图</h3>
+            <p class="card-sub" id="heat-summary"></p>
+          </div>
+          <div id="heatmap" class="heatmap"><p class="hint">正在读取用量记录…</p></div>
+          <div id="heat-foot" class="heat-foot"></div>
+        </section>
+
+        <section class="card balance-card" id="balance-card"></section>
+
+        <section class="card">
+          <div class="card-head"><h3>按 Agent 分布</h3></div>
+          <div id="agent-bars" class="bar-list"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h3>按模型</h3></div>
+          <div id="model-bars" class="bar-list"></div>
+        </section>
+
+        <section class="card recent-card">
+          <div class="card-head">
+            <h3>最近调用</h3>
+            <div class="row-btns">
+              <button class="btn quiet tiny" id="stats-refresh">↻ 刷新</button>
+              <button class="btn quiet tiny" id="stats-clear">清空记录</button>
+            </div>
+          </div>
+          <div id="usage-table" class="table-wrap"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ───────────── 帮助 ───────────── -->
+    <section id="view-help" class="start-view hidden">
+      <header class="page-head">
+        <div>
+          <p class="page-kicker">MANUAL</p>
+          <h2 class="page-title">帮助</h2>
+          <p class="page-sub">模式说明 · 玩法 · 规则速查 · 接入与模组编写</p>
+        </div>
+        <button class="btn ghost back-home">← 返回主页</button>
+      </header>
+      <div class="stack">
+        <section class="card">
+          <div class="help-body">
+            <h3>模式</h3>
+            <p>· <b>剧本模式（互动剧）</b>：自写分支剧本（随模组分发）。选择主角后由你的选择决定走向，
+            检定由规则引擎掷骰，PW 归零即死亡结局；结局图鉴记录进度。<br>
+            · <b>AI 模式</b>：DM 与队友由 AI Agent 扮演。直接输入行动或对白，DM 裁决后由规则引擎执行。<br>
+            · <b>经典模式（离线）</b>：未接入 LLM 时按模组数据推进，规则引擎代管剧情与队友。</p>
+            <h3>玩法</h3>
+            <p>建卡不掷骰：从模组的<b>预设角色</b>（职业、十项属性、技能与装备都已定好）里挑一个，
+            填上你的名字或街头绰号，再点几名预设角色作为 AI 队友同行。<br>
+            探索时直接输入行动或对白（AI 模式），或按菜单选择（经典模式）；战斗按回合从底部按钮选择动作。
+            指令：<code>/状态 /背包 /义体 /急救 /稳定 /休整 /购买 /存档 /退出</code>。</p>
+            <h3>规则速查（赛博朋克 RED · 轻松模式）</h3>
+            <p>· 技能检定 = <b>1d10 + 属性 + 技能等级</b>，必须<b>高于</b>难度值 DV（PT）才算成功；平手时防守方获胜。
+            难度值五档：13 日常 / 15 困难 / 17 专业 / 21 英雄 / 24 不可思议。<br>
+            · 掷出 <b>10</b> 暴击成功（再掷一颗 d10 相加），掷出 <b>1</b> 暴击失败（再掷一颗 d10 相减）。
+            没有优势/劣势：可投入幸运点（每点 +1）、辅助技能 +1、投入四倍时间 +1。<br>
+            · PW（生命值）= 10 + 5 × ⌈(体格 + 意志力) ÷ 2⌉；PW 掉到一半即<b>重伤</b>（所有检定 -2），掉到 1 以下<b>濒死</b>（-4，移动 -6）。<br>
+            · 伤害先扣护甲 SP（每次挡下伤害后 SP -1，即磨损），再扣 PW；白刃战无视一半护甲。
+            伤害骰出现两个 6 即触发<b>致命伤</b>（2d6 表，附加无视护甲的伤害）。<br>
+            · 濒死时每回合开始掷生存检定（1d10，低于门槛 10 + 累积 + 致命伤才活下来，掷出 10 自动失败）；
+            <code>/稳定</code> 可把门槛归零，<code>/休整</code> 每个完整休息日恢复等于体格的 PW。<br>
+            · 成长用<b>改进点 IP</b>（没有等级与经验值）：技能 = 20 × 新等级（×2 技能翻倍），
+            职业特殊能力 = 60 × 新等级；属性不可提升。货币是<b>欧元（eb）</b>。<br>
+            · 义体（cyberware）提供强化，但每件都扣<b>人性</b>；人性上限 = 共情 × 10。</p>
+            <h3>接入 DeepSeek / GLM / Kimi / MiniMax</h3>
+            <p>到「设置 → API 配置」选择供应商并填入密钥即可；也支持环境变量方式
+            （<code>TRPG_LLM_API_KEY</code> 或供应商官方变量如 <code>DEEPSEEK_API_KEY</code>）。
+            所有供应商统一走 OpenAI 兼容 <code>/chat/completions</code> 协议。<br>
+            接入后「数据看板」会显示 token 用量热力图与账户余额；余额接口不可用的供应商仍可用热力图观察消耗。</p>
+            <h3>自己写模组</h3>
+            <p>每个模组是一个自包含 JSON 文件：<code>modules/&lt;id&gt;/module.json</code>，
+            放入后即可被加载。完整规范见项目内 <code>docs/MODULE_SPEC.md</code>，
+            内置模组 <code>modules/cpred-easy-mode/module.json</code> 就是现成模板；
+            也可在「新的冒险」页用 AI 一键生成。</p>
+          </div>
+          <div id="rulebook" class="help-body"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ───────────── 设置 ───────────── -->
+    <section id="view-settings" class="start-view hidden">
+      <header class="page-head">
+        <div>
+          <p class="page-kicker">SETTINGS</p>
+          <h2 class="page-title">设置</h2>
+          <p class="page-sub">密钥只存在本服务内存或环境变量中，永不落盘</p>
+        </div>
+        <button class="btn ghost back-home">← 返回主页</button>
+      </header>
+
+      <div class="stack">
+        <section class="card">
+          <div class="card-head">
+            <h3>API 配置</h3>
+            <span class="card-sub">OpenAI 兼容协议 · /chat/completions</span>
+          </div>
+          <div id="provider-cards" class="card-row"></div>
+          <div class="settings-grid">
+            <div><label class="mini">API 地址</label><input type="text" id="set-base"></div>
+            <div><label class="mini">模型</label><input type="text" id="set-model" list="model-list">
+              <datalist id="model-list"></datalist></div>
+            <div><label class="mini">API 密钥</label><input type="password" id="set-key"
+              placeholder="仅保存在本服务内存中，不会落盘"></div>
+          </div>
+          <div class="row-btns">
+            <button class="btn solid" id="set-save">保存配置</button>
+            <button class="btn ghost" id="set-test">测试连接</button>
+          </div>
+          <p class="hint" id="set-msg"></p>
+          <p class="hint" id="set-env-hint"></p>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h3>AI 玩家角色</h3>
+            <span class="card-sub">AI 代打 · 实验性</span>
+          </div>
+          <label class="toggle"><input type="checkbox" id="aipc-on">
+            <span>让 AI 代打你的角色（需要已接入 LLM）</span></label>
+          <label class="mini mt" for="aipc-persona">你的 persona（可空）</label>
+          <textarea id="aipc-persona" rows="3" maxlength="1000"
+            placeholder="希望队伍如何称呼/看待「玩家」：来历、口癖、相处方式……"></textarea>
+          <div class="row-btns">
+            <button class="btn solid" id="aipc-save">保存 AI 代打设置</button>
+          </div>
+          <p class="hint" id="aipc-llm-hint"></p>
+          <p class="hint" id="aipc-msg"></p>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h3>音效</h3><span class="card-sub">合成音源，无外部文件</span></div>
+          <div class="sound-row">
+            <label class="toggle"><input type="checkbox" id="snd-on">
+              <span>游戏音效</span></label>
+            <label class="mini range-label">音量<input type="range" id="snd-vol" min="0" max="100" value="70"></label>
+            <button class="btn ghost tiny" id="snd-test">试听</button>
+          </div>
+          <p class="hint">骰子、命中、暴击、改进点与终局各有音效；设置保存在本浏览器。</p>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h3>Token 用量</h3>
+            <button class="btn quiet tiny" data-view="stats">打开数据看板 →</button>
+          </div>
+          <div id="usage-box"><p class="hint">正在读取…</p></div>
+          <div class="row-btns">
+            <button class="btn ghost tiny" id="usage-refresh">↻ 刷新</button>
+            <button class="btn ghost tiny" id="usage-clear">清空记录</button>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
 </div>
 
-<!-- ═══════════════ 对局界面 ═══════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════
+     对局界面：顶栏 / 左栏（场景 + 队伍）/ 中栏（编年史 + 行动条）
+     / 右栏（战术地图）
+     ═══════════════════════════════════════════════════════════════ -->
 <div id="app" class="hidden">
   <header id="topbar">
     <div class="brand">
@@ -206,8 +423,15 @@
     <div class="top-right">
       <span class="top-crumb" id="scene-crumb"></span>
       <span class="badge" id="mode-badge"></span>
-      <span class="ip-chip" id="ip-chip" title="队伍改进点 IP"></span>
-      <span class="eb-chip" id="eb-chip" title="队伍欧元（eb）"></span>
+      <div class="top-chips">
+        <span class="chip ip-chip" id="ip-chip" title="队伍改进点 IP"></span>
+        <span class="chip eb-chip" id="eb-chip" title="队伍欧元（eb）"></span>
+        <button class="chip bal-chip" id="balance-chip" title="账户余额 · 点击查看数据看板"></button>
+      </div>
+      <button class="btn ghost" id="save-btn" title="随时存档（战斗中于本回合开始时落盘）">
+        <span class="sv-dot"></span>保存</button>
+      <button class="btn ghost icon" id="btn-metrics" title="数据看板（token 用量 / 余额）">▦</button>
+      <button class="btn ghost icon" id="btn-help-ingame" title="操作与规则速查">？</button>
     </div>
   </header>
 
@@ -239,41 +463,73 @@
       </div>
     </aside>
 
+    <section id="stage">
+      <div id="chronicle" aria-live="polite"></div>
+      <div id="bottombar">
+        <div id="ctx-bar" class="hidden">
+          <span class="ctx-kind" id="ctx-kind"></span>
+          <span class="ctx-text" id="ctx-text"></span>
+          <span class="ctx-eco" id="ctx-eco"></span>
+        </div>
+        <div id="action-row">
+          <div id="actor-card" class="empty">等待世界回应……</div>
+          <div id="action-main">
+            <div id="choices" class="hidden"></div>
+            <form id="ask-form" class="hidden">
+              <input id="ask-box" autocomplete="off" placeholder="记述你的行动或对白…">
+              <button type="submit" class="btn solid">落笔</button>
+            </form>
+            <div id="idle-hint">等待世界回应……</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="map-panel" class="hidden">
       <div class="map-head">
         <p class="side-label" id="map-label">战术地图</p>
         <div class="map-tools">
           <button class="btn ghost tiny" id="btn-map-grid" title="显示/隐藏网格线">格</button>
+          <button class="btn ghost tiny" id="btn-map-fit" title="缩放至适应窗口">⤢</button>
           <button class="btn ghost tiny" id="btn-map-fold" title="收起/展开地图">《</button>
         </div>
       </div>
-      <div id="map-viewport">
-        <img id="map-bg" alt="" draggable="false">
-        <div id="map-gridlines" class="hidden"></div>
-        <div id="map-tokens"></div>
-        <div id="map-move-hint" class="hidden">点击地图落子（1 格 = 2 米）</div>
+      <div class="map-stage" id="map-viewport">
+        <div class="map-canvas" id="map-canvas">
+          <div class="map-cells" id="map-cells"></div>
+          <svg class="map-svg" id="map-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div id="map-tokens"></div>
+        </div>
+        <div id="map-move-hint" class="map-cell-hint hidden">点击地图落子（1 格 = 2 米）</div>
       </div>
-    </section>
-
-    <section id="stage">
-      <div id="chronicle" aria-live="polite"></div>
-      <div id="bottombar">
-        <div id="choices" class="hidden"></div>
-        <form id="ask-form" class="hidden">
-          <input id="ask-box" autocomplete="off" placeholder="记述你的行动或对白…">
-          <button type="submit" class="btn solid">落笔</button>
-        </form>
-        <div id="idle-hint">等待世界回应……</div>
-      </div>
+      <div class="map-legend" id="map-legend"></div>
+      <div class="map-inspect" id="map-inspect">悬停格子查看距离与射程判定；滚轮缩放，拖动平移。</div>
     </section>
   </main>
 </div>
 
+<!-- ═══════════════ 数据看板叠加层（对局中随时打开） ═══════════════ -->
+<div id="metrics" class="hidden">
+  <div class="metrics-card">
+    <header class="metrics-head">
+      <div>
+        <p class="page-kicker">TELEMETRY</p>
+        <h3>数据看板</h3>
+      </div>
+      <button class="btn ghost icon" id="metrics-close" title="关闭">✕</button>
+    </header>
+    <div id="metrics-body" class="metrics-body"></div>
+  </div>
+</div>
+
 <!-- ═══════════════ 特效叠加层 ═══════════════ -->
+<div id="toasts" aria-live="polite"></div>
+<div id="danger-vignette" aria-hidden="true"></div>
+<div id="dossier" class="hidden"></div>
 <div id="dice-overlay" class="hidden" aria-hidden="true"></div>
 <div id="flourish" class="hidden" aria-hidden="true"></div>
-<div id="ending" class="hidden" aria-hidden="true"></div>
-<div id="tour" class="hidden" aria-hidden="true"></div>
+<div id="ending" class="hidden"></div>
+<div id="tour" class="hidden"></div>
 
 <script src="/static/fx.js"></script>
 <script src="/static/app.js"></script>

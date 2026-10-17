@@ -14,3 +14,5 @@ Additional Ressources/
 # 归档：移植规格 / PDF 反推等开发过程资料，与权限修复记录（不入库）
 _archive/
 _acl-recovery/
+# 临时探针 / 验收脚本与截图草稿（不入库）
+_tmptest/

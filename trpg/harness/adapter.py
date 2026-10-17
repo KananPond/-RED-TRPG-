@@ -72,6 +72,16 @@ class _PinnedRedirectHandler(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_PinnedRedirectHandler)
 
 
+def validate_endpoint(url: str) -> None:
+    """公开的端点校验（balance 等只读旁路复用同一套 SSRF 边界）。"""
+    _validate_endpoint(url)
+
+
+def open_url(req: urllib.request.Request, timeout: float = 30.0):
+    """公开的 opener 入口：复用逐跳重定向复检。"""
+    return _OPENER.open(req, timeout=timeout)
+
+
 class ModelAdapter(ABC):
     name = "base"
 

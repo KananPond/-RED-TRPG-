@@ -24,8 +24,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from helpers import (ScriptRng, fixture_module, make_pc,  # noqa: E402
-                     make_state)
+from helpers import (ScriptRng, fixture_module, isolate_saves,  # noqa: E402
+                     make_pc, make_state, restore_cwd)
 from test_combat import corridor, duel, make_foe, PISTOL   # noqa: E402
 
 from trpg.game import state as G                          # noqa: E402
@@ -37,6 +37,18 @@ from trpg.rules.character import (COND_DEAD,              # noqa: E402
                                    COND_UNCONSCIOUS, Character)
 from trpg.rules.combat import Encounter                   # noqa: E402
 from trpg.ui.cli import AutoUI                            # noqa: E402
+
+
+# autosave 写的是相对路径 saves/game.json：切到临时目录，别覆盖玩家存档
+_ISOLATION: dict = {}
+
+
+def setUpModule():
+    _ISOLATION["cwd"], _ISOLATION["tmp"] = isolate_saves()
+
+
+def tearDownModule():
+    restore_cwd(_ISOLATION.pop("cwd", os.getcwd()), _ISOLATION.pop("tmp", None))
 
 
 def shop_state(eurobucks=200, module=None):

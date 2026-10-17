@@ -22,12 +22,25 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from helpers import (CountUI, DM_MARK, is_fresh_run,  # noqa: E402
-                     make_agent_session, make_state, message_system)
+                     isolate_saves, make_agent_session, make_state,
+                     message_system, restore_cwd)
 
 from trpg.game import state as G                        # noqa: E402
 from trpg.game.aipc import AIPCController               # noqa: E402
 from trpg.harness.models import ModelResponse, ToolCall  # noqa: E402
 from trpg.st import CharacterCard, Persona              # noqa: E402
+
+
+# autosave 写的是相对路径 saves/game.json：切到临时目录，别覆盖玩家存档
+_ISOLATION: dict = {}
+
+
+def setUpModule():
+    _ISOLATION["cwd"], _ISOLATION["tmp"] = isolate_saves()
+
+
+def tearDownModule():
+    restore_cwd(_ISOLATION.pop("cwd", os.getcwd()), _ISOLATION.pop("tmp", None))
 
 
 class AipcScript:

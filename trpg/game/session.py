@@ -173,9 +173,10 @@ class GameSession:
 
     def broadcast_map(self) -> None:
         """把当前战术地图快照推给 UI（Web 为 SSE map 事件，终端静默记录）。
-        变更点：enter_scene 换图、DM map_update 工具、战斗布子/走位/写回。"""
+        变更点：enter_scene 换图、DM map_update 工具、战斗布子/走位/写回。
+        战斗中附带掩体实时耐久（VTT 掩体块与耐久条的数据源）。"""
         try:
-            self.ui.map_update(self.state.map_brief())
+            self.ui.map_update(self.state.map_brief(self.encounter))
         except Exception:  # noqa: BLE001 —— UI 广播不阻塞对局
             pass
 
@@ -1298,6 +1299,7 @@ class GameSession:
         pc = self.state.player
         if not enc.alive(pc):
             return
+        self._poll_combat_command()      # 战斗期的随时存档（网页顶栏按钮）
         stall = 0
         move_refused = 0
         ended = False
@@ -1346,6 +1348,29 @@ class GameSession:
                     self._resolve_choice(enc, pc, self._choice_for_second_shot(shot[idx]),
                                          enc.alive("enemy"))
                 enc.use_bonus(pc)          # 无论打不打，第二发机会都用掉
+
+    def _poll_combat_command(self) -> None:
+        """战斗期取一次网页端指令槽（``WebUI.post_command``）。
+
+        用途：顶栏「保存」按钮随时可用——战斗回合开始前落盘。终端 UI 没有
+        ``poll_command``（``getattr`` 兜底恒 None），行为与从前完全一致；
+        战斗期只认存档指令，其余交回菜单（避免在战斗正中间弹出购买/休整菜单）。"""
+        ui = self.ui
+        if not hasattr(ui, "poll_command"):
+            return
+        try:
+            cmd = ui.poll_command(0.0)
+        except Exception:  # noqa: BLE001 —— UI 桩实现有异时不阻塞战斗
+            return
+        if not cmd:
+            return
+        if cmd in ("/存档", "/保存"):
+            path = G.save_game(self.state, SAVE_FILE)
+            self.ui.system_line(f"已保存到 {path}")
+        elif cmd == "/状态":
+            self.ui.raw(self.state.party_snapshot())
+        else:
+            self.ui.system_line("（战斗中仅支持 /状态 /存档 /退出）")
 
     def _choice_for_second_shot(self, label: str) -> str:
         """把「第二发：武器 → 目标」标签还原成回合动作标签。"""
@@ -1734,7 +1759,10 @@ class GameSession:
             self._record_usage(agent, result)
         except RuntimeError as e:  # LLM 不可达 → 启发式兜底
             self.ui.system_line(f"（Agent 调用失败，{pc.name} 依靠战斗直觉行动：{e}）")
+            self._sync_map_from_encounter(enc)   # 掩体耐久可能已变化
             return False
+        # 攻击会打掉掩体耐久（掩体挡子弹），走位会挪棋子：回合结束即刷新棋盘
+        self._sync_map_from_encounter(enc)
         return any(t["name"] == "combat_action" for t in result.tool_trace)
 
     def _scripted_pc_turn(self, enc: Encounter, pc: Character) -> None:

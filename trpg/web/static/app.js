@@ -6,7 +6,8 @@ const S = { lastId: 0, es: null, meta: null, started: false, ask: null, live: fa
             module: "cpred-easy-mode", provider: "deepseek",
             ip: null, eurobucks: null, aipc: null,
             aipcGame: false, over: false,
-            map: null, mapKey: null, mapMove: false, mapFold: false };
+            map: null, mapKey: null, mapMove: false, mapFold: false,
+            eco: null, ctx: null, encounter: null, gen: undefined };
 /* 十项属性（赛博朋克 RED） */
 const STAT_CN = { int: "智力", ref: "反应", dex: "敏捷", tech: "技术", cool: "魅力",
                   will: "意志力", luck: "幸运", move: "机动", body: "体格", emp: "共情" };
@@ -22,10 +23,18 @@ async function jfetch(url, opts) {
   return { ok: r.ok, status: r.status, body };
 }
 
-/* ═══════════ 开始页视图路由 ═══════════ */
+/* ═══════════ 大厅视图路由 ═══════════
+   视图：home 主页 / new 新的冒险 / story 剧本 / saves 存档
+        / stats 数据看板 / help 帮助 / settings 设置
+   导航项（.home-btn）与页面内的快捷入口共用 [data-view]：一处绑定，全部生效。 */
 function showView(name) {
   document.querySelectorAll(".start-view").forEach(v => v.classList.add("hidden"));
-  $("#view-" + name).classList.remove("hidden");
+  const view = $("#view-" + name);
+  if (view) view.classList.remove("hidden");
+  document.querySelectorAll("[data-view]").forEach(b => {
+    if (!b.classList.contains("home-btn")) return;
+    b.classList.toggle("on", b.dataset.view === name);
+  });
   if (name === "new") {
     ensureMeta().then(() => {
       renderModuleList();
@@ -36,8 +45,20 @@ function showView(name) {
   if (name === "saves") renderSaves();
   if (name === "help") renderRulebook();
   if (name === "settings") { renderSettings(); renderUsage(); renderSoundSettings(); }
+  if (name === "stats") renderStats();
+  if (name === "home") {
+    renderHomeUsage();
+    // 「最近一次旅程」与接入状态：不依赖先访问「新的冒险」页
+    ensureMeta().then(m => {
+      if (!m) return;
+      renderHomeContinue(m);
+      renderHomeStatus(m);
+    });
+  }
+  const main = $(".shell-main");
+  if (main) main.scrollTop = 0;
 }
-document.querySelectorAll(".home-btn").forEach(b =>
+document.querySelectorAll("[data-view]").forEach(b =>
   b.addEventListener("click", () => showView(b.dataset.view)));
 document.querySelectorAll(".back-home").forEach(b =>
   b.addEventListener("click", () => showView("home")));
@@ -78,9 +99,46 @@ async function renderModuleList() {
     box.appendChild(card);
   });
   // 已存 llm 配置提示
-  $("#home-status").textContent = meta.llm.llm_active
+  renderHomeStatus(meta);
+  renderHomeContinue(meta);
+}
+
+/* 侧栏底的接入状态（未接入 LLM 时说明离线可玩） */
+function renderHomeStatus(meta) {
+  const el = $("#home-status");
+  if (!el || !meta) return;
+  el.textContent = meta.llm.llm_active
     ? `已接入 ${providerName(meta, meta.llm.provider)} · ${meta.llm.model}`
     : "未接入 LLM —— 经典模式离线可玩；剧本模式（互动剧）无需 LLM";
+}
+
+/* 主页"最近一次旅程"：直接续档（不用先翻存档页） */
+async function renderHomeContinue(meta) {
+  const box = $("#home-continue");
+  if (!box) return;
+  const sr = await jfetch("/api/saves");
+  const saves = sr.body.saves || [];
+  if (!saves.length) {
+    box.classList.remove("hidden");
+    box.innerHTML = `<p class="side-empty" style="margin-bottom:12px">还没有存档 ·
+      按下「新的冒险」接第一单活。</p>`;
+    return;
+  }
+  const s = saves[0];
+  const mod = ((meta && meta.modules) || []).find(m => m.id === s.module_id);
+  const title = mod ? mod.title : s.module_id;
+  const d = new Date(s.ts * 1000);
+  box.classList.remove("hidden");
+  box.innerHTML = `
+    <button class="home-continue-card" id="home-continue-go">
+      <b>继续冒险 ▶</b>
+      <small>《${escapeHtml(title)}》· 场景 ${escapeHtml(s.scene_id || "?")}
+        · ${d.toLocaleString("zh-CN")}</small>
+    </button>`;
+  $("#home-continue-go").addEventListener("click", () => {
+    AudioFX.click();
+    startGame({ continue: true, save: s.file });
+  });
 }
 
 function providerName(meta, key) {
@@ -323,7 +381,7 @@ $("#set-save").addEventListener("click", async () => {
   msg.innerHTML = r.ok
     ? `<span class="okok">已保存。${r.body.settings.llm_active ? "AI 模式就绪。" : ""}</span>`
     : `<span class="err">${r.body.error}</span>`;
-  if (r.ok) renderSettings();
+  if (r.ok) { renderSettings(); renderStats(true); }
 });
 $("#set-test").addEventListener("click", async () => {
   const msg = $("#set-msg");
@@ -350,35 +408,421 @@ $("#aipc-save").addEventListener("click", async () => {
   renderAipcSettings();
 });
 
-/* ═══════════ 设置页：Token 用量 ═══════════ */
-async function renderUsage() {
-  const r = await jfetch("/api/usage");
-  if (!r.ok) return;
+/* ═══════════════════════════════════════════════════════════════
+   用量 / 余额 / 数据看板
+   ───────────────────────────────────────────────────────────────
+   数据源：
+     GET /api/usage    逐次明细 + 按日聚合 + GitHub 贡献图式热力图布局
+     GET /api/balance  供应商账户余额（只读；服务端 60 秒缓存，密钥不出服务端）
+   热力图按日聚合、跨年不丢；余额查不到时仍展示本地 token 消耗。
+   ═══════════════════════════════════════════════════════════════ */
+const USAGE = { data: null, at: 0, days: 371, span: 0, balance: null, balAt: 0 };
+const NUM_FMT = new Intl.NumberFormat("zh-CN");
+const HEAT_RANGE_KEY = "trpg.usage.days";
+
+function fmtInt(v) { return NUM_FMT.format(Math.round(Number(v) || 0)); }
+
+/* token 数量缩写：1.2k / 3.45M */
+function fmtTok(v) {
+  const n = Number(v) || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e4) return (n / 1e3).toFixed(1) + "k";
+  return fmtInt(n);
+}
+
+/* 人民币金额（估算花费） */
+function fmtCny(v) {
+  const n = Number(v) || 0;
+  return "¥" + n.toFixed(n >= 1 ? 2 : 3);
+}
+
+function fmtDay(iso) {
+  const parts = String(iso || "").split("-");
+  if (parts.length !== 3) return String(iso || "");
+  return `${Number(parts[1])}月${Number(parts[2])}日`;
+}
+
+function fmtStamp(ts) {
+  const d = new Date((Number(ts) || 0) * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/* title 等属性值转义 */
+function attr(s) { return escapeHtml(s); }
+
+async function loadUsage(force, days) {
+  const span = days || USAGE.days;
+  if (!force && USAGE.data && USAGE.span === span && USAGE.at
+      && Date.now() - USAGE.at < 20000) return USAGE.data;
+  const r = await jfetch("/api/usage?days=" + span);
+  if (!r.ok) return USAGE.data;
+  USAGE.data = r.body;
+  USAGE.at = Date.now();
+  USAGE.span = span;
+  return USAGE.data;
+}
+
+async function loadBalance(force) {
+  if (!force && USAGE.balance && Date.now() - USAGE.balAt < 60000) return USAGE.balance;
+  const r = await jfetch("/api/balance" + (force ? "?refresh=1" : ""));
+  if (!r.ok) return USAGE.balance;
+  USAGE.balance = r.body;
+  USAGE.balAt = Date.now();
+  return USAGE.balance;
+}
+
+/* ── 热力图（GitHub 贡献图：列 = 周，行 = 周日…周六） ── */
+function heatCellsHtml(heat) {
+  let out = "";
+  (heat.weeks || []).forEach(week => week.forEach(cell => {
+    if (!cell) { out += '<i class="heat-cell is-void"></i>'; return; }
+    const tip = cell.v
+      ? `${fmtDay(cell.d)} · ${fmtInt(cell.v)} tok · ${fmtInt(cell.n)} 次调用`
+        + `（输入 ${fmtInt(cell.p)} / 输出 ${fmtInt(cell.c)}）`
+      : `${fmtDay(cell.d)} · 无用量`;
+    out += `<i class="heat-cell l${cell.l || 0}" title="${attr(tip)}"></i>`;
+  }));
+  return out;
+}
+
+function heatMonthsHtml(heat) {
+  const marks = [];
+  let last = -9;
+  (heat.months || []).forEach(m => {
+    if (m.week - last >= 3) { marks.push(m); last = m.week; }
+  });
+  return marks.map(m => `<span style="grid-column:${m.week + 1}">${escapeHtml(m.label)}</span>`).join("");
+}
+
+function heatmapHtml(heat) {
+  if (!heat || !heat.weeks || !heat.weeks.length) {
+    return '<p class="hint">暂无用量记录——AI 模式下每次 Agent 调用都会记账。</p>';
+  }
+  const dow = ["", "一", "", "三", "", "五", ""];
+  return `
+    <div class="heatmap">
+      <div class="heat-days">${dow.map(d => `<span>${d}</span>`).join("")}</div>
+      <div class="heat-scroll">
+        <div class="heat-months">${heatMonthsHtml(heat)}</div>
+        <div class="heat-grid">${heatCellsHtml(heat)}</div>
+      </div>
+    </div>`;
+}
+
+function miniHeatHtml(heat, weeks) {
+  if (!heat || !heat.weeks || !heat.weeks.length) return "";
+  const slice = Math.max(0, heat.weeks.length - (weeks || 24));
+  const trimmed = Object.assign({}, heat, { weeks: heat.weeks.slice(slice) });
+  return `<div class="heatmap mini"><div class="heat-scroll">
+      <div class="heat-grid">${heatCellsHtml(trimmed)}</div>
+    </div></div>`;
+}
+
+/* 让整年热力图在卡片宽度内放得下：按列数反推格子尺寸与间距。
+   窄屏（手机）用 2px 间距 + 最小 5px 格子，仍能把 53 周塞进一屏。 */
+function fitHeatmap(box) {
+  if (!box || box.classList.contains("mini")) return;
+  const grid = box.querySelector(".heat-grid");
+  if (!grid) return;
+  const weeks = Math.max(1, Math.round(grid.children.length / 7));
+  const room = box.clientWidth - 26;                 // 减去星期列与间距
+  if (room <= 0) return;
+  const gap = room >= 680 ? 4 : room >= 440 ? 2 : 1;
+  const cell = Math.floor((room - (weeks - 1) * gap) / weeks);
+  box.style.setProperty("--heat-cell", Math.max(4, Math.min(13, cell)) + "px");
+  box.style.setProperty("--heat-gap", gap + "px");
+}
+
+function heatLegendHtml() {
+  return `<span class="heat-legend">少${["l0", "l1", "l2", "l3", "l4"]
+    .map(l => `<i class="heat-cell ${l}"></i>`).join("")}多</span>`;
+}
+
+/* ── 各区块渲染（数据看板页与对局内叠加层复用同一套） ── */
+function kpiHtml(label, value, sub, cls) {
+  return `<div class="kpi ${cls || ""}">
+    <span class="kpi-label">${escapeHtml(label)}</span>
+    <b class="kpi-value">${value}</b>
+    <span class="kpi-sub">${sub || ""}</span>
+  </div>`;
+}
+
+function paintKpis(el, data) {
+  if (!el) return;
+  const t = data.totals || {}, today = data.today || {};
+  const l7 = data.last_7 || {}, l30 = data.last_30 || {}, cost = data.cost || {};
+  el.innerHTML = [
+    kpiHtml("今日", fmtTok(today.v), `${fmtInt(today.n)} 次调用`, "cool"),
+    kpiHtml("近 7 天", fmtTok(l7.total_tokens), `活跃 ${fmtInt(l7.active_days)} 天`),
+    kpiHtml("近 30 天", fmtTok(l30.total_tokens), `活跃 ${fmtInt(l30.active_days)} 天`),
+    kpiHtml("累计", fmtTok(t.total_tokens),
+      `${fmtInt(t.records)} 次调用 · 输入 ${fmtTok(t.prompt_tokens)} / 输出 ${fmtTok(t.completion_tokens)}`),
+    kpiHtml("估算花费", fmtCny(cost.cny),
+      `按 ¥${cost.price_in}/¥${cost.price_out} 每百万 tok`, "hot"),
+  ].join("");
+}
+
+function paintHeat(elHeat, elSummary, elFoot, heat) {
+  if (!heat) return;
+  if (elHeat) {
+    elHeat.innerHTML = heatmapHtml(heat);
+    fitHeatmap(elHeat);
+  }
+  if (elSummary) {
+    elSummary.textContent = heat.total
+      ? `${heat.start} → ${heat.end} · 峰值 ${fmtTok(heat.max)}/天`
+      : "还没有用量记录";
+  }
+  if (elFoot) {
+    elFoot.innerHTML = `<span>累计 <b>${fmtTok(heat.total)}</b> tok ·
+      活跃 <b>${fmtInt(heat.active_days)}</b> 天 ·
+      当前连续 <b>${fmtInt(heat.streak)}</b> 天 ·
+      最长 <b>${fmtInt(heat.longest)}</b> 天</span>${heatLegendHtml()}`;
+  }
+}
+
+function paintBars(el, map) {
+  if (!el) return;
+  const rows = Object.entries(map || {}).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  if (!rows.length) { el.innerHTML = '<p class="side-empty">暂无记录</p>'; return; }
+  const top = rows[0][1] || 1;
+  el.innerHTML = rows.map(([key, value]) => `
+    <div class="bar-row">
+      <span class="bar-label" title="${attr(key)}">${escapeHtml(key)}</span>
+      <span class="bar-track"><i style="width:${Math.max(2, (value / top) * 100)}%"></i></span>
+      <b class="bar-value">${fmtTok(value)}</b>
+    </div>`).join("");
+}
+
+function paintUsageTable(el, rows) {
+  if (!el) return;
+  if (!rows || !rows.length) {
+    el.innerHTML = '<p class="side-empty">暂无调用记录——AI 模式下每次 Agent 调用都会记账。</p>';
+    return;
+  }
+  el.innerHTML = `<table class="usage-table"><thead><tr>
+      <th>时间</th><th>Agent</th><th>模型</th>
+      <th class="num">输入</th><th class="num">输出</th><th class="num">合计</th>
+    </tr></thead><tbody>${rows.map(x => `<tr>
+      <td>${fmtStamp(x.ts)}</td>
+      <td>${escapeHtml(x.agent)}</td>
+      <td>${escapeHtml(x.model)}</td>
+      <td class="num">${fmtInt(x.prompt_tokens)}</td>
+      <td class="num">${fmtInt(x.completion_tokens)}</td>
+      <td class="num tok">${fmtInt(x.total_tokens)}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
+function paintBalance(el, bal) {
+  if (!el) return;
+  const head = `<div class="card-head"><h3>账户余额</h3>
+      <button class="btn quiet tiny" data-bal-refresh title="重新查询供应商余额">↻ 刷新</button></div>`;
+  if (!bal) {
+    el.innerHTML = `${head}<p class="bal-empty"><span class="bal-state">正在查询账户余额…</span></p>`;
+    return;
+  }
+  if (!bal.ok) {
+    const cls = bal.unsupported ? "warn" : "hot";
+    el.innerHTML = `${head}
+      <div class="bal-empty">
+        <span class="bal-state ${cls}">${escapeHtml(bal.error || "余额不可用")}</span>
+        ${bal.hint ? `<span class="bal-hint">${escapeHtml(bal.hint)}</span>` : ""}
+        <span class="bal-hint">本地用量照常记账：token 热力图与估算花费不受影响。</span>
+      </div>`;
+    return;
+  }
+  const sign = bal.currency_sign || "¥";
+  const items = (bal.items || []).map(item => `<div>
+      <span>${escapeHtml(item.label)}</span>
+      <b>${sign}${Number(item.value).toFixed(2)}</b></div>`).join("");
+  el.innerHTML = `${head}
+    <div class="bal-main">
+      <span class="bal-sign">${sign}</span>
+      <b class="bal-value">${Number(bal.total).toFixed(2)}</b>
+    </div>
+    <div class="bal-meta">
+      <span>${escapeHtml(bal.provider_name || bal.provider || "")}</span>
+      ${bal.model ? `<span>·</span><span>${escapeHtml(bal.model)}</span>` : ""}
+      ${bal.available === false ? '<span class="bal-state hot">账户不可用</span>' : ""}
+      ${bal.cached ? "<span>· 缓存</span>" : ""}
+    </div>
+    ${items ? `<div class="bal-items">${items}</div>` : ""}
+    <p class="bal-note">只读查询，密钥不出服务端${bal.endpoint_host
+      ? " · 来源 " + escapeHtml(bal.endpoint_host) : ""}</p>`;
+}
+
+function paintDashboard(sel, data, balance) {
+  paintKpis(sel.kpi, data);
+  paintHeat(sel.heat, sel.heatSum, sel.heatFoot, data.heatmap);
+  paintBars(sel.agents, data.by_agent || {});
+  const models = {};
+  Object.entries(data.by_model || {}).forEach(([key, v]) => {
+    models[key] = v.total_tokens || 0;
+  });
+  paintBars(sel.models, models);
+  paintUsageTable(sel.table, data.recent || []);
+  if (sel.balance) paintBalance(sel.balance, balance);
+}
+
+/* 顶栏余额芯片 */
+function updateBalanceChip() {
+  const chip = $("#balance-chip");
+  if (!chip) return;
+  const bal = USAGE.balance;
+  if (!bal) { chip.textContent = "余额 …"; chip.classList.add("off"); return; }
+  if (bal.ok) {
+    chip.textContent = `${bal.currency_sign || "¥"}${Number(bal.total).toFixed(2)}`;
+    chip.classList.remove("off");
+    chip.title = `${bal.provider_name || ""} 账户余额 · 点击查看数据看板`;
+  } else {
+    chip.textContent = "余额 —";
+    chip.classList.add("off");
+    chip.title = bal.error || "余额不可用";
+  }
+}
+
+/* ── 数据看板页 ── */
+async function renderStats(force) {
+  const heatBox = $("#heatmap");
+  if (heatBox && !USAGE.data) heatBox.innerHTML = '<p class="hint">正在读取用量记录…</p>';
+  const data = await loadUsage(force);
+  if (!data) {
+    if (heatBox) heatBox.innerHTML = '<p class="hint">用量读取失败：请确认服务端已启动。</p>';
+    return;
+  }
+  paintDashboard({
+    kpi: $("#kpi-row"), heat: $("#heatmap"), heatSum: $("#heat-summary"),
+    heatFoot: $("#heat-foot"), agents: $("#agent-bars"), models: $("#model-bars"),
+    table: $("#usage-table"), balance: $("#balance-card"),
+  }, data, USAGE.balance);
+  const balance = await loadBalance(force);
+  paintBalance($("#balance-card"), balance);
+  updateBalanceChip();
+  renderHomeUsage(data);
+}
+
+/* ── 主页 / 侧栏的用量概览 ── */
+async function renderHomeUsage(data) {
+  const box = $("#home-usage"), rail = $("#rail-usage");
+  data = data || await loadUsage();
+  if (!data) return;
+  const today = data.today || {}, t = data.totals || {}, l7 = data.last_7 || {};
+  if (box) {
+    box.innerHTML = `
+      <div class="mini-stats">
+        <div class="mini-stat"><span>今日</span><b>${fmtTok(today.v)}</b></div>
+        <div class="mini-stat"><span>近 7 天</span><b>${fmtTok(l7.total_tokens)}</b></div>
+        <div class="mini-stat"><span>累计</span><b>${fmtTok(t.total_tokens)}</b></div>
+      </div>
+      ${miniHeatHtml(data.heatmap, 26)}
+      <p class="hint">最近 26 周的 token 用量；「数据看板」里还有余额与逐次明细。</p>`;
+  }
+  if (rail) {
+    rail.innerHTML = `
+      <p class="rail-usage-line"><span>今日用量</span><b>${fmtTok(today.v)}</b><span>tok</span></p>
+      ${miniHeatHtml(data.heatmap, 15)}`;
+  }
+}
+
+/* ── 设置页的紧凑用量卡 ── */
+async function renderUsage(force) {
   const box = $("#usage-box");
-  const t = r.body.totals;
-  const byAgent = Object.entries(r.body.by_agent || {});
-  const rows = (r.body.recent || []).map(x => `
-    <tr><td>${new Date(x.ts * 1000).toLocaleTimeString("zh-CN")}</td>
-    <td>${x.agent}</td><td>${x.model}</td>
-    <td class="num">${x.prompt_tokens}</td><td class="num">${x.completion_tokens}</td>
-    <td class="num">${x.total_tokens}</td></tr>`).join("");
+  const data = await loadUsage(force);
+  if (!data) { if (box) box.innerHTML = '<p class="hint">用量读取失败。</p>'; return; }
+  const t = data.totals || {}, today = data.today || {}, l7 = data.last_7 || {};
+  if (!box) return;
   box.innerHTML = `
     <div class="usage-totals">
-      <span>调用 ${t.records} 次</span>
-      <span>输入 ${t.prompt_tokens} tok</span>
-      <span>输出 ${t.completion_tokens} tok</span>
-      <span>合计 <b>${t.total_tokens}</b> tok</span>
+      <span>今日 <b>${fmtTok(today.v)}</b> tok</span>
+      <span>近 7 天 <b>${fmtTok(l7.total_tokens)}</b></span>
+      <span>累计 <b>${fmtTok(t.total_tokens)}</b> tok</span>
+      <span>调用 <b>${fmtInt(t.records)}</b> 次</span>
     </div>
-    ${byAgent.length ? `<p class="hint">按 Agent：${byAgent.map(([a, n]) =>
-      `${a}=${n}`).join(" · ")}</p>` : '<p class="hint">暂无记录——AI 模式下每次 Agent 调用都会记账。</p>'}
-    ${rows ? `<table class="usage-table"><thead><tr><th>时间</th><th>Agent</th>
-      <th>模型</th><th>输入</th><th>输出</th><th>合计</th></tr></thead><tbody>${rows}</tbody></table>` : ""}`;
+    ${miniHeatHtml(data.heatmap, 20)}
+    <p class="hint">按日聚合保存，跨年不丢；调用明细与余额在「数据看板」。</p>`;
+  renderHomeUsage(data);
 }
-$("#usage-refresh").addEventListener("click", renderUsage);
-$("#usage-clear").addEventListener("click", async () => {
+
+/* ── 对局内叠加层 ── */
+function metricsOpen() { return !$("#metrics").classList.contains("hidden"); }
+function closeMetrics() { $("#metrics").classList.add("hidden"); }
+
+async function openMetrics(refresh) {
+  $("#metrics").classList.remove("hidden");
+  await renderMetrics(refresh);
+}
+
+async function renderMetrics(refresh) {
+  const body = $("#metrics-body");
+  if (!body) return;
+  body.innerHTML = `
+    <div id="m-kpi" class="kpi-row"></div>
+    <div class="stats-grid">
+      <section class="card heat-card">
+        <div class="card-head"><h3>token 用量热力图</h3><p class="card-sub" id="m-heat-sum"></p></div>
+        <div id="m-heat" class="heatmap"></div>
+        <div id="m-heat-foot" class="heat-foot"></div>
+      </section>
+      <section class="card balance-card" id="m-balance"></section>
+      <section class="card">
+        <div class="card-head"><h3>按 Agent 分布</h3></div>
+        <div id="m-agents" class="bar-list"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h3>按模型</h3></div>
+        <div id="m-models" class="bar-list"></div>
+      </section>
+    </div>`;
+  const data = await loadUsage(refresh);
+  if (!data) { body.innerHTML = '<p class="hint">用量读取失败。</p>'; return; }
+  paintDashboard({
+    kpi: $("#m-kpi"), heat: $("#m-heat"), heatSum: $("#m-heat-sum"),
+    heatFoot: $("#m-heat-foot"), agents: $("#m-agents"), models: $("#m-models"),
+  }, data, null);
+  const balance = await loadBalance(refresh);
+  paintBalance($("#m-balance"), balance);
+  updateBalanceChip();
+}
+
+async function clearUsage() {
   await jfetch("/api/usage/clear", { method: "POST", body: "{}",
     headers: { "Content-Type": "application/json" } });
-  renderUsage();
+  USAGE.data = null; USAGE.at = 0;
+  renderUsage(true);
+  renderStats(true);
+  renderHomeUsage();
+}
+
+/* ── 事件绑定 ── */
+$("#usage-refresh").addEventListener("click", () => renderUsage(true));
+$("#usage-clear").addEventListener("click", clearUsage);
+$("#stats-refresh").addEventListener("click", () => renderStats(true));
+$("#stats-clear").addEventListener("click", clearUsage);
+$("#heat-range").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-days]");
+  if (!btn) return;
+  USAGE.days = Number(btn.dataset.days) || 371;
+  try { localStorage.setItem(HEAT_RANGE_KEY, String(USAGE.days)); } catch (err) { /* 忽略 */ }
+  [...$("#heat-range").children].forEach(b => b.classList.toggle("on", b === btn));
+  renderStats(true);
+});
+$("#btn-metrics").addEventListener("click", () => openMetrics(false));
+$("#balance-chip").addEventListener("click", () => openMetrics(false));
+$("#metrics-close").addEventListener("click", closeMetrics);
+$("#metrics").addEventListener("click", (e) => {
+  if (e.target.id === "metrics") closeMetrics();
+});
+/* 余额卡里的「刷新」（动态按钮 → 事件委托） */
+document.addEventListener("click", async (e) => {
+  if (!e.target.closest("[data-bal-refresh]")) return;
+  const balance = await loadBalance(true);
+  paintBalance($("#balance-card"), balance);
+  paintBalance($("#m-balance"), balance);
+  updateBalanceChip();
+  toast(balance && balance.ok ? "余额已刷新" : "余额仍不可用",
+        balance && balance.ok ? "good" : "crit");
 });
 
 /* ═══════════ 设置页：音效 ═══════════ */
@@ -548,7 +992,10 @@ function addCrit(ev) {
   const d = addItem("crit-note");
   const head = document.createElement("p");
   head.className = "cn-head";
-  head.textContent = `致命伤 · ${ev.who || ""}${ev.roll ? `（2d6 = ${ev.roll}）` : ""}｜${ev.name || ""}`;
+  // 2d6 致命伤表：掷值单独成 chip，一眼能看出查的是哪一行
+  head.innerHTML = `<span>☠ 致命伤</span><span>${escapeHtml(ev.who || "")}</span>` +
+    (ev.roll ? `<span class="cn-roll">2d6 = ${ev.roll}</span>` : "") +
+    `<span>${escapeHtml(ev.name || "")}</span>`;
   d.appendChild(head);
   const body = document.createElement("p");
   body.className = "cn-text";
@@ -589,49 +1036,229 @@ function addBoard(ev) {
   }
 }
 
-/* ═══════════ 战术地图（docs/battlemap-design.md §4/§5） ═══════════ */
+/* ═══════════ 战术地图 · 自研 VTT ═══════════
+   数据全部来自模组的 map 声明，经 map_brief() 下发（1 格 = 2 米）：
+     grid / obstacles（挡视线）/ cover（挡子弹、不挡视线，带剩余耐久）
+     / tokens（棋子）/ party_spawn
+   判定口径与 rules/combat.py 严格一致，前端只做"演示"不做结算：
+     · 距离 = 切比雪夫距离 × 2 米（BattleGrid.dist_m）
+     · 视线 = Bresenham 直线，**只有障碍格阻挡**（BattleGrid.has_los）
+     · 射程 = RANGE_BANDS × RANGED_DV 查表（BattleGrid.range_band）
+   交互：滚轮缩放 / 拖动平移 / 悬停量距与射程判定 / 点图落子。 */
+
+const VTT = {
+  scale: 1, minScale: .4, maxScale: 4,
+  hover: null,            // [x, y] 悬停格
+  drag: null,             // 平移会话
+  reach: null,            // Set("x,y") 本回合可达格
+};
+
+/* 切比雪夫距离（格）——与 BattleGrid.dist 同口径 */
+function cellDist(a, b) { return Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])); }
+function cellKey(c) { return c[0] + "," + c[1]; }
+
+/* Bresenham 视线：只有障碍格阻挡（掩体不挡视线） */
+function losBlocked(grid, obstacles, a, b) {
+  let x0 = a[0], y0 = a[1];
+  const x1 = b[0], y1 = b[1];
+  const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy;
+  for (let guard = 0; guard < 512; guard++) {
+    if (x0 === x1 && y0 === y1) return false;
+    if (!(x0 === a[0] && y0 === a[1]) && obstacles.has(x0 + "," + y0)) return true;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x0 += sx; }
+    if (e2 < dx) { err += dx; y0 += sy; }
+  }
+  return false;
+}
+
+/* 射程带 → DV 查表（返回 {band, dv} 或 null = 超出射程） */
+function rangeLookup(meta, kind, meters) {
+  const bands = (meta && meta.range_bands) || [];
+  const table = ((meta && meta.ranged_dv) || {})[kind];
+  if (!table) return null;
+  for (let i = 0; i < bands.length; i++) {
+    if (meters >= bands[i].lo && meters <= bands[i].hi) {
+      const dv = i < table.length ? table[i] : null;
+      return dv == null ? null : { band: bands[i], dv: dv, index: i };
+    }
+  }
+  return null;
+}
+
+function vttCurrentMap() { return S.map; }
+
+/* 地图整体重建（换场景/换图/缩放适配） */
+function buildCells(ev) {
+  const [cw, chh] = ev.grid;
+  const box = $("#map-cells");
+  const obstacles = new Set((ev.obstacles || []).map(c => cellKey(c)));
+  const cover = ev.cover || {};
+  const cells = [];
+  for (let y = 0; y < chh; y++) {
+    for (let x = 0; x < cw; x++) {
+      const k = x + "," + y;
+      const cls = ["cell"];
+      const title = [`(${x}, ${y})`];
+      if (obstacles.has(k)) { cls.push("obstacle"); title.push("障碍 · 不可通行 · 阻挡视线"); }
+      const cv = cover[k];
+      if (cv) {
+        cls.push("cover");
+        if (cv[2]) cls.push("destroyed");
+        title.push(`掩体 ${cv[0]} · 耐久 ${cv[1]}${cv[2] ? "（已摧毁）" : ""} · 挡子弹但不挡视线`);
+      }
+      cells.push(`<div class="${cls.join(" ")}" data-cx="${x}" data-cy="${y}"` +
+        (cv ? ` data-cover="${cv[1]}"` : "") +
+        (cv ? ` style="background:${coverColor(cv[0], cv[2])}"` : "") +
+        ` title="${title.join("　·　")}"></div>`);
+    }
+  }
+  box.innerHTML = cells.join("");
+}
+
+/* 掩体材质配色（耐久越高越"实"，全部走规则层的材质名） */
+function coverColor(material, destroyed) {
+  if (destroyed) return "rgba(60,70,82,.35)";
+  const m = String(material || "");
+  if (m.includes("钢")) return "linear-gradient(180deg,rgba(150,190,215,.34),rgba(90,130,160,.26))";
+  if (m.includes("混凝土")) return "linear-gradient(180deg,rgba(190,200,210,.26),rgba(120,135,150,.2))";
+  if (m.includes("石")) return "linear-gradient(180deg,rgba(200,170,140,.3),rgba(140,115,90,.22))";
+  if (m.includes("玻璃")) return "linear-gradient(180deg,rgba(120,220,240,.26),rgba(70,160,190,.18))";
+  if (m.includes("木")) return "linear-gradient(180deg,rgba(190,150,100,.3),rgba(130,100,65,.22))";
+  return "linear-gradient(180deg,rgba(190,180,150,.26),rgba(120,115,95,.2))";
+}
+
+/* 缩放/平移应用到画布 */
+function applyTransform() {
+  const cv = $("#map-canvas");
+  if (!cv) return;
+  cv.style.transform = `translate(${VTT.tx || 0}px, ${VTT.ty || 0}px) scale(${VTT.scale})`;
+}
+
+function fitMap(ev) {
+  const stage = $("#map-viewport");
+  if (!stage) return;
+  const [cw, chh] = ev.grid;
+  const w = stage.clientWidth, h = stage.clientHeight;
+  const cell = Math.max(14, Math.min(w / cw, h / chh));
+  VTT.cell = cell;
+  VTT.scale = 1;
+  VTT.tx = (w - cell * cw) / 2;
+  VTT.ty = (h - cell * chh) / 2;
+  const cv = $("#map-canvas");
+  cv.style.width = (cell * cw) + "px";
+  cv.style.height = (cell * chh) + "px";
+  const box = $("#map-cells");
+  box.style.width = (cell * cw) + "px";
+  box.style.height = (cell * chh) + "px";
+  [...box.children].forEach(el => {
+    el.style.left = (Number(el.dataset.cx) * cell) + "px";
+    el.style.top = (Number(el.dataset.cy) * cell) + "px";
+    el.style.width = cell + "px";
+    el.style.height = cell + "px";
+  });
+  const svg = $("#map-svg");
+  svg.setAttribute("viewBox", `0 0 ${cell * cw} ${cell * chh}`);
+  svg.style.width = (cell * cw) + "px";
+  svg.style.height = (cell * chh) + "px";
+  applyTransform();
+}
+
+/* 可达格（移动力预算内，绕开障碍与占用） */
+function computeReach(ev, fromCell, budgetMeters) {
+  const budget = Math.floor(budgetMeters / 2);
+  if (!fromCell || budget <= 0) return null;
+  const [cw, chh] = ev.grid;
+  const blocked = new Set((ev.obstacles || []).map(c => cellKey(c)));
+  const occupied = new Set(Object.values(ev.tokens || {}).map(t => cellKey(t.cell)));
+  const start = cellKey(fromCell);
+  const out = new Set();
+  const seen = new Set([start]);
+  const q = [[fromCell[0], fromCell[1], 0]];
+  while (q.length) {
+    const [x, y, d] = q.shift();
+    if (d >= budget) continue;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy, k = nx + "," + ny;
+      if (nx < 0 || ny < 0 || nx >= cw || ny >= chh) continue;
+      if (blocked.has(k) || seen.has(k)) continue;
+      seen.add(k);
+      if (!occupied.has(k)) out.add(k);
+      q.push([nx, ny, d + 1]);
+    }
+  }
+  return out;
+}
+
 function renderMap(ev) {
   const panel = $("#map-panel");
   if (!ev || !ev.grid) {                   // 本局无地图 / 新流等待首帧
     S.map = null; S.mapKey = null; S.mapMove = false;
+    VTT.reach = null;
     panel.classList.add("hidden");
     return;
   }
-  S.map = ev;
   const cw = ev.grid[0], chh = ev.grid[1];
-  const key = [ev.label, ev.image, cw, chh, S.moduleId || "",
+  const key = [ev.label, cw, chh, JSON.stringify(ev.obstacles || []),
                JSON.stringify(ev.crop || null)].join("|");
   const rebuild = key !== S.mapKey;
+  S.map = ev;
   S.mapKey = key;
   panel.classList.remove("hidden");
   panel.classList.toggle("folded", S.mapFold);
   $("#map-label").textContent = "战术地图 · " + (ev.label || "");
-  $("#map-viewport").style.aspectRatio = cw + " / " + chh;
-  const bg = $("#map-bg");
   if (rebuild) {
-    if (ev.image && S.moduleId) {
-      bg.src = assetUrl(ev.image);
-      bg.classList.remove("hidden");
-      const ig = ev.image_grid || ev.grid;
-      const crop = ev.crop || [0, 0, ig[0], ig[1]];
-      // 裁剪显示：图比视口大 image_grid/crop 倍，负偏移露出目标分幅
-      bg.style.width = (ig[0] / crop[2] * 100) + "%";
-      bg.style.height = (ig[1] / crop[3] * 100) + "%";
-      bg.style.left = (-crop[0] / crop[2] * 100) + "%";
-      bg.style.top = (-crop[1] / crop[3] * 100) + "%";
-    } else {
-      bg.removeAttribute("src");
-      bg.classList.add("hidden");
-    }
-    $("#map-gridlines").style.backgroundImage =
-      `repeating-linear-gradient(to right, transparent 0, transparent calc(100%/${cw} - 1px), rgba(16,12,6,.3) calc(100%/${cw} - 1px), rgba(16,12,6,.3) calc(100%/${cw})),` +
-      `repeating-linear-gradient(to bottom, transparent 0, transparent calc(100%/${chh} - 1px), rgba(16,12,6,.3) calc(100%/${chh} - 1px), rgba(16,12,6,.3) calc(100%/${chh}))`;
+    buildCells(ev);
+    fitMap(ev);
+  } else {
+    // 掩体耐久会变：重建格子层以同步剩余耐久与摧毁态
+    buildCells(ev);
+    fitMap(ev);
   }
-  renderTokens(ev, cw, chh, rebuild);
+  renderLegend(ev);
+  renderTokens(ev, cw, chh, true);
+  computeReachForMap(ev);
+  updateInspect();
+}
+
+function renderLegend(ev) {
+  const box = $("#map-legend");
+  const hasCover = ev.cover && Object.keys(ev.cover).length;
+  const parts = [`<span><i style="background:#10161e;border-color:rgba(255,84,112,.5)"></i>障碍（挡视线）</span>`];
+  if (hasCover) {
+    const mats = {};
+    Object.values(ev.cover).forEach(v => { mats[v[0]] = v[1]; });
+    Object.entries(mats).slice(0, 6).forEach(([m, hp]) =>
+      parts.push(`<span><i style="background:${coverColor(m, false)}"></i>${m} ${hp}</span>`));
+  }
+  parts.push(`<span class="muted">1 格 = ${ev.meters_per_cell || 2} 米</span>`);
+  box.innerHTML = parts.join("");
+}
+
+/* 本回合的可达范围：只在轮到玩家移动时点亮 */
+function computeReachForMap(ev) {
+  VTT.reach = null;
+  const cells = $("#map-cells");
+  if (cells) cells.querySelectorAll(".reach").forEach(el => el.classList.remove("reach"));
+  if (!ev || !ev.grid || !S.eco || !S.eco.moveLeft || !S.eco.actor) return;
+  const tok = Object.values(ev.tokens || {}).find(t => t.kind === "pc" && t.name === S.eco.actor);
+  if (!tok) return;
+  const reach = computeReach(ev, tok.cell, S.eco.moveLeft);
+  if (!reach || !reach.size) return;
+  VTT.reach = reach;
+  reach.forEach(k => {
+    const el = cells.querySelector(`.cell[data-cx="${k.split(",")[0]}"][data-cy="${k.split(",")[1]}"]`);
+    if (el && !el.classList.contains("obstacle")) el.classList.add("reach");
+  });
 }
 
 function renderTokens(ev, cw, chh, rebuild) {
   const layer = $("#map-tokens");
+  const cell = VTT.cell || 40;
+  layer.style.width = (cell * cw) + "px";
+  layer.style.height = (cell * chh) + "px";
   const party = {};
   (S._party || []).forEach(p => { party[p.name] = p; });
   const seen = new Set();
@@ -643,15 +1270,23 @@ function renderTokens(ev, cw, chh, rebuild) {
       el = document.createElement("div");
       el.id = domId;
       el.className = "token tk-" + (t.kind || "prop");
-      el.innerHTML = tokenFace(t, party);
       layer.appendChild(el);
-    } else if (rebuild) {
-      el.innerHTML = tokenFace(t, party);
     }
-    el.style.width = (150 / cw) + "%";
-    el.style.height = (150 / chh) + "%";
-    el.style.left = ((t.cell[0] + 0.5) * 100 / cw) + "%";
-    el.style.top = ((t.cell[1] + 0.5) * 100 / chh) + "%";
+    el.className = "token tk-" + (t.kind || "prop");
+    el.innerHTML = tokenFace(t, party);
+    const p = party[t.name];
+    // 棋子血条（有队伍数据时）
+    if (p && p.hp_max) {
+      const pct = Math.max(0, Math.min(100, (p.hp_cur / p.hp_max) * 100));
+      const cls = pct > 55 ? "" : pct > 25 ? "mid" : "low";
+      el.innerHTML += `<span class="tok-hp ${cls}"><i style="width:${pct}%"></i></span>`;
+      if (p.hp_cur < 1) el.classList.add("downed");
+    }
+    const size = cell * 0.82;
+    el.style.width = size + "px";
+    el.style.height = size + "px";
+    el.style.left = ((t.cell[0] + 0.5) * cell) + "px";
+    el.style.top = ((t.cell[1] + 0.5) * cell) + "px";
     el.title = t.name;
   }
   [...layer.children].forEach(el => {
@@ -667,8 +1302,82 @@ function tokenFace(t, party) {
     const p = party[t.name];
     return AvatarFX.avatar(p ? (p.role || p.role_name) : "", p ? p.name : t.name);
   }
-  const colors = { npc: "#77874f", monster: "#8c3030", prop: "#a08b58" };
-  return `<span class="tok-dot" style="background:${colors[t.kind] || "#a08b58"}">${(t.name || "?").slice(0, 1)}</span>`;
+  return `<span class="tok-dot">${(t.name || "?").slice(0, 1)}</span>`;
+}
+
+/* 悬停量距 + 射程/视线判定（"他打得到我吗 / 我打得到他吗"） */
+function updateInspect() {
+  const box = $("#map-inspect");
+  const ev = vttCurrentMap();
+  if (!box || !ev) return;
+  const h = VTT.hover;
+  if (!h) {
+    const actor = S.eco && S.eco.actor;
+    box.innerHTML = actor
+      ? `<b>${actor}</b> 行动中${S.eco.moveLeft != null ? ` · 剩余移动 <span class="amber">${S.eco.moveLeft} 米</span>` : ""}` +
+        `<br><span class="muted">悬停格子查看距离与射程判定；滚轮缩放，拖动平移。</span>`
+      : `<span class="muted">悬停格子查看距离与射程判定；滚轮缩放，拖动平移。</span>`;
+    $("#map-svg").innerHTML = "";
+    $("#map-cells").querySelectorAll(".hover,.band").forEach(el => el.classList.remove("hover", "band"));
+    return;
+  }
+  const k = cellKey(h);
+  const cover = (ev.cover || {})[k];
+  const obstacles = new Set((ev.obstacles || []).map(c => cellKey(c)));
+  const lines = [`<b>格 (${h[0]}, ${h[1]})</b>`];
+  if (obstacles.has(k)) lines.push(`<span class="hot">障碍：不可通行，阻挡视线</span>`);
+  if (cover) {
+    lines.push(`掩体 <span class="amber">${cover[0]}</span> · 耐久 <span class="amber">${cover[1]}</span>` +
+      (cover[2] ? " <span class=\"hot\">（已摧毁）</span>" : "") +
+      `<br><span class="muted">掩体挡子弹但不挡视线</span>`);
+  }
+  const token = Object.values(ev.tokens || {}).find(t => cellKey(t.cell) === k);
+  if (token) lines.push(`棋子：<b>${token.name}</b>（${kindCn(token.kind)}）`);
+  if (VTT.reach && VTT.reach.has(k)) lines.push(`<span class="good">本回合可达</span>`);
+
+  // 距离与射程判定：以「该格的单位」为对手，当前行动者为射手
+  if (S.eco && S.eco.actor) {
+    const me = Object.values(ev.tokens || {}).find(t => t.kind === "pc" && t.name === S.eco.actor);
+    if (me) {
+      const meters = cellDist(me.cell, h) * (ev.meters_per_cell || 2);
+      const blocked = losBlocked(ev.grid, obstacles, me.cell, h);
+      lines.push(`距 <b>${S.eco.actor}</b>：<span class="amber">${meters} 米</span>` +
+        (blocked ? ` · <span class="hot">视线被障碍阻挡</span>` : " · 视线通畅"));
+      const p = (S._party || []).find(x => x.name === S.eco.actor);
+      const verdicts = [];
+      (S.eco.weapons || []).forEach(w => {
+        const kind = w.kind;
+        if (!kind || !(S.meta && S.meta.ranged_dv && S.meta.ranged_dv[kind])) return;
+        const r = rangeLookup(S.meta, kind, meters);
+        verdicts.push(r
+          ? `${w.name} <span class="${blocked ? "hot" : "good"}">DV ${r.dv}</span>`
+          : `${w.name} <span class="hot">超出射程</span>`);
+      });
+      if (verdicts.length) lines.push(verdicts.join("　"));
+      drawLos(me.cell, h, blocked);
+    } else {
+      $("#map-svg").innerHTML = "";
+    }
+  } else {
+    $("#map-svg").innerHTML = "";
+  }
+  box.innerHTML = lines.join("<br>");
+  const cells = $("#map-cells");
+  cells.querySelectorAll(".hover,.band").forEach(el => el.classList.remove("hover", "band"));
+  const el = cells.querySelector(`.cell[data-cx="${h[0]}"][data-cy="${h[1]}"]`);
+  if (el) el.classList.add("hover");
+}
+
+function kindCn(kind) {
+  return { pc: "玩家角色", npc: "NPC", monster: "敌人", prop: "物件" }[kind] || kind || "?";
+}
+
+function drawLos(a, b, blocked) {
+  const cell = VTT.cell || 40;
+  const x1 = (a[0] + .5) * cell, y1 = (a[1] + .5) * cell;
+  const x2 = (b[0] + .5) * cell, y2 = (b[1] + .5) * cell;
+  $("#map-svg").innerHTML =
+    `<line class="los-line ${blocked ? "blocked" : ""}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
 }
 
 function assetUrl(rel) {
@@ -677,15 +1386,27 @@ function assetUrl(rel) {
 }
 function cssId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => "x" + c.charCodeAt(0)); }
 
+/* 视口 → 格坐标（考虑缩放与平移） */
+function pointToCell(clientX, clientY) {
+  const ev = vttCurrentMap();
+  if (!ev) return null;
+  const rect = $("#map-viewport").getBoundingClientRect();
+  const cell = VTT.cell || 40;
+  const cx = (clientX - rect.left - (VTT.tx || 0)) / (VTT.scale || 1);
+  const cy = (clientY - rect.top - (VTT.ty || 0)) / (VTT.scale || 1);
+  const x = Math.floor(cx / cell), y = Math.floor(cy / cell);
+  if (x < 0 || y < 0 || x >= ev.grid[0] || y >= ev.grid[1]) return null;
+  return [x, y];
+}
+
 /* 点图落子（map_move pending 时点击 = 提交坐标应答）；
    AI 代打局的探索期点击 → 旁听指令 "map:move x,y"（转 DM 裁定） */
 $("#map-viewport").addEventListener("click", (e) => {
   if (!S.map || S.over) return;
-  const rect = $("#map-viewport").getBoundingClientRect();
-  const cw = S.map.grid[0], chh = S.map.grid[1];
-  const x = Math.floor((e.clientX - rect.left) / rect.width * cw);
-  const y = Math.floor((e.clientY - rect.top) / rect.height * chh);
-  if (x < 0 || y < 0 || x >= cw || y >= chh) return;
+  if (VTT.dragMoved) { VTT.dragMoved = false; return; }   // 拖动结束的那一下不算点击
+  const cell = pointToCell(e.clientX, e.clientY);
+  if (!cell) return;
+  const [x, y] = cell;
   if (S.mapMove) {
     submitAnswer({ text: x + "," + y }, null);
     return;
@@ -697,13 +1418,169 @@ $("#map-viewport").addEventListener("click", (e) => {
     });
   }
 });
-$("#btn-map-grid").addEventListener("click", () =>
-  $("#map-gridlines").classList.toggle("hidden"));
+
+$("#map-viewport").addEventListener("mousemove", (e) => {
+  const cell = pointToCell(e.clientX, e.clientY);
+  const changed = (!cell && VTT.hover) || (cell && (!VTT.hover ||
+    cell[0] !== VTT.hover[0] || cell[1] !== VTT.hover[1]));
+  if (!changed) return;
+  VTT.hover = cell;
+  updateInspect();
+});
+$("#map-viewport").addEventListener("mouseleave", () => {
+  VTT.hover = null;
+  updateInspect();
+});
+
+/* 拖动平移 + 滚轮缩放 */
+$("#map-viewport").addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  VTT.drag = { x: e.clientX, y: e.clientY, tx: VTT.tx || 0, ty: VTT.ty || 0 };
+  VTT.dragMoved = false;
+});
+window.addEventListener("pointermove", (e) => {
+  if (!VTT.drag) return;
+  const dx = e.clientX - VTT.drag.x, dy = e.clientY - VTT.drag.y;
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) VTT.dragMoved = true;
+  VTT.tx = VTT.drag.tx + dx;
+  VTT.ty = VTT.drag.ty + dy;
+  applyTransform();
+});
+window.addEventListener("pointerup", () => { VTT.drag = null; });
+$("#map-viewport").addEventListener("wheel", (e) => {
+  if (!S.map) return;
+  e.preventDefault();
+  const rect = $("#map-viewport").getBoundingClientRect();
+  const px = e.clientX - rect.left, py = e.clientY - rect.top;
+  const old = VTT.scale || 1;
+  const next = Math.max(VTT.minScale, Math.min(VTT.maxScale, old * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  if (next === old) return;
+  // 以光标为锚点缩放
+  VTT.tx = px - (px - (VTT.tx || 0)) * (next / old);
+  VTT.ty = py - (py - (VTT.ty || 0)) * (next / old);
+  VTT.scale = next;
+  applyTransform();
+}, { passive: false });
+
+$("#btn-map-grid").addEventListener("click", () => {
+  const box = $("#map-cells");
+  [...box.children].forEach(el => {
+    const on = el.style.borderRightWidth !== "0px";
+    el.style.borderRightWidth = on ? "0px" : "1px";
+    el.style.borderBottomWidth = on ? "0px" : "1px";
+  });
+});
+$("#btn-map-fit").addEventListener("click", () => { if (S.map) fitMap(S.map); });
 $("#btn-map-fold").addEventListener("click", () => {
   S.mapFold = !S.mapFold;
   $("#map-panel").classList.toggle("folded", S.mapFold);
   $("#btn-map-fold").textContent = S.mapFold ? "》" : "《";
+  if (!S.mapFold && S.map) setTimeout(() => fitMap(S.map), 60);
 });
+window.addEventListener("resize", () => {
+  if (S.map) fitMap(S.map);
+  const stats = $("#view-stats");
+  if (stats && !stats.classList.contains("hidden") && USAGE.data) {
+    clearTimeout(S._heatFit);
+    S._heatFit = setTimeout(() => renderStats(false), 220);
+  }
+});
+
+/* ═══════════ 选项分组（把引擎的菜单串读成 CRPG 行动条） ═══════════
+   引擎送来的就是中文菜单串（session._turn_options / 探索菜单），前端按前缀
+   归类成六组：检定 · 推进 · 战斗 · 支援 · 移动 · 队伍。不改引擎、不改协议。 */
+const OPTION_RULES = [
+  { group: "check",   icon: "✦", label: "检定", re: /^检定机会/ },
+  { group: "push",    icon: "➤", label: "推进", re: /^(前进|前往)/ },
+  { group: "combat",  icon: "⌖", label: "战斗", re: /^(攻击|瞄准射击|斗殴|第二发|装填|对峙|挣脱)/ },
+  { group: "support", icon: "✚", label: "支援", re: /^(稳定|急救固定|治疗致命伤|休整|使用物品|夜市场)/ },
+  { group: "move",    icon: "⇢", label: "移动", re: /^(移动\/靠近|奔跑|起身|延迟|撤退)/ },
+  { group: "party",   icon: "❯", label: "队伍", re: /^(说话|查看|存档|退出|（结束回合）|（不必了）|（不追加）|（返回）)/ },
+];
+const GROUP_ORDER = ["check", "push", "combat", "support", "move", "party"];
+const GROUP_CN = { check: "检定", push: "推进", combat: "战斗", support: "支援", move: "移动", party: "队伍" };
+
+function optionGroup(text) {
+  const s = String(text || "");
+  for (const r of OPTION_RULES) if (r.re.test(s)) return r;
+  return { group: "party", icon: "▪", label: "其他" };
+}
+
+/* 从引擎提示串里读出"当前行动者 / 剩余移动力"（不改协议，纯解析） */
+function parseTurnPrompt(prompt) {
+  const s = String(prompt || "");
+  const m = s.match(/——\s*(.+?)\s*的回合\s*·\s*移动\s*(\d+)\s*米/);
+  if (m) return { actor: m[1].trim(), moveLeft: Number(m[2]), kind: "combat" };
+  if (/武器的第二发/.test(s)) return { kind: "bonus" };
+  const loc = s.match(/——\s*(.+?)\s*——\s*你要做什么/);
+  if (loc) return { kind: "explore", location: loc[1].trim() };
+  return { kind: "other" };
+}
+
+/* 行动经济槽：RED 每回合 = 1 移动动作 + 1 其他动作（附赠只用于 LA2 第二发） */
+function renderEconomy() {
+  const box = $("#ctx-eco");
+  const eco = S.eco || {};
+  if (!eco.actor) { box.innerHTML = ""; return; }
+  const slots = [];
+  if (eco.moveLeft != null) {
+    slots.push(`<span class="eco ${eco.moveLeft > 0 ? "on" : "used"}"><i></i>移动 ${eco.moveLeft} 米</span>`);
+  }
+  if (eco.kind === "combat") {
+    slots.push(`<span class="eco ${eco.moveLeft > 0 ? "on" : "used"}"><i></i>移动动作</span>`);
+    slots.push(`<span class="eco on"><i></i>其他动作</span>`);
+  } else if (eco.kind === "bonus") {
+    slots.push(`<span class="eco on"><i></i>附赠 · 第二发</span>`);
+  } else {
+    slots.push(`<span class="eco on"><i></i>自由行动</span>`);
+  }
+  if (eco.canEvade) slots.push(`<span class="eco on"><i></i>反应 · 闪避</span>`);
+  box.innerHTML = slots.join("");
+}
+
+/* 情境行：把引擎提示串显示出来（此前这段提示被整条丢弃） */
+function renderCtxBar() {
+  const bar = $("#ctx-bar");
+  const ctx = S.ctx;
+  if (!ctx || !ctx.text) { bar.classList.add("hidden"); return; }
+  bar.classList.remove("hidden");
+  $("#ctx-kind").textContent = ctx.kindCn || "情境";
+  $("#ctx-text").textContent = ctx.text;
+  renderEconomy();
+}
+
+/* 行动者卡：当前行动角色的头像 / PW / SP */
+function renderActorCard() {
+  const box = $("#actor-card");
+  const eco = S.eco || {};
+  const name = eco.actor;
+  if (!name) {
+    box.className = "empty";
+    box.textContent = S.over ? "本局已结束" : "等待世界回应……";
+    return;
+  }
+  const p = (S._party || []).find(x => x.name === name);
+  box.className = "";
+  if (!p) {
+    box.innerHTML = `<div class="medal">${String(name).slice(0, 1)}</div>
+      <div class="actor-meta"><div class="actor-name">${name}</div>
+      <div class="actor-sub"><span class="actor-num">${eco.moveLeft != null ? "剩余移动 " + eco.moveLeft + " 米" : ""}</span></div></div>`;
+    return;
+  }
+  const cur = p.hp_cur != null ? p.hp_cur : p.hp;
+  const pct = Math.max(0, Math.min(100, (cur / p.hp_max) * 100));
+  const color = pct > 55 ? "#63d68a" : pct > 25 ? "#d8a23c" : "#ff4d6d";
+  box.innerHTML = `
+    <div class="medal">${AvatarFX.avatar(p.role || p.role_name, p.name)}</div>
+    <div class="actor-meta">
+      <div class="actor-name">${p.name}</div>
+      <div class="actor-sub">
+        <span class="hpbar"><i style="width:${pct}%;background:${color}"></i></span>
+        <span class="actor-num">PW ${cur}/${p.hp_max}</span>
+        ${p.sp != null ? `<span class="actor-num">SP ${p.sp}</span>` : ""}
+      </div>
+    </div>`;
+}
 
 /* ═══════════ 等待输入 ═══════════ */
 let hideTimer = null;
@@ -719,13 +1596,53 @@ function updateAskForm() {
   if (!(S.aipcGame && S.started && !S.over)) return;
   $("#ask-form").classList.remove("hidden");
   $("#ask-box").placeholder = "旁听指令：/状态 /保存 /退出…（回车提交）";
-  $("#idle-hint").style.display = "none";
+  setThinking(false);
 }
+
+/* DM 裁定中的呼吸指示（AI 模式下最有存在感的一段等待）。
+   剧本模式没有 DM：用「剧本推进中」，免得玩家以为在等 AI。 */
+function setThinking(on, label) {
+  const hint = $("#idle-hint");
+  if (!hint) return;
+  if (on) {
+    hint.classList.add("thinking");
+    hint.innerHTML = `${label || (S.mode === "story" ? "剧本推进中" : "DM 正在裁定")}` +
+      `<span class="think-dots"><i></i><i></i><i></i></span>`;
+    hint.style.display = "";
+  } else {
+    hint.classList.remove("thinking");
+    hint.textContent = "等待世界回应……";
+  }
+}
+
+/* 问题签名：判断「快照里的待答问题」是不是刚刚作答过的那一问。
+   /api/state 的 pending 是历史里最后一条 ask，作答后它仍然是旧问题；不比对
+   就会把已经答过的选项重新画回屏幕上（点了只会拿到 409）。 */
+function askSig(ask) {
+  if (!ask) return "";
+  return [ask.kind || "", ask.prompt || "", (ask.options || []).join("\u0001")].join("\u0002");
+}
+
+/* 记住最近一次 choose 的选项，供数字热键使用 */
+function bindChoiceKeys() {
+  const btns = [...$("#choices").querySelectorAll(".choice-btn")];
+  btns.forEach((b, i) => {
+    if (i < 9) {
+      const k = b.querySelector(".cb-key");
+      if (k) { k.textContent = String(i + 1); b.dataset.key = String(i + 1); }
+    } else {
+      const k = b.querySelector(".cb-key");
+      if (k) k.remove();
+    }
+  });
+}
+
 function showAsk(ev) {
   S.ask = ev;
+  S.askSig = askSig(ev);                 // 当前屏上这一问的签名（见 refreshState 兜底）
   cancelHide();
-  const box = $("#choices"), form = $("#ask-form"), hint = $("#idle-hint");
-  hint.style.display = "none";
+  setThinking(false);
+  const box = $("#choices"), form = $("#ask-form");
   if (ev.kind === "roll") {
     // 轮到玩家掷骰：专用的 d10 掷骰按钮，点击才落骰
     form.classList.add("hidden");
@@ -747,33 +1664,81 @@ function showAsk(ev) {
     btn.addEventListener("click", () => submitAnswer({ index: 0 }, btn));
     panel.append(prompt, btn);
     box.appendChild(panel);
+    S.ctx = { kindCn: "掷骰", text: ev.prompt };
+    renderCtxBar();
     return;
   }
   if (ev.kind === "choose") {
+    const turn = parseTurnPrompt(ev.prompt);
+    S.eco = {
+      actor: turn.actor || (S.eco && S.eco.actor) || null,
+      moveLeft: turn.moveLeft != null ? turn.moveLeft : null,
+      kind: turn.kind,
+      weapons: ((S._party || []).find(x => x.name === turn.actor) || {}).weapon_details || [],
+    };
+    const canEvade = /撤退|闪避/.test(ev.prompt) || turn.kind === "combat";
+    S.eco.canEvade = canEvade;
+    S.ctx = {
+      kindCn: GROUP_CN[turn.kind === "combat" ? "combat" : turn.kind === "bonus" ? "move" : "push"] || "情境",
+      text: ev.prompt,
+    };
+    renderCtxBar();
+    renderActorCard();
+    computeReachForMap(vttCurrentMap() || { grid: null });
     form.classList.add("hidden");
     box.classList.remove("hidden");
     box.innerHTML = "";
+    // 按组归类：同组连续，组内保持引擎给的优先级顺序
+    const buckets = {};
     ev.options.forEach((opt, i) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "choice-btn";
-      b.style.animationDelay = (i * 60) + "ms";
-      b.textContent = opt;
-      b.addEventListener("click", () => submitAnswer({ index: i }, b));
-      box.appendChild(b);
+      const g = optionGroup(opt);
+      (buckets[g.group] = buckets[g.group] || []).push({ opt, i, icon: g.icon, label: g.label });
     });
-  } else {
-    if (ev.kind === "map_move") {
-      S.mapMove = true;                    // 点图落子模式（docs/battlemap-design.md §5）
-      $("#map-move-hint").classList.remove("hidden");
-    }
-    box.classList.add("hidden");
-    form.classList.remove("hidden");
-    $("#ask-box").placeholder = ev.prompt + "（点击地图落子，或输入 x,y 回车）";
-    $("#ask-box").focus();
+    let n = 0;
+    GROUP_ORDER.concat(Object.keys(buckets).filter(k => !GROUP_ORDER.includes(k)))
+      .forEach(gk => {
+        const items = buckets[gk];
+        if (!items || !items.length) return;
+        const grp = document.createElement("div");
+        grp.className = "choice-group";
+        const lab = document.createElement("span");
+        lab.className = "cg-label";
+        lab.textContent = GROUP_CN[gk] || items[0].label || "";
+        grp.appendChild(lab);
+        items.forEach(it => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "choice-btn";
+          b.dataset.group = gk;
+          b.style.animationDelay = (n++ * 35) + "ms";
+          b.innerHTML = `<span class="cb-key"></span><span class="cb-icon">${it.icon}</span>` +
+                        `<span class="cb-text">${escapeHtml(it.opt)}</span>`;
+          b.addEventListener("click", () => submitAnswer({ index: it.i }, b));
+          grp.appendChild(b);
+        });
+        box.appendChild(grp);
+      });
+    bindChoiceKeys();
+    return;
   }
+  // input / map_move
+  if (ev.kind === "map_move") {
+    S.mapMove = true;                      // 点图落子模式（docs/battlemap-design.md §5）
+    $("#map-move-hint").classList.remove("hidden");
+    if (S.map) { computeReachForMap(S.map); }
+  }
+  S.ctx = { kindCn: ev.kind === "map_move" ? "移动" : "自由行动", text: ev.prompt };
+  renderCtxBar();
+  box.classList.add("hidden");
+  form.classList.remove("hidden");
+  $("#ask-box").placeholder = ev.kind === "map_move"
+    ? ev.prompt + "（点击地图落子，或输入 x,y 回车）"
+    : ev.prompt;
+  $("#ask-box").focus();
 }
 async function submitAnswer(payload, btn, keepOpen) {
+  const asked = S.ask;        // 记住本次作答针对的是哪一问（下面要用它判竞态）
+  if (asked) S.answeredSig = askSig(asked);
   const r = await jfetch("/api/answer", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -781,20 +1746,30 @@ async function submitAnswer(payload, btn, keepOpen) {
   if (!r.ok) { console.warn(r.body.error); return; }
   S.mapMove = false;
   $("#map-move-hint").classList.add("hidden");
+  const cells = $("#map-cells");
+  if (cells) cells.querySelectorAll(".reach").forEach(el => el.classList.remove("reach"));
+  VTT.reach = null;
   if (btn) {
     btn.classList.add("chosen");
-    [...btn.parentElement.children].forEach(b => { b.style.pointerEvents = "none"; });
+    [...btn.parentElement.querySelectorAll("button")].forEach(b => { b.style.pointerEvents = "none"; });
+  }
+  // 关键竞态（剧本模式必现）：服务端应答是毫秒级的，`await` 期间下一问可能已经
+  // 经 SSE 到达并由 showAsk 渲染好。此时 S.ask 已经是"新问题"，若照旧把它清空、
+  // 收起新按钮并点亮"DM 裁定中"，界面就永久卡住——之后再没有事件来清除它。
+  // 判定：S.ask 既不是 null 也不是本次作答的那一问 → 已被取代，什么都不动。
+  const superseded = S.ask !== null && S.ask !== asked;
+  if (!superseded) {
     S.ask = null;
     cancelHide();
-    hideTimer = setTimeout(() => {
-      if (!S.ask) $("#choices").classList.add("hidden");
-    }, 700);
-    $("#idle-hint").style.display = "";
-  } else {
-    S.ask = null;
-    if (!keepOpen) {                       // 旁听指令常驻：提交后不收起输入框
+    if (btn) {
+      hideTimer = setTimeout(() => {
+        if (!S.ask) $("#choices").classList.add("hidden");
+      }, 600);
+      // 已做出决定 → 进入"DM 裁定中"
+      if (S.started && !S.over) setThinking(true);
+    } else if (!keepOpen) {                // 旁听指令常驻：提交后不收起输入框
       $("#ask-form").classList.add("hidden");
-      $("#idle-hint").style.display = "";
+      setThinking(true);
     }
   }
   refreshState();
@@ -812,6 +1787,152 @@ $("#ask-form").addEventListener("submit", (e) => {
   } else return;
   box.value = "";
   updateAskForm();
+});
+
+/* 键盘：Esc 收起叠加层、1-9 选行动（输入框聚焦时数字键不抢） */
+document.addEventListener("keydown", (e) => {
+  const typing = e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+  if (e.key === "Escape" && !typing) {
+    if (metricsOpen()) { closeMetrics(); return; }
+    const dossier = $("#dossier");
+    if (dossier && !dossier.classList.contains("hidden")) {
+      dossier.classList.add("hidden");
+      return;
+    }
+  }
+  if (typing) {
+    if (e.key === "Escape") e.target.blur();
+    return;
+  }
+  if (!S.ask || S.ask.kind !== "choose") return;
+  if (/^[1-9]$/.test(e.key)) {
+    const b = $("#choices").querySelector(`.choice-btn[data-key="${e.key}"]`);
+    if (b) { e.preventDefault(); b.click(); }
+  }
+});
+
+/* ═══════════ 反馈层：toast / 档案 ═══════════ */
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function toast(text, kind, ms) {
+  const box = $("#toasts");
+  if (!box) return;
+  const el = document.createElement("div");
+  el.className = "toast " + (kind || "");
+  el.innerHTML = `<span class="t-icon">${kind === "dice" ? "⬢" : kind === "crit" ? "☠" : kind === "good" ? "✔" : "▸"}</span>` +
+                 `<span>${escapeHtml(text)}</span>`;
+  box.appendChild(el);
+  setTimeout(() => {
+    el.classList.add("fade");
+    setTimeout(() => el.remove(), 450);
+  }, ms || 2600);
+  while (box.children.length > 4) box.removeChild(box.firstChild);
+}
+
+/* 作战卷宗：队伍卡点开的角色档案（数据来自 /api/state 的队伍载荷） */
+function openDossier(name) {
+  const p = (S._party || []).find(x => x.name === name);
+  if (!p) return;
+  const box = $("#dossier");
+  const cur = p.hp_cur != null ? p.hp_cur : p.hp;
+  const statOrder = (S.meta && S.meta.stats || []).map(s => s.key);
+  const statNames = {};
+  ((S.meta && S.meta.stats) || []).forEach(s => { statNames[s.key] = s.name; });
+  const skillNames = {};
+  ((S.meta && S.meta.skills) || []).forEach(s => { skillNames[s.key] = s; });
+  const stats = statOrder.map(k =>
+    `<div><label>${statNames[k] || k}</label><b>${(p.stats || {})[k] ?? "–"}</b></div>`).join("");
+  const skills = Object.entries(p.skills || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, lv]) => {
+      const s = skillNames[k] || {};
+      const total = s.stat ? ((p.stats || {})[s.stat] || 0) + lv : lv;
+      return `<div class="ds-skill"><span>${s.name || k}
+        <small>${s.stat ? (statNames[s.stat] || s.stat) : ""}</small></span>
+        <b>${total}</b></div>`;
+    }).join("") || `<span class="side-empty">无技能记录</span>`;
+  const weapons = (p.weapons || []).map(w => `<span>${w}</span>`).join("") || `<span>徒手</span>`;
+  const cyber = (p.cyberware || []).map(c => `<span class="hot">${c}</span>`).join("") || `<span class="side-empty">无植入</span>`;
+  const crits = (p.crit_injuries || []).map(c => `<span class="hot">${c}</span>`).join("") || `<span class="side-empty">完好无损</span>`;
+  const conds = (p.conditions || []).map(c => `<span class="amber">${c}</span>`).join("");
+  const lifepath = (p.lifepath || []).map(l => `<p class="ds-quote">${escapeHtml(l)}</p>`).join("");
+  box.innerHTML = `
+    <div class="ds-card">
+      <button class="btn ghost ds-close" id="ds-close">✕ 关闭</button>
+      <div class="ds-head">
+        <div class="medal">${AvatarFX.avatar(p.role || p.role_name, p.name)}</div>
+        <div>
+          <div class="ds-name">${escapeHtml(p.name)}${p.handle ? `（${escapeHtml(p.handle)}）` : ""}</div>
+          <div class="ds-role">${escapeHtml(p.role_name || p.role || "")}
+            ${p.role_rank ? " " + p.role_rank : ""}
+            ${p.role_ability ? " · 特殊能力「" + escapeHtml(p.role_ability) + "」" : ""}</div>
+          <div class="ds-tag">${p.is_player ? "你·玩家角色" : "AI 队友"}${p.reputation ? " · 声望 " + p.reputation : ""}</div>
+        </div>
+      </div>
+      <div class="ds-sec"><h4>状态</h4>
+        <div class="ds-vitals">
+          <span>PW <b>${cur}/${p.hp_max}</b></span>
+          <span>伤势 <b>${escapeHtml(p.wound_name || "")}</b></span>
+          <span>重伤线 <b>${p.seriously_wounded ?? "–"}</b></span>
+          <span>护甲 <b>${escapeHtml(p.armor_name || "无")} SP ${p.sp ?? 0}</b></span>
+          <span>幸运 <b>${p.luck_cur ?? "–"}/${p.luck_max ?? "–"}</b></span>
+          <span>人性 <b>${p.humanity_cur ?? "–"}/${p.humanity_max ?? "–"}</b></span>
+          <span>欧元 <b>${p.eurobucks ?? 0} eb</b></span>
+          <span>改进点 <b>${p.ip ?? 0} IP</b></span>
+        </div>
+        ${(crits || conds) ? `<div class="ds-list" style="margin-top:8px">${crits}${conds}</div>` : ""}
+      </div>
+      <div class="ds-sec"><h4>十项属性</h4><div class="stat-grid">${stats}</div></div>
+      <div class="ds-sec"><h4>技能</h4><div class="ds-skills">${skills}</div></div>
+      <div class="ds-sec"><h4>武器</h4><div class="ds-list">${weapons}</div></div>
+      <div class="ds-sec"><h4>义体</h4><div class="ds-list">${cyber}</div></div>
+      ${lifepath ? `<div class="ds-sec"><h4>人生之路</h4>${lifepath}</div>` : ""}
+    </div>`;
+  box.classList.remove("hidden");
+  $("#ds-close").onclick = () => box.classList.add("hidden");
+  box.onclick = (e) => { if (e.target === box) box.classList.add("hidden"); };
+  AudioFX.click();
+}
+
+/* 危险红晕：PW 掉到重伤线以内即脉动 */
+function updateDangerVignette(stParty) {
+  const box = $("#danger-vignette");
+  if (!box) return;
+  const me = (stParty || []).find(p => p.is_player);
+  if (!me || S.over) { box.classList.remove("on", "mortal"); box.style.opacity = 0; return; }
+  const cur = me.hp_cur != null ? me.hp_cur : me.hp;
+  const mortal = cur < 1;
+  const serious = cur <= (me.seriously_wounded ?? -1);
+  if (!mortal && !serious) { box.classList.remove("on", "mortal"); box.style.opacity = 0; return; }
+  box.classList.toggle("mortal", mortal);
+  box.classList.add("on");
+}
+
+/* 顶栏「保存」：随时存档（战斗中于本回合开始时落盘） */
+$("#save-btn").addEventListener("click", async () => {
+  const btn = $("#save-btn");
+  btn.classList.add("busy");
+  const r = await jfetch("/api/command", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: "/保存" }),
+  });
+  btn.classList.remove("busy");
+  if (!r.ok) {
+    toast("存档失败：" + (r.body.error || "对局未开始"), "crit");
+    return;
+  }
+  if (S.ask && S.ask.kind === "choose") {
+    toast("已排入队列：本回合开始时落盘 saves/game.json", "good", 3200);
+  } else if (S.encounter) {
+    toast("已排入队列：战斗本回合开始时落盘", "good", 3200);
+  } else {
+    toast("已保存 saves/game.json", "good");
+    setTimeout(refreshState, 300);
+  }
+  AudioFX.click();
 });
 
 /* ═══════════ SSE ═══════════ */
@@ -836,14 +1957,21 @@ function route(ev) {
     if (ev.id === 1) resetForNewStream();
   }
   if (ev.id) S.lastId = ev.id;
+  // 任何新事件到达 = DM 已经出结果，"裁定中"呼吸指示收工
+  if (ev.t !== "ask") setThinking(false);
   switch (ev.t) {
-    case "scene": addScene(ev); setScene(ev); if (S.live) AudioFX.page(); break;
+    case "scene":
+      addScene(ev); setScene(ev);
+      if (S.live) { AudioFX.page(); toast(`进入 ${ev.location}`, "good", 2200); }
+      break;
     case "narration": addNarration(ev); break;
     case "prose": addProse(ev); break;
     case "npc": addSpeech("npc", ev); break;
     case "companion": addSpeech("ally", ev); break;
     case "dice":
       addDice(ev);
+      if (ev.crit_success) toast(`${ev.who || "队伍"} · ${labelCn(ev.label) || "检定"} 暴击成功`, "dice", 2800);
+      else if (ev.crit_failure) toast(`${ev.who || "队伍"} · ${labelCn(ev.label) || "检定"} 暴击失败`, "crit", 2800);
       if (S.live) DiceFX.play({ kind: ev.label && deathLike(ev.label) ? "death" : "check",
                                 who: ev.who, label: labelCn(ev.label), dv: ev.dv,
                                 d10: ev.d10, rolls: ev.rolls,
@@ -855,7 +1983,11 @@ function route(ev) {
     case "roll":
       if (S.live) DiceFX.play(Object.assign({}, ev, { label: labelCn(ev.label) }));
       break;
-    case "crit": addCrit(ev); break;
+    case "crit":
+      addCrit(ev);
+      toast(`致命伤 · ${ev.who || ""} ${ev.name || ""}`, "crit", 4000);
+      if (S.live) AudioFX.doom();
+      break;
     case "system": addSystem(ev); break;
     case "board": addBoard(ev); break;
     case "map": renderMap(ev); break;
@@ -871,11 +2003,18 @@ function resetForNewStream() {
   S.ip = null;
   S.eurobucks = null;
   S.over = false;          // 新流 = 新对局，旁听输入框恢复可用
+  S.ask = null; S.askSig = ""; S.answeredSig = "";
   S.map = null; S.mapKey = null; S.mapMove = false;
+  S.eco = null; S.ctx = null; S.encounter = false;
+  VTT.hover = null; VTT.reach = null;
   $("#map-panel").classList.add("hidden");
   $("#map-move-hint").classList.add("hidden");
   $("#ending").classList.add("hidden");
   $("#flourish").classList.add("hidden");
+  $("#dossier").classList.add("hidden");
+  $("#ctx-bar").classList.add("hidden");
+  renderActorCard();
+  updateDangerVignette([]);
   // 若页面仍停在开始页（他处开团/外部驱动），自动跟随进入对局
   if (!S.started) enterGame();
 }
@@ -884,19 +2023,26 @@ function deathLike(label) {
 }
 function markRemoteChoice(ev) {
   cancelHide();
-  [...$("#choices").children].forEach((b, i) => {
+  S.ask = null;                            // 已作答：别让快照兜底把它当成待答问题
+  const btns = [...$("#choices").querySelectorAll(".choice-btn")];
+  btns.forEach((b, i) => {
     b.style.pointerEvents = "none";
     if (i === ev.index) b.classList.add("chosen");
   });
   hideTimer = setTimeout(() => {
     if (!S.ask) $("#choices").classList.add("hidden");
-  }, 700);
+  }, 600);
 }
 function onGameOver(ev) {
   S.over = true;           // 终局后旁听指令无消费者，收起输入框
+  S.eco = null; S.ctx = null;
   $("#ask-form").classList.add("hidden");
   $("#choices").classList.add("hidden");
-  $("#idle-hint").style.display = "";
+  $("#ctx-bar").classList.add("hidden");
+  setThinking(false);
+  renderActorCard();
+  updateDangerVignette(S._party || []);
+  renderStats(true);                       // 终局后刷新用量与余额
   if (ev.reason === "story_ended" && ev.ending) {
     if (S.live) Flourish.storyEnding(ev);
     else addSystem({ text: `—— 达成结局「${ev.ending.title}」（${ev.ending.rank}） ——` });
@@ -932,6 +2078,7 @@ async function refreshState() {
     connectSSE();
   }
   if (st.generation !== undefined) S.gen = st.generation;
+  S.mode = st.mode === "story" ? "story" : "game";   // 等待指示器据此换文案
   // 模式徽标（剧本互动剧 / AI 接入与否 + AI 代打）；requested=开关已开但本局降级
   const aipcOn = !!(st.aipc && st.aipc.enabled);
   S.aipcGame = aipcOn;                     // enabled=控制器已挂载（server snapshot）
@@ -963,7 +2110,13 @@ async function refreshState() {
   if (eddies != null) $("#eb-chip").textContent = eddies + " eb";
   const ips = stParty.reduce((s, pc) => s + (Number(pc.ip) || 0), 0);
   $("#ip-chip").textContent = ips + " IP";
+  S.encounter = !!st.in_encounter;         // 战斗期：保存按钮改为"回合开始落盘"
   if (st.map) renderMap(st.map);           // 快照兜底（SSE map 事件之外的首帧）
+  // 刷新页面后的行动条重建：待答问题（SSE 历史重放之外的双保险）。
+  // 与刚作答过的那一问比对签名，避免把已答的旧选项重新画出来。
+  if (st.pending && !S.ask && !S.over && askSig(st.pending) !== S.answeredSig) {
+    showAsk(st.pending);
+  }
   // 欧元变动音（仅 live 推进时）
   if (S.live && S.eurobucks !== null && eddies != null && eddies > S.eurobucks) AudioFX.coin();
   S.eurobucks = eddies;
@@ -985,6 +2138,9 @@ async function refreshState() {
   // 致命伤面板
   renderCritPanel(stParty);
   renderPartyPanel(stParty, aipcOn);
+  updateDangerVignette(stParty);
+  renderActorCard();
+  renderCtxBar();
   // 改进点到账检测（RED 没有等级）：与上次快照比总 IP
   const nowIp = {};
   stParty.forEach(pc => { nowIp[pc.name] = Number(pc.ip) || 0; });
@@ -1013,10 +2169,11 @@ function renderPartyPanel(stParty, aipcOn) {
   stParty.forEach(pc => {
     const d = document.createElement("div");
     const down = (pc.hp_cur != null ? pc.hp_cur : pc.hp) < 1;
-    d.className = "pc" + (down ? " pc-down" : "");
+    d.className = "pc" + (down ? " pc-down" : "") + (pc.is_player ? " is-me" : "");
+    d.title = "点击查看作战卷宗（属性 / 技能 / 义体 / 人生之路）";
     const cur = (pc.hp_cur != null) ? pc.hp_cur : pc.hp;
     const pct = Math.max(0, Math.min(100, (cur / pc.hp_max) * 100));
-    const color = pct > 55 ? "#77874f" : pct > 25 ? "#b08a3e" : "#a04840";
+    const color = pct > 55 ? "#63d68a" : pct > 25 ? "#d8a23c" : "#ff4d6d";
     const name = pc.handle ? `${pc.name}（${pc.handle}）` : pc.name;
     const roleLabel = pc.role_name || pc.role || "";
     // SP 护甲条：以当前躯干 SP 与满值对比（磨损后可见缺口）
@@ -1066,6 +2223,7 @@ function renderPartyPanel(stParty, aipcOn) {
       </div>
       ${tags}`;
     list.appendChild(d);
+    d.addEventListener("click", () => openDossier(pc.name));
   });
 }
 
@@ -1109,6 +2267,7 @@ function pregenDefaults(moduleId) {
   return (m && m.default_companions) ? m.default_companions.slice() : [];
 }
 
+/* 欧元（eb）金额：建卡页展示用；与估算花费的 ¥ 分开 */
 function fmtMoney(v) {
   return (Number(v) || 0).toLocaleString("en-US") + " eb";
 }
@@ -1287,8 +2446,14 @@ function enterGame() {
   $("#app").classList.remove("hidden");
   connectSSE();
   refreshState();
+  renderActorCard();
+  updateBalanceChip();                     // 顶栏余额芯片（服务端 60 秒缓存）
+  loadBalance(false).then(updateBalanceChip).catch(() => {});
   setTimeout(() => Tour.show(), 900);
 }
+
+/* 顶栏：随时重看操作说明 */
+$("#btn-help-ingame").addEventListener("click", () => Tour.show(true));
 
 $("#btn-reset").addEventListener("click", async () => {
   await jfetch("/api/reset", { method: "POST", body: "{}",
@@ -1300,8 +2465,22 @@ $("#btn-reset").addEventListener("click", async () => {
 
 /* ═══════════ 启动 ═══════════ */
 (async function boot() {
+  // 深链：?view=stats 直接打开某个大厅视图；?tour=0 跳过开场引导
+  const Q = new URLSearchParams(location.search);
+  if (Q.get("tour") === "0") {
+    try { localStorage.setItem("trpg.tour.done", "1"); } catch (err) { /* 忽略 */ }
+  }
   // AI PC 开关偏好预取：建卡提交体始终携带当前开关状态（免先访问设置页）
   jfetch("/api/settings/aipc").then(r => { if (r.ok) S.aipc = r.body; }).catch(() => {});
+  // 记住上次选择的热力图时间跨度（4 个月 / 7 个月 / 一年）
+  try {
+    const saved = Number(localStorage.getItem(HEAT_RANGE_KEY));
+    if (saved && [120, 210, 371].includes(saved)) {
+      USAGE.days = saved;
+      [...$("#heat-range").children].forEach(b =>
+        b.classList.toggle("on", Number(b.dataset.days) === saved));
+    }
+  } catch (err) { /* localStorage 不可用时用默认一年 */ }
   // 规则集自检：服务端必须提供《赛博朋克 RED》数据面
   ensureMeta().then(m => {
     if (m && m.ruleset && m.ruleset !== "cyberpunk-red") {
@@ -1314,7 +2493,8 @@ $("#btn-reset").addEventListener("click", async () => {
   if (r.body && r.body.started) {
     enterGame();          // 断线/刷新后回到对局
   } else {
-    showView("home");
+    const wanted = Q.get("view");
+    showView(wanted && $("#view-" + wanted) ? wanted : "home");
     $("#start-screen").classList.remove("hidden");
     connectSSE();         // 提前连流，开团即可见叙事
     ensureMeta();

@@ -688,6 +688,31 @@ def story_service_data(**kw) -> dict:
     return data
 
 
+# ================================================================ 存档隔离
+def isolate_saves() -> tuple[str, tempfile.TemporaryDirectory]:
+    """把 CWD 切进临时目录，返回 ``(原 cwd, 临时目录句柄)``。
+
+    引擎的 autosave 与 ``/api/start`` 都用**相对路径** ``saves/game.json``：
+    测试直接在仓库根跑就会覆盖玩家真实存档（历史上真的发生过）。
+    凡是会推进场景 / 购物 / 休整（即会触发 autosave）的测试模块，
+    都要在 ``setUpModule`` 里调用它，并在 ``tearDownModule`` 里收尾。
+    """
+    saved = os.getcwd()
+    tmp = tempfile.TemporaryDirectory()
+    os.chdir(tmp.name)
+    Path("saves").mkdir(exist_ok=True)
+    return saved, tmp
+
+
+def restore_cwd(saved: str, tmp: tempfile.TemporaryDirectory | None) -> None:
+    """还原 ``isolate_saves`` 改过的 CWD 并清理临时目录。"""
+    try:
+        os.chdir(saved)
+    finally:
+        if tmp is not None:
+            tmp.cleanup()
+
+
 __all__ = [
     "TESTS_DIR", "ROOT", "MODULES_DIR", "RED_MODULE_ID", "RED_MODULE_PATH",
     "LLM_ENV_VARS", "strip_llm_env", "restore_env",
@@ -697,5 +722,5 @@ __all__ = [
     "make_state", "make_agent_session", "RollGateUI", "CountUI", "ScriptedUI",
     "DM_MARK", "NPC_MARK", "message_system", "is_fresh_run",
     "http_get", "http_post", "temp_cordis_root", "WebServerCase",
-    "story_data", "story_service_data",
+    "story_data", "story_service_data", "isolate_saves", "restore_cwd",
 ]

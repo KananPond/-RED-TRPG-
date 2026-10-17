@@ -20,8 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from helpers import (CountUI, RollGateUI, ScriptRng, make_agent_session,  # noqa: E402
-                     make_pc, make_state)                    # noqa: F401 (转出)
+from helpers import (CountUI, RollGateUI, ScriptRng, isolate_saves,  # noqa: E402
+                     make_agent_session, make_pc, make_state,        # noqa: F401 (转出)
+                     restore_cwd)
 
 from trpg.game import state as G                            # noqa: E402
 from trpg.game.session import GameSession                   # noqa: E402
@@ -29,6 +30,18 @@ from trpg.harness.adapter import ScriptedAdapter            # noqa: E402
 from trpg.harness.models import ModelResponse, ToolCall     # noqa: E402
 from trpg.rules.character import COND_STABILIZED            # noqa: E402
 from trpg.ui.cli import AutoUI                              # noqa: E402
+
+
+# autosave 写的是相对路径 saves/game.json：切到临时目录，别覆盖玩家存档
+_ISOLATION: dict = {}
+
+
+def setUpModule():
+    _ISOLATION["cwd"], _ISOLATION["tmp"] = isolate_saves()
+
+
+def tearDownModule():
+    restore_cwd(_ISOLATION.pop("cwd", os.getcwd()), _ISOLATION.pop("tmp", None))
 
 
 def _state_with_small_encounter():

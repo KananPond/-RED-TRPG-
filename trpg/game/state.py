@@ -181,14 +181,42 @@ class GameState:
         }
 
     # ------------------------------------------------------------ 战术地图
-    def map_brief(self) -> dict | None:
-        """地图快照（SSE 广播 / 快照接口 / 存档共用；浅拷贝防别名写入）。"""
+    def map_brief(self, enc=None) -> dict | None:
+        """地图快照（SSE 广播 / 快照接口 / 存档共用；浅拷贝防别名写入）。
+
+        ``enc``（战斗中的 ``Encounter``）在场时附带**掩体实时状态**：材质、剩余
+        耐久与是否已被摧毁——前端 VTT 据此画掩体块与耐久条。掩体**不挡视线**
+        （视线只由障碍格决定，见 ``BattleGrid.has_los``），故与 ``obstacles``
+        分开表达，前端不得把两者混为一谈。
+        """
         if not self.map:
             return None
         m = dict(self.map)
         m["tokens"] = {k: dict(v) for k, v in m["tokens"].items()}
         m["meters_per_cell"] = METERS_PER_CELL
+        m["cover"] = self._cover_brief(enc)
+        m["cover_mesh"] = bool(enc is not None and getattr(enc, "grid", None) is not None)
         return m
+
+    def _cover_brief(self, enc=None) -> dict:
+        """掩体 → ``{"x,y": [材质, 剩余耐久, 已摧毁]}``。
+
+        战斗期以 ``Encounter.cover``（含耐久损耗）为准；探索期退回场景声明里
+        的静态掩体，按材质满值显示（``D.COVER``）。"""
+        from ..rules import data as D
+        if enc is not None and getattr(enc, "cover", None):
+            return {f"{int(c[0])},{int(c[1])}":
+                    [str(v[0]), int(v[1]), bool(int(v[1]) <= 0)]
+                    for c, v in enc.cover.items()}
+        out: dict = {}
+        spec = self.map.get("cover") or {}
+        if not isinstance(spec, dict):
+            return out
+        for material, cells in spec.items():
+            hp = int(D.COVER.get(str(material), 0) or 0)
+            for cell in cells or []:
+                out[f"{int(cell[0])},{int(cell[1])}"] = [str(material), hp, hp <= 0]
+        return out
 
     def map_grid(self) -> tuple[int, int]:
         return tuple(self.map["grid"]) if self.map else (0, 0)
@@ -292,7 +320,11 @@ def build_map_state(module: Module, scene: dict, party: list[Character]) -> dict
             "grid": grid, "obstacles": obstacles, "tokens": tokens,
             "meters_per_cell": METERS_PER_CELL,
             "image_grid": spec.get("image_grid") or list(grid),
-            "crop": spec.get("crop")}
+            "crop": spec.get("crop"),
+            # 掩体声明原样入图：探索期由 ``map_brief`` 按材质满值下发，
+            # 战斗期改用 ``Encounter.cover`` 的实时耐久（``_place_cover`` 落点）
+            "cover": {str(k): [[int(c[0]), int(c[1])] for c in (v or [])]
+                      for k, v in (spec.get("cover") or {}).items()}}
 
 
 def _cell_blocked(cell, grid, taken) -> bool:

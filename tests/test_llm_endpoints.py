@@ -16,9 +16,11 @@ import io
 import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 import urllib.error
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,7 +29,9 @@ from helpers import (WebServerCase, strip_llm_env, restore_env)  # noqa: E402
 from trpg.config import LLMConfig, LLM_PROVIDERS                  # noqa: E402
 from trpg.harness import adapter as A                            # noqa: E402
 from trpg.harness.adapter import (OpenAICompatibleAdapter,       # noqa: E402
-                                  normalize_base_url)
+                                  ScriptedAdapter, normalize_base_url,
+                                  sanitize_tool_messages)
+from trpg.harness.loop import TruncateCompactor                  # noqa: E402
 from trpg.harness.events import Session                          # noqa: E402
 from trpg.harness.loop import Agent, DefaultAgentLoop            # noqa: E402
 from trpg.harness.models import ModelResponse, ToolCall, assistant  # noqa: E402
@@ -138,6 +142,10 @@ class TestReasoningRoundTrip(unittest.TestCase):
         self.assertNotIn("reasoning_content", msg2)
         msg3 = assistant("正文", None, "思考")
         self.assertEqual(msg3["reasoning_content"], "思考")
+        raw = [{"id": "rs_1", "type": "reasoning",
+                "content": [{"type": "reasoning_text", "text": "思考"}]}]
+        msg4 = assistant("正文", None, "思考", raw)
+        self.assertEqual(msg4["reasoning_items"], raw)
 
 
 # ================================================================ 错误可读性
@@ -346,6 +354,15 @@ class TestResponsesConversion(unittest.TestCase):
         self.assertEqual(items[0]["content"][0]["text"], "推理过程")
         self.assertEqual(items[1], {"role": "assistant", "content": "结论"})
 
+    def test_raw_reasoning_item_roundtrips_with_id(self):
+        from trpg.harness.responses import to_input_items
+        raw = {"id": "rs_1", "type": "reasoning",
+               "content": [{"type": "reasoning_text", "text": "推理过程"}]}
+        items = to_input_items([{"role": "assistant", "content": "结论",
+                                 "reasoning_items": [raw]}])
+        self.assertEqual(items[0], raw)
+        self.assertEqual(items[1], {"role": "assistant", "content": "结论"})
+
     def test_tools_are_flattened(self):
         from trpg.harness.responses import to_tools
         tools = [{"type": "function",
@@ -355,11 +372,46 @@ class TestResponsesConversion(unittest.TestCase):
             "type": "function", "name": "narrate", "description": "叙述",
             "parameters": {"type": "object", "properties": {}}}])
 
+    def test_reasoning_roundtrip_400_falls_back_to_chat(self):
+        from trpg.harness.responses import OpenAIResponsesAdapter
+        from trpg.harness.models import ModelResponse
+
+        class ChatFallback:
+            def __init__(self):
+                self.called = 0
+
+            def chat(self, model, messages, tools, temperature, max_tokens):
+                self.called += 1
+                return ModelResponse(content="chat 通道成功")
+
+        detail = ("The `reasoning_text` in the thinking mode must be passed "
+                  "back to the API.")
+        chat = ChatFallback()
+        adapter = OpenAIResponsesAdapter(
+            "https://api.deepseek.com", "k", fallback_chat=chat)
+
+        def boom(body):
+            raise _FakeHTTPError(400, {"error": {"message": detail}})
+
+        adapter._post = boom
+        out = adapter.chat("deepseek-flash",
+                           [{"role": "user", "content": "开门"}],
+                           None, 0.7, 200)
+        self.assertEqual(out.content, "chat 通道成功")
+        self.assertEqual(chat.called, 1)
+        self.assertTrue(adapter.fell_back)
+
 
 class TestResponsesParsing(unittest.TestCase):
+    def test_reasoning_roundtrip_error_detected(self):
+        from trpg.harness.responses import _reasoning_roundtrip_error
+        detail = ("The `reasoning_text` in the thinking mode must be passed "
+                  "back to the API.")
+        self.assertTrue(_reasoning_roundtrip_error(detail))
+        self.assertFalse(_reasoning_roundtrip_error("model not found"))
     def _payload(self, status="completed", **over):
         data = {"id": "resp_1", "status": status, "output": [
-            {"type": "reasoning",
+            {"type": "reasoning", "id": "rs_1",
              "content": [{"type": "reasoning_text", "text": "先想"}]},
             {"type": "message", "role": "assistant",
              "content": [{"type": "output_text", "text": "雨停了。"}]},
@@ -376,6 +428,7 @@ class TestResponsesParsing(unittest.TestCase):
         self.assertEqual([(c.id, c.name, c.arguments) for c in resp.tool_calls],
                          [("call_7", "skill_check", {"skill": "perception"})])
         self.assertEqual(resp.reasoning, "先想")
+        self.assertEqual(resp.reasoning_items[0]["id"], "rs_1")
         self.assertEqual(resp.finish_reason, "tool_calls")
         self.assertEqual(resp.usage["prompt_tokens"], 100)
         self.assertEqual(resp.usage["completion_tokens"], 20)
@@ -535,6 +588,392 @@ class TestProtocolSelection(unittest.TestCase):
             self.assertNotIn("api_key", raw)
         finally:
             case.tearDown()
+
+
+# ================================================================ 测试连接探针
+# 2026-10 的真实故障：思考模式开着点「测试连接」必失败——
+#   模型输出被 max_output_tokens 截断且没有正文
+# 因为探针只给 16 个输出 token，思维链先把它吃光了。探针要按「通不通」来判，
+# 不能按「预算够不够」来判：给够预算，被吃光再翻倍重试一次。
+TRUNCATION = ("模型输出被 max_output_tokens 截断且没有正文：思考模式会先消耗输出预算。"
+              "请在设置里关闭思考模式，或调大 max_tokens。")
+
+
+class TestConnectionProbe(unittest.TestCase):
+    def _cfg(self):
+        return LLMConfig(base_url="https://api.deepseek.com", api_key="k",
+                         model="deepseek-flash", thinking="on")
+
+    def test_probe_budget_is_generous(self):
+        from trpg.web.server import test_llm_connection
+        seen = []
+
+        class _Ad:
+            def chat(self, model, messages, tools, temperature, max_tokens):
+                seen.append(max_tokens)
+                return ModelResponse(content="OK", finish_reason="stop")
+
+        resp, budget, boosted = test_llm_connection(_Ad(), self._cfg())
+        self.assertEqual(seen, [1024])          # 不再是 16
+        self.assertEqual((budget, boosted), (1024, False))
+        self.assertEqual(resp.content, "OK")
+
+    def test_truncation_retries_with_double_budget(self):
+        from trpg.web.server import test_llm_connection
+        seen = []
+
+        class _Ad:
+            def chat(self, model, messages, tools, temperature, max_tokens):
+                seen.append(max_tokens)
+                if len(seen) == 1:
+                    raise RuntimeError(TRUNCATION)
+                return ModelResponse(content="OK", finish_reason="stop", reasoning="想了想")
+
+        resp, budget, boosted = test_llm_connection(_Ad(), self._cfg())
+        self.assertEqual(seen, [1024, 2048])
+        self.assertEqual((budget, boosted), (2048, True))
+        self.assertEqual(resp.reasoning, "想了想")
+
+    def test_real_errors_are_not_retried(self):
+        from trpg.web.server import test_llm_connection
+        seen = []
+
+        class _Ad:
+            def chat(self, *a, **kw):
+                seen.append(a[-1])
+                raise RuntimeError("LLM 请求失败（HTTP 401）：invalid key")
+
+        with self.assertRaises(RuntimeError):
+            test_llm_connection(_Ad(), self._cfg())
+        self.assertEqual(seen, [1024])
+
+
+class TestConnectionEndpoint(WebServerCase):
+    """``POST /api/llm/test``：预算加倍后要说清「加过」，两次都截断才报错。"""
+
+    def setUp(self):
+        super().setUp()
+        self._saved_validate = A._assert_host_allowed
+        A._assert_host_allowed = lambda host: None          # 离线：跳过 DNS 边界校验
+        status, body = self.post("/api/settings/llm", {
+            "provider": "deepseek", "base_url": "https://api.deepseek.com",
+            "model": "deepseek-flash", "api_key": "sk-not-real",
+            "thinking": "on", "api_style": "chat"})
+        self.assertEqual(status, 200, body)
+
+    def tearDown(self):
+        A._assert_host_allowed = self._saved_validate
+        super().tearDown()
+
+    def _patch_adapter(self, adapter):
+        from unittest import mock
+        from trpg.web import server as server_mod
+        return mock.patch.object(server_mod, "_adapter_for", lambda *a, **kw: adapter)
+
+    def test_boosted_probe_succeeds(self):
+        seen = []
+
+        class _Ad:
+            def chat(self, model, messages, tools, temperature, max_tokens):
+                seen.append(max_tokens)
+                if len(seen) == 1:
+                    raise RuntimeError(TRUNCATION)
+                return ModelResponse(content="OK", finish_reason="stop", reasoning="想")
+
+        with self._patch_adapter(_Ad()):
+            status, body = self.post("/api/llm/test", {})
+        self.assertEqual(status, 200, body)
+        self.assertTrue(body["ok"])
+        self.assertTrue(body["budget_boosted"])
+        self.assertEqual(body["budget"], 2048)
+        self.assertEqual(seen, [1024, 2048])
+
+    def test_double_truncation_explains_thinking_budget(self):
+        class _Ad:
+            def chat(self, *a, **kw):
+                raise RuntimeError(TRUNCATION)
+
+        with self._patch_adapter(_Ad()):
+            status, body = self.post("/api/llm/test", {})
+        self.assertEqual(status, 400, body)
+        self.assertIn("思考模式", body["hint"])
+
+
+# ================================================================ 思考模式的输出预算
+class TestThinkingBudgetFloor(unittest.TestCase):
+    """思维链也算输出 token：NPC 台词 300 的 cap 一开思考就被吃光。
+
+    ``max_tokens`` 是上限不是账单，思考模式下抬到 ``THINKING_MIN_TOKENS``
+    只允许模型把正文写完，不会凭空多花。
+    """
+
+    def test_floor_only_when_thinking_on(self):
+        self.assertEqual(A.effective_max_tokens(300, "on"), 1024)
+        self.assertEqual(A.effective_max_tokens(300, "enabled"), 1024)
+        self.assertEqual(A.effective_max_tokens(1200, "on"), 1200)   # 本来就够大
+        self.assertEqual(A.effective_max_tokens(300, "off"), 300)
+        self.assertEqual(A.effective_max_tokens(300, ""), 300)
+
+    def _chat_payload(self, adapter, budget=300):
+        seen = {}
+
+        def _post(body):
+            seen.update(json.loads(body))
+            return ModelResponse(content="OK", finish_reason="stop")
+
+        adapter._post = _post
+        adapter.chat("m", [{"role": "user", "content": "hi"}], None, 0.0, budget)
+        return seen
+
+    def test_chat_completions_carries_floor(self):
+        from unittest import mock
+        with mock.patch.object(A, "_assert_host_allowed", lambda host: None):
+            ad = OpenAICompatibleAdapter("https://api.deepseek.com", "k",
+                                         thinking="on", max_retries=1)
+        self.assertEqual(self._chat_payload(ad)["max_tokens"], 1024)
+
+    def test_responses_carries_floor(self):
+        from unittest import mock
+        from trpg.harness.responses import OpenAIResponsesAdapter
+        with mock.patch.object(A, "_assert_host_allowed", lambda host: None):
+            ad = OpenAIResponsesAdapter("https://api.deepseek.com", "k",
+                                        thinking="on", max_retries=1)
+        self.assertEqual(self._chat_payload(ad)["max_output_tokens"], 1024)
+
+
+# ================================================================ .env 免填密钥
+class TestEnvFile(unittest.TestCase):
+    """密钥写进 .env 一次，以后每次启动自动读取（.env 已 gitignore）。"""
+
+    KEYS = ("DEEPSEEK_API_KEY", "TRPG_LLM_MODEL")
+
+    def setUp(self):
+        self._saved = {k: os.environ.pop(k, None) for k in self.KEYS}
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_reads_values_and_strips_quotes(self):
+        from trpg.config import load_env_file
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / ".env"
+            p.write_text('# 我的密钥\nexport DEEPSEEK_API_KEY="sk-from-file"\n'
+                         "TRPG_LLM_MODEL='deepseek-flash'\n", encoding="utf-8")
+            self.assertEqual(load_env_file(p), 2)
+        self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "sk-from-file")
+        self.assertEqual(os.environ["TRPG_LLM_MODEL"], "deepseek-flash")
+
+    def test_existing_env_wins(self):
+        from trpg.config import load_env_file
+        os.environ["TRPG_LLM_MODEL"] = "deepseek-v4-pro"
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / ".env"
+            p.write_text("TRPG_LLM_MODEL=deepseek-flash\n", encoding="utf-8")
+            self.assertEqual(load_env_file(p), 0)
+        self.assertEqual(os.environ["TRPG_LLM_MODEL"], "deepseek-v4-pro")
+
+    def test_missing_file_is_quiet(self):
+        from trpg.config import load_env_file
+        self.assertEqual(load_env_file("no-such-file.env"), 0)
+
+
+# ================================================================ 工具调用配对
+# 2026-10 的真实故障（真机 400）：
+#   拉取/测试都正常，但一开局推进剧情就报
+#   LLM 请求失败（HTTP 400）：No tool output found for tool call call_01_….
+# 原因：DeepSeek 的 Responses 端点按「output 必须紧跟自己的 call」校验，而并行
+# 工具调用按 [call A, call B, out A, out B] 平铺时，B 夹在 A 和 A 的结果之间，
+# 它判定第二个调用没有结果。OpenAI 自己只按 call_id 配、不要求相邻。
+# 修法：交错输出 [call A, out A, call B, out B]，并丢弃半截工具链。
+def _call(call_id: str, name: str, args: str = "{}") -> dict:
+    return {"id": call_id, "type": "function",
+            "function": {"name": name, "arguments": args}}
+
+
+def _tool(call_id: str, name: str, payload: str = '{"ok": true}') -> dict:
+    return {"role": "tool", "tool_call_id": call_id, "name": name, "content": payload}
+
+
+class TestResponsesToolPairing(unittest.TestCase):
+    def _types(self, items):
+        return [i.get("type") or i.get("role") for i in items]
+
+    def test_parallel_calls_are_interleaved(self):
+        from trpg.harness.responses import to_input_items
+        items = to_input_items([
+            {"role": "assistant", "content": None,
+             "tool_calls": [_call("call_A", "get_state"), _call("call_B", "npc_dialogue")]},
+            _tool("call_A", "get_state", '{"a": 1}'),
+            _tool("call_B", "npc_dialogue", '{"b": 2}'),
+        ])
+        self.assertEqual(self._types(items),
+                         ["function_call", "function_call_output",
+                          "function_call", "function_call_output"])
+        self.assertEqual(items[1]["call_id"], "call_A")
+        self.assertEqual(items[3]["call_id"], "call_B")
+
+    def test_every_call_is_immediately_followed_by_its_output(self):
+        # 真机 400 的形态：两轮「思考 + 并行调用」的历史
+        from trpg.harness.responses import to_input_items
+        items = to_input_items([
+            {"role": "user", "content": "推进剧情"},
+            {"role": "assistant", "content": None, "reasoning_content": "先查状态再问话",
+             "tool_calls": [_call("call_A0", "get_state"),
+                            _call("call_A1", "npc_dialogue")]},
+            _tool("call_A0", "get_state"), _tool("call_A1", "npc_dialogue"),
+            {"role": "assistant", "content": None, "reasoning_content": "该叙述了",
+             "tool_calls": [_call("call_B0", "narrate"), _call("call_B1", "skill_check")]},
+            _tool("call_B0", "narrate"), _tool("call_B1", "skill_check"),
+        ])
+        for idx, item in enumerate(items):
+            if item.get("type") == "function_call":
+                nxt = items[idx + 1]
+                self.assertEqual(nxt["type"], "function_call_output", item)
+                self.assertEqual(nxt["call_id"], item["call_id"], item)
+
+    def test_orphan_call_is_not_sent(self):
+        # 工具执行中断：调用进了历史、结果没写。这种半截调用发出去必被 400
+        from trpg.harness.responses import to_input_items
+        items = to_input_items([
+            {"role": "assistant", "content": "我看看",
+             "tool_calls": [_call("call_X", "say")]},
+            {"role": "user", "content": "继续"},
+        ])
+        self.assertNotIn("function_call", self._types(items))
+        self.assertEqual(items[0], {"role": "assistant", "content": "我看看"})
+
+    def test_orphan_output_is_not_sent(self):
+        from trpg.harness.responses import to_input_items
+        items = to_input_items([
+            {"role": "user", "content": "hi"},
+            _tool("call_Y", "say"),
+        ])
+        self.assertEqual(self._types(items), ["user"])
+
+
+class TestToolPairFallback(unittest.TestCase):
+    """兜底：工具配对 400 不能让整局游戏死掉——切 chat/completions 重发。"""
+
+    class _Chat:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, model, messages, tools, temperature, max_tokens):
+            self.calls += 1
+            return ModelResponse(content="chat 兜底", finish_reason="stop")
+
+    def _adapter(self, code: int, message: str, fallback):
+        from trpg.harness.responses import OpenAIResponsesAdapter
+        ad = OpenAIResponsesAdapter("https://api.deepseek.com/v1", "k",
+                                    max_retries=1, fallback_chat=fallback,
+                                    fallback_on_404=False)
+        from trpg.harness import responses as R
+        orig = R.open_url
+
+        def _boom(req, timeout=None):
+            raise _FakeHTTPError(code, {"error": {"message": message}})
+
+        R.open_url = _boom
+        return ad, lambda: setattr(R, "open_url", orig)
+
+    def test_pair_400_falls_back_even_with_explicit_protocol(self):
+        chat = self._Chat()
+        ad, restore = self._adapter(
+            400, "No tool output found for tool call call_01_abc.", chat)
+        try:
+            resp = ad.chat("x", [{"role": "user", "content": "hi"}], None, 0.0, 8)
+        finally:
+            restore()
+        self.assertEqual(resp.content, "chat 兜底")
+        self.assertTrue(ad.fell_back)
+        self.assertEqual(chat.calls, 1)
+
+    def test_404_still_raises_when_protocol_explicit(self):
+        ad, restore = self._adapter(404, "Not Found", self._Chat())
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                ad.chat("x", [{"role": "user", "content": "hi"}], None, 0.0, 8)
+        finally:
+            restore()
+        self.assertIn("404", str(ctx.exception))
+
+
+class TestToolPairSanitizer(unittest.TestCase):
+    """chat/completions 也要求 tool 消息紧跟 tool_calls：同一套修形两边都用。"""
+
+    def test_drops_orphan_call(self):
+        msgs = [{"role": "assistant", "content": None,
+                 "tool_calls": [_call("c1", "say")]},
+                {"role": "user", "content": "继续"}]
+        self.assertEqual(sanitize_tool_messages(msgs),
+                         [{"role": "user", "content": "继续"}])
+
+    def test_keeps_text_when_calls_have_no_results(self):
+        msgs = [{"role": "assistant", "content": "我先看看",
+                 "tool_calls": [_call("c1", "say")]}]
+        self.assertEqual(sanitize_tool_messages(msgs),
+                         [{"role": "assistant", "content": "我先看看"}])
+
+    def test_drops_orphan_result_and_keeps_pairs(self):
+        msgs = [{"role": "assistant", "content": None,
+                 "tool_calls": [_call("c1", "say")]},
+                _tool("c1", "say"),
+                _tool("c9", "say")]           # 没有对应调用
+        out = sanitize_tool_messages(msgs)
+        self.assertEqual([m.get("role") for m in out], ["assistant", "tool"])
+        self.assertEqual(out[0]["tool_calls"][0]["id"], "c1")
+        self.assertEqual(out[1]["tool_call_id"], "c1")
+
+
+class TestToolFailureStillPairs(unittest.TestCase):
+    """工具抛异常也必须回填结果，否则历史里留下半截工具链。"""
+
+    def test_exception_is_reported_as_tool_result(self):
+        registry = ToolRegistry()
+
+        def boom(**kw):
+            raise ValueError("模拟工具故障")
+
+        registry.register("boom", "会抛异常的工具", {"type": "object", "properties": {}}, boom)
+        adapter = ScriptedAdapter([
+            ModelResponse(content=None, tool_calls=[ToolCall("call_boom", "boom", {})],
+                          finish_reason="tool_calls"),
+            ModelResponse(content="收束", finish_reason="stop"),
+        ])
+        loop = DefaultAgentLoop(registry=registry, adapter=adapter)
+        agent = Agent(agent_id="dm", name="DM", system_prompt="你是 DM",
+                      tool_names=["boom"])
+        session = Session("t")
+        result = loop.run(agent, session, "开工")
+
+        msgs = session.replay_messages()
+        call_msg = next(m for m in msgs if m.get("tool_calls"))
+        idx = msgs.index(call_msg)
+        self.assertEqual(msgs[idx + 1]["role"], "tool")
+        self.assertEqual(msgs[idx + 1]["tool_call_id"], "call_boom")
+        self.assertIn("模拟工具故障", msgs[idx + 1]["content"])
+        # 修形不该再删掉任何东西
+        self.assertEqual(len(sanitize_tool_messages(msgs)), len(msgs))
+        self.assertEqual(result.content, "收束")
+
+
+class TestCompactionKeepsPairs(unittest.TestCase):
+    def test_cut_does_not_split_call_and_result(self):
+        msgs = [{"role": "system", "content": "sys"},
+                {"role": "user", "content": "u1" * 400},
+                {"role": "assistant", "content": None,
+                 "tool_calls": [_call("c1", "say")]},
+                _tool("c1", "say"),
+                {"role": "user", "content": "u2" * 400}]
+        compactor = TruncateCompactor(token_limit=1, keep_recent=3)
+        out = compactor.compact(msgs)
+        tail = out[2:]            # head + 系统注 + tail
+        self.assertNotEqual(tail[0].get("role"), "tool")
+        self.assertEqual(len(sanitize_tool_messages(out)), len(out))
 
 
 if __name__ == "__main__":

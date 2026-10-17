@@ -3,7 +3,7 @@
 一个可以**单人游玩**的桌面角色扮演游戏。DM 与同桌的其他角色都由 AI Agent 扮演，
 舞台是 **2045 年（血染之时）的夜之城**，规则是
 **《赛博朋克 RED》（Cyberpunk RED）**——以免费入门的**轻松模式（Easy Mode）**口径为准
-（引擎版本 `trpg` 2.0.0，存档 `ruleset = "cyberpunk-red"`）。
+（引擎版本 `trpg` 2.3.1，存档 `ruleset = "cyberpunk-red"`）。
 
 你要做的只有一件事：接下这单活，然后活着把钱拿到手。
 
@@ -17,6 +17,13 @@
 - **演出**：每次检定与攻击都有 **1d10 掷骰动画**（掷出 10 金色爆辉、掷出 1 震裂）；
   **合成音效**（骰子/命中/暴击/致命伤/倒地/终局，Web Audio 实时生成，零外部音频文件）；
   队伍头像程序化生成；终幕结算卡与首团新手引导。
+- **AI 剧场（纯 AI 跑团）**：不用建卡、不用读规则、不用出手。挑一位主角，
+  每个 PC（主角与队友）都由独立 Agent 自主走位、说话、决定要不要开枪；界面按
+  《极乐迪斯科》的叙事语法重做——**技能之声**（逻辑/共情/意志/反应/技术/街头/
+  体格会在脑内插话）、案卷式角色肖像、全屏场景底片、检定的判决叠层、AI 考虑过
+  的选项、案卷任务栏、战术板与环境音。可暂停、调速、隐藏 UI，或对主角低语一句
+  （不保证被采纳）。**纯 AI：必须先接入 LLM，没有本地导演/剧本兜底**。
+  详见 [docs/cinema-design.md](docs/cinema-design.md)。
 - **剧本**：内置**唯一一部**模组——轻松模式手册本身
   **《赛博朋克 RED：轻松模式》**（`cpred-easy-mode`，*Cyberpunk RED: Easy Mode*），
   内含手册的入门差事**「抢钱行动」**（原文 *WYSKAKUJ Z FORSY*）：
@@ -48,8 +55,12 @@ python main.py --web
 # 打开 http://127.0.0.1:8500 （自动打开浏览器；--port 可改端口，--no-open 不自动打开）
 ```
 
-**开始页**（左侧导航栏 + 右侧视图区）有六个入口：
+**开始页**（左侧导航栏 + 右侧视图区）有七个入口：
 
+- **AI 剧场**（纯 AI 跑团）：最省事的一条路。选一位预设角色与演出速度，
+  每个 PC 由独立 Agent 自主行动，你只负责看。必须先接入 LLM；没有 LLM 时
+  剧场会拒绝开局，不会退回本地导演。界面是《极乐迪斯科》式的技能之声/案卷
+  肖像/检定判决叠层，而不是仪表盘。
 - **剧本模式**（互动剧）：分支选择 · 多结局。内置剧本《抢钱行动》——同一部轻松模式
   手册的入门差事，改写成 70 个节点、**8 个结局**的节点图。不需要 LLM 也能玩，
   详见下文「剧本模式」。
@@ -92,11 +103,58 @@ python main.py --web
 深链：`?view=stats` 直接打开某个大厅视图（`home` / `new` / `story` / `saves` /
 `stats` / `help` / `settings`），`?tour=0` 跳过开场引导。
 
+## AI 剧场：一桌全 AI 的跑团
+
+![AI 剧场](docs/screenshots/cinema-stage.png)
+
+剧场里没有人类玩家。你选一个主角，然后看这一桌 Agent 把夜之城演完：
+
+- **每个 PC 都是自主 Agent**：主角与同伴各有独立的 Agent、`pc_session`、人设与
+  目标；探索时轮流决定说什么、做什么，战斗时各自行动。不是“一个主角 + 反应式
+  队友”，也不是真人桌边模拟——PC 直接以角色身份说话和行动。
+- **全 AI 探索回合**：`PartyDirector` 每场给每个 PC 最多四轮自主行动；
+  `say / explore_intent / explore_act / hold` 是它们仅有的自我行动工具。
+  世界裁定仍由 DM 做，PC 不能直接改场景。
+- **DM 是唯一的世界 Agent**：`dm_agent` 持有叙述、检定、换场、开战等世界工具；
+  NPC 是它的子智能体（`NPCDirector`），只通过 `npc_dialogue` 被拉起，工具面
+  只有 `say`，不能自主行动。
+- **技能之声**：逻辑/共情/意志/反应/技术/街头/体格七个声部会根据当前场景、
+  检定结果和 NPC 台词插话。它们不是系统提示，而是带偏见、会误读、会逞强的
+  内心声音；由 `trpg/game/psyche.py` 本地生成，零 token，不参与结算。
+- **案卷式舞台**：五名预设角色的官方角色画被处理成案卷照片；六张场景底片
+  （安全屋/路上/小巷/血房间/仓库/黎明）以低饱和、冷影暖高光、颗粒与雨幕统一；
+  对话以「记忆栈」推进，最新一句最亮，旧句退到背景。
+- **检定的判决感**：每次技能检定弹出 SKILL CHECK 叠层：声部、d10、合计、
+  难度值、成功/失败与修正明细；文字里紧接着是同一技能之声对结果的评论。
+- **AI 考虑过的选项**：每次做决定时短暂展示选项与 AI 选中的一条；你不需要点，
+  但能看见它「本来还可以怎样」。
+- **战术板**：遭遇战里读取真实的 `map` 事件，障碍/掩体/PC 与敌人 token 平滑
+  走位；主角 token 有额外高亮。战斗不靠预设动画。
+- **低语**：底部输入一句悄悄话。它进入下一名 PC Agent 的上下文，不保证被采纳，
+  也不直接改数值。
+- **暂停是真的暂停**：`CinemaUI._emit` 在事件进入 SSE 前等待，游戏线程真的停；
+  另有 0.8× / 1× / 1.5× / 2.2× 四档节奏与「沉浸」模式（隐藏侧栏与控件）。
+- **刷新恢复**：刷新页面会从快照恢复暂停、速度、当前场景、战术板与技能之声。
+
+> 资产：角色画与部分场景插画取自同目录 `.reference/` 中的免费
+> *Cyberpunk RED Easy Mode* 手册，经裁切/调色/半调处理；其余场景底片由
+> `tools/build_cinema_assets.py` 用 Pillow 程序化绘制。全部离线可用，
+> 不依赖外部 CDN。详细设计与授权说明见
+> [docs/cinema-design.md](docs/cinema-design.md)。
+
 ### 界面预览
 
 | 主页 | 对局界面 |
 | --- | --- |
 | ![主页](docs/screenshots/home-city.png) | ![对局界面](docs/screenshots/game-board.png) |
+
+| AI 剧场 · 选角 | AI 剧场 · 演出 |
+| --- | --- |
+| ![选角](docs/screenshots/cinema-cast.png) | ![演出](docs/screenshots/cinema-stage.png) |
+
+| 检定叠层 | 移动端 |
+| --- | --- |
+| ![检定](docs/screenshots/cinema-check.png) | ![移动端](docs/screenshots/cinema-mobile.png) |
 
 ![数据看板](docs/screenshots/stats-heatmap.png)
 
@@ -324,6 +382,36 @@ set TRPG_LLM_THINKING=off                          # on/off；不设则用预设
 python main.py --web
 ```
 
+不想每次重启都重填密钥？在项目根目录建一个 `.env`（**已在 `.gitignore` 里**），
+写 `DEEPSEEK_API_KEY=sk-...` 即可：启动时自动读取，已存在的环境变量优先，
+文件不会被上传、也不会被任何命令打印。模板见 [.env.example](.env.example)。
+
+### 网络与代理：默认直连，代理要显式声明
+
+LLM 请求**默认直连**，不看进程里的 `HTTP_PROXY` / `HTTPS_PROXY`。这两个变量
+常是终端工具、策略代理或已关闭的 VPN 留下的，urllib 会把请求送进 `CONNECT`
+隧道，代理回 403，设置页就报：
+
+```
+拉取失败（URLError）：Tunnel connection failed: 403 Forbidden
+LLM 请求失败（URLError）：Tunnel connection failed: 403 Forbidden
+```
+
+这条 403 来自**代理**，请求根本没到供应商——换密钥、改模型名、切协议都不会好。
+本应用因此默认忽略环境代理，并在设置页「出网方式」一行如实显示当前状态
+（直连时会列出被忽略的代理地址）。确实需要代理时显式指定，改完重启服务：
+
+| 取值 | 行为 |
+| --- | --- |
+| `direct`（默认，或不设） | 直连：忽略 `HTTP_PROXY` / `HTTPS_PROXY` 与 Windows 系统代理 |
+| `env` | 沿用环境变量 + 系统（注册表）代理；**隧道层失败会自动直连重试一次** |
+| `http://127.0.0.1:7890` | 只走这个代理（也可只写 `127.0.0.1:7890`）；失败即报错，不回落 |
+
+```bash
+set TRPG_LLM_PROXY=env          # 只有「必须经代理才能出网」的网络才需要
+python main.py --web
+```
+
 ### 各家真实接口与模型（2026-10 核对官方文档）
 
 | 供应商 | API 地址（可再拼 `/chat/completions`） | 预设模型 | 思考模式 |
@@ -358,6 +446,11 @@ MiniMax 与自定义网关默认走 chat。协议层在 [responses.py](trpg/harn
   工具表从 `{"type":"function","function":{…}}` 拍平成
   `{"type":"function","name","description","parameters"}`；
   `max_tokens` → `max_output_tokens`；`tool_choice: "auto"`。
+- **调用与结果必须紧邻**：DeepSeek 的 Responses 端点按「output 紧跟自己的 call」
+  校验，并行调用若平铺成 `[call A, call B, out A, out B]` 会被判成「第二个调用
+  没有结果」并返回 400（`No tool output found for tool call …`）。所以转换层
+  **交错输出** `[call A, out A, call B, out B]`，并丢弃半截工具链；万一仍被拒，
+  适配器会把同一条对话切到 chat/completions 重发，不让对局死在一个 400 上。
 - **入站**：`output` items 还原成正文 / `tool_calls`（用 `call_id` 配对）/
   思维链 / usage（`input_tokens` → `prompt_tokens`，`output_tokens` →
   `completion_tokens`，数据看板的统计口径不变）。
@@ -370,9 +463,17 @@ DeepSeek V4 起思考模式**默认开启**，规则是：**带 `tools` 的请�
 `reasoning_content` 必须逐轮回传，否则 API 返回 400**。本项目每个 Agent 都靠
 工具推进，所以适配器把思维链存进 `ModelResponse.reasoning` 并由 agent 循环
 随 assistant 消息回写历史；同时默认给 DeepSeek 下发
-`{"thinking": {"type": "disabled"}}`（可在设置里打开）。开思考时若
-`max_tokens` 太小，输出会被推理吃掉——适配器会把这种「空正文 + `length`」
-报成可读错误，而不是静默失败。
+`{"thinking": {"type": "disabled"}}`（可在设置里打开）。
+
+**思维链也占输出预算**：NPC 台词的 cap 只有 300，思考一开就会被推理吃光，
+表现为「模型输出被截断且没有正文」。所以：
+
+- 思考模式打开时，适配器把每次调用的输出预算抬到至少 **1024**
+  （`adapter.THINKING_MIN_TOKENS`；`max_tokens` 是上限不是账单，抬上去只允许
+  模型把正文写完）；
+- 设置页「测试连接」的探针给 **1024**，被吃光会自动翻倍到 **2048** 再试一次
+  （响应里的 `budget_boosted` 会在界面上注明），两次都截断才报错；
+- 真遇到「空正文 + `length`」，适配器报可读错误而不是静默失败。
 
 服务端会为 DM 与模组队友分别构建 Agent（系统提示词 + 工具组），经 harness 循环接入
 所选供应商。未配置时自动以离线模式运行（模组数据驱动 DM + 启发式队友 AI）。
@@ -431,9 +532,13 @@ trpg/
              #   / usage(Token记账 + 按日聚合 + 热力图) / balance(供应商余额只读查询)
   game/      # 编排器、DM/PC Agent、游戏工具绑定、存档
   st/        # SillyTavern 式提示词栈（角色卡/宏/世界书/深度注入）
+  game/      # 编排器、DM/PC Agent、游戏工具绑定、存档
+             #   / aipc(主角 PC Agent) / party(全 AI PC 回合) / psyche(技能之声)
   ui/        # 终端界面、预设角色创建、WebUI（SSE 事件流适配）
   web/       # 本地服务（HTTP+SSE）与前端（index.html / app.css / app.js）
+             #   / cinema.py(纯 AI 剧场 UI) / static/cinema.css·js + cinema/ 美术
 modules/     # 原子模组目录（cpred-easy-mode = 内置；generated-*/imported-* 运行时产生）
+tools/       # 构建脚本（cinema 场景/肖像资产由 build_cinema_assets.py 生成）
 MODULE_SPEC.md  # 模组开发规范（根目录，版本 3.0）
 main.py      # 入口（--web / --module / --demo / --offline / --new / --load / --seed / --check-llm / --port）
 tests/       # 单元+集成测试（含 HTTP 驱动的完整剧本通关）
@@ -460,6 +565,11 @@ harness（注册表校验、循环、guards、压缩、事件日志可重放、�
 游戏集成（离线模式整场战斗、IP 结算、存档往返、ScriptedAdapter 驱动的 DM/PC 决策路径）、
 Web 层（阻塞应答、HTTP 端点、SSE 历史重放、设置校验、模拟 LLM 的模组生成、
 用量与余额端点、真实 HTTP 服务驱动的整局通关）与内置模组全流程校验。
+AI 剧场与全 AI 跑团另有 13 例：无 LLM 时剧场拒绝开局、`strict_ai` 拒绝本地
+导演输入、旧离线启发式单元回归、暂停闸门/重置、快照声部、低语注入；以及所有
+PC 都走独立 Agent、没有 Human `free_input`、PC 工具面不含 DM/NPC 工具、
+共享桌面上下文、主角战斗走 Agent、终章完整演出。
+运行：`python -m pytest tests -q`（当前 **708 passed**）。
 
 ## 设计说明（规则口径）
 
@@ -479,6 +589,8 @@ Web 层（阻塞应答、HTTP 端点、SSE 历史重放、设置校验、模拟 
 ## 凭据与安全
 
 - API Key 只从环境变量 `TRPG_LLM_API_KEY` 读取，源码/示例中不出现任何真实凭据。
+- 出网默认直连，代理需显式声明 `TRPG_LLM_PROXY`（见「网络与代理」）；
+  继承来的 `HTTP(S)_PROXY` 不会被悄悄带进 LLM 请求。
 - LLM 端点默认禁止解析到私网/环回/链路本地地址（防 SSRF），本机模型服务需
   显式设置 `TRPG_LLM_ALLOW_PRIVATE=1` 放行；重定向逐跳复检。
 
@@ -492,5 +604,8 @@ Web 层（阻塞应答、HTTP 端点、SSE 历史重放、设置校验、模拟 
   R. Talsorian Games 所有；Cyberpunk® 是 CD Projekt Red S.A. 的注册商标；
   本项目为非官方同人作品，仅供个人学习与桌边自用，**不得用于商业发行**。
 - 旧版本曾包含的开放许可规则内容及其归属声明**已随 5e 规则层一并移除**。
-- 全部音画资产为运行时程序化合成（Web Audio / SVG），不含第三方文件。
+- **AI 剧场美术**：角色画与部分场景插画裁自 R. Talsorian Games 免费发布的
+  《Cyberpunk RED Easy Mode》手册（本地 `.reference/`），经裁切/调色/半调处理；
+  其余场景底片、纸纹、颗粒、雨幕与全部音效为程序化生成或 CSS/SVG 合成。
+  本项目不以任何方式主张官方美术的所有权，剧场仅用于非商业同人展示。
 - 变更历史见 [CHANGELOG.md](CHANGELOG.md)。

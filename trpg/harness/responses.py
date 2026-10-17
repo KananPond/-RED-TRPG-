@@ -22,11 +22,19 @@ import urllib.error
 import urllib.parse
 
 from .adapter import (ModelAdapter, ModelResponse, ToolCall, _error_message,
-                      _status_hint, normalize_base_url, open_url,
+                      _status_hint, _tool_pair_error, effective_max_tokens,
+                      normalize_base_url, open_url, sanitize_tool_messages,
                       validate_endpoint)
 
 #: 上下文里被视为「工具结果」的角色
 _TOOL_ROLES = ("tool", "function")
+
+
+def _reasoning_roundtrip_error(detail: str) -> bool:
+    """供应商是否在抱怨 reasoning item 没有原样回传。"""
+    low = str(detail or "").lower()
+    return ("reasoning_text" in low and ("pass" in low or "thinking" in low)) \
+        or ("reasoning" in low and "must be passed" in low)
 
 
 # ------------------------------------------------------------------ 出站转换
@@ -48,25 +56,72 @@ def split_instructions(messages: list[dict]) -> tuple[str, list[dict]]:
     return "\n\n".join(x for x in instructions if x), rest
 
 
+def _tool_output_item(msg: dict) -> dict:
+    content = msg.get("content")
+    return {
+        "type": "function_call_output",
+        "call_id": str(msg.get("tool_call_id") or ""),
+        "output": content if isinstance(content, str)
+                  else json.dumps(content, ensure_ascii=False),
+    }
+
+
+def _function_call_item(call: dict) -> dict:
+    func = call.get("function") or {}
+    arguments = func.get("arguments")
+    if not isinstance(arguments, str):
+        arguments = json.dumps(arguments if arguments is not None else {},
+                               ensure_ascii=False)
+    return {
+        "type": "function_call",
+        "call_id": str(call.get("id") or func.get("name") or ""),
+        "name": str(func.get("name") or ""),
+        "arguments": arguments,
+    }
+
+
 def to_input_items(messages: list[dict]) -> list[dict]:
-    """chat 风格消息 → Responses ``input`` items。"""
+    """chat 风格消息 → Responses ``input`` items。
+
+    **调用与结果必须紧邻**：DeepSeek 的 Responses 兼容端点按「output 紧跟自己的
+    call」校验，只要两者之间夹了别的 item（另一个调用的 ``function_call``、
+    开发者消息、reasoning……）就回
+
+        400 No tool output found for tool call call_01_…
+
+    而 OpenAI 自己只按 ``call_id`` 配对、不要求相邻。并行工具调用按
+    ``[call A, call B, out A, out B]`` 平铺就会踩中这条——所以这里**交错输出**
+    ``[call A, out A, call B, out B]``，两边都合法。
+
+    另外，找不到结果的调用（工具执行中途崩溃、上下文被截断）一律不发送：
+    半截工具链在严格校验下必被拒，且模型看到「调了没回」也毫无意义。
+    """
     items: list[dict] = []
-    for msg in messages:
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
         role = msg.get("role") or "user"
-        content = msg.get("content")
         if role in _TOOL_ROLES:
-            items.append({
-                "type": "function_call_output",
-                "call_id": str(msg.get("tool_call_id") or ""),
-                "output": content if isinstance(content, str)
-                          else json.dumps(content, ensure_ascii=False),
-            })
+            # 孤儿工具结果（前面没有对应调用）：单发会被拒，直接丢弃
+            i += 1
             continue
         # 思考模式的思维链要原样回传（DeepSeek：明文 content 会归并到相邻 assistant）
-        reasoning = msg.get("reasoning_content") or msg.get("reasoning")
-        if reasoning:
-            items.append({"type": "reasoning",
-                          "content": [{"type": "reasoning_text", "text": str(reasoning)}]})
+        raw_reasoning = msg.get("reasoning_items")
+        if raw_reasoning:
+            # Responses 的原始 reasoning item：保留 id/summary/encrypted_content，
+            # 只补 type；供应商会校验它是不是上一轮的同一条思维链。
+            for item in raw_reasoning:
+                if isinstance(item, dict):
+                    out = dict(item)
+                    out.setdefault("type", "reasoning")
+                    items.append(out)
+        else:
+            reasoning = msg.get("reasoning_content") or msg.get("reasoning")
+            if reasoning:
+                items.append({"type": "reasoning",
+                              "content": [{"type": "reasoning_text",
+                                           "text": str(reasoning)}]})
+        content = msg.get("content")
         text = content if isinstance(content, str) else (
             "" if content is None else json.dumps(content, ensure_ascii=False))
         if text:
@@ -74,18 +129,19 @@ def to_input_items(messages: list[dict]) -> list[dict]:
         elif role == "user":
             # 空 user 内容会被拒；给一个占位，保证 input 非空
             items.append({"role": "user", "content": "（继续）"})
+        # 收集紧随其后的工具结果，按 call_id 配对；逐对交错输出
+        results: dict[str, dict] = {}
+        j = i + 1
+        while j < len(messages) and messages[j].get("role") in _TOOL_ROLES:
+            results.setdefault(str(messages[j].get("tool_call_id") or ""), messages[j])
+            j += 1
         for call in msg.get("tool_calls") or []:
-            func = call.get("function") or {}
-            arguments = func.get("arguments")
-            if not isinstance(arguments, str):
-                arguments = json.dumps(arguments if arguments is not None else {},
-                                       ensure_ascii=False)
-            items.append({
-                "type": "function_call",
-                "call_id": str(call.get("id") or func.get("name") or ""),
-                "name": str(func.get("name") or ""),
-                "arguments": arguments,
-            })
+            call_id = str(call.get("id") or "")
+            if call_id not in results:
+                continue                      # 半截调用：不发送调用本身
+            items.append(_function_call_item(call))
+            items.append(_tool_output_item(results[call_id]))
+        i = j if (results or msg.get("tool_calls")) else i + 1
     return items
 
 
@@ -145,6 +201,7 @@ def parse_response(data: dict) -> ModelResponse:
 
     texts: list[str] = []
     reasoning: list[str] = []
+    reasoning_items: list[dict] = []
     calls: list[ToolCall] = []
     for item in data.get("output") or []:
         if not isinstance(item, dict):
@@ -159,6 +216,9 @@ def parse_response(data: dict) -> ModelResponse:
                 piece = _text_of(item.get("summary"))
             if piece:
                 reasoning.append(piece)
+            # 原始 item 必须原样回传：id / summary / encrypted_content 都可能
+            # 是供应商校验“同一条思维链”的依据。
+            reasoning_items.append(dict(item))
         elif kind == "function_call":
             args = item.get("arguments")
             if not isinstance(args, str):
@@ -184,7 +244,8 @@ def parse_response(data: dict) -> ModelResponse:
     return ModelResponse(content=content, tool_calls=calls,
                          finish_reason=finish,
                          usage=parse_usage(data.get("usage")),
-                         reasoning="\n".join(r for r in reasoning if r) or None)
+                         reasoning="\n".join(r for r in reasoning if r) or None,
+                         reasoning_items=reasoning_items)
 
 
 # ------------------------------------------------------------------ 适配器
@@ -196,7 +257,7 @@ class OpenAIResponsesAdapter(ModelAdapter):
     def __init__(self, base_url: str, api_key: str, timeout: float = 90.0,
                  max_retries: int = 3, backoff: float = 2.0,
                  thinking: str = "", reasoning_effort: str = "",
-                 fallback_chat=None):
+                 fallback_chat=None, fallback_on_404: bool = True):
         base_url = normalize_base_url(base_url)
         validate_endpoint(base_url)
         self.base_url = base_url
@@ -206,6 +267,9 @@ class OpenAIResponsesAdapter(ModelAdapter):
         self.backoff = backoff
         self.thinking = str(thinking or "").strip().lower()
         self.reasoning_effort = str(reasoning_effort or "").strip().lower()
+        #: 404 时是否自动降级到 chat/completions（auto 模式才降；显式选
+        #: Responses 时直接报 404，便于排查）。工具配对 400 的兜底不受此限。
+        self.fallback_on_404 = bool(fallback_on_404)
         #: 404 时自动降级到 chat/completions（由 server 侧注入同参适配器）
         self._fallback_chat = fallback_chat
         self.fell_back = False
@@ -241,6 +305,9 @@ class OpenAIResponsesAdapter(ModelAdapter):
     # ---------------------------------------------------------- 调用
     def chat(self, model: str, messages: list[dict], tools: list[dict] | None,
              temperature: float, max_tokens: int) -> ModelResponse:
+        # 思考模式的思维链也占输出预算：给短任务兜个底（见 adapter.effective_max_tokens）
+        max_tokens = effective_max_tokens(max_tokens, self.thinking)
+        messages = sanitize_tool_messages(messages)     # 修掉半截工具链
         if self.fell_back and self._fallback_chat is not None:
             return self._fallback_chat.chat(model, messages, tools, temperature, max_tokens)
         payload = self.build_payload(model, messages, tools, temperature, max_tokens)
@@ -250,17 +317,24 @@ class OpenAIResponsesAdapter(ModelAdapter):
             try:
                 return self._post(body)
             except urllib.error.HTTPError as e:
-                if e.code == 404 and self._fallback_chat is not None:
-                    # 该供应商没有 /responses：静默降级到 chat/completions
-                    self.fell_back = True
-                    return self._fallback_chat.chat(model, messages, tools,
-                                                    temperature, max_tokens)
-                last_err = e
                 detail = _error_message(e)
+                if self._fallback_chat is not None:
+                    # 404：该供应商没有 /responses（仅 auto 模式静默降级）。
+                    # 工具配对 400：DeepSeek 的严格相邻校验不接受我们补好的历史时，
+                    # 也不能让对局就死在这——同一条对话换 chat/completions 重发
+                    # （那边 4xx 已经被 sanitize 修过形，且是应用完整支持过的通道）。
+                    if ((e.code == 404 and self.fallback_on_404)
+                            or (e.code == 400 and _tool_pair_error(detail))
+                            or (e.code == 400
+                                and _reasoning_roundtrip_error(detail))):
+                        self.fell_back = True
+                        return self._fallback_chat.chat(model, messages, tools,
+                                                        temperature, max_tokens)
+                last_err = e
                 if e.code not in (408, 429) or attempt == self.max_retries - 1:
                     raise RuntimeError(
                         f"LLM 请求失败（HTTP {e.code}）：{detail or e.reason}"
-                        f"｜{_status_hint(e.code)}") from e
+                        f"｜{_status_hint(e.code, detail)}") from e
                 import time
                 time.sleep(self.backoff * (attempt + 1))
             except (urllib.error.URLError, TimeoutError, OSError) as e:

@@ -18,10 +18,23 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from helpers import (DM_MARK, is_fresh_run, make_agent_session,  # noqa: E402
-                     make_state, message_system)
+from helpers import (DM_MARK, is_fresh_run, isolate_saves,  # noqa: E402
+                     make_agent_session, make_state, message_system,
+                     restore_cwd)
 from trpg.harness.models import ModelResponse, ToolCall  # noqa: E402
 from trpg.ui.cli import AutoUI                           # noqa: E402
+
+
+# GameSession 默认 log_dir="saves/logs"：切到临时目录，别往仓库里写日志
+_ISOLATION: dict = {}
+
+
+def setUpModule():
+    _ISOLATION["cwd"], _ISOLATION["tmp"] = isolate_saves()
+
+
+def tearDownModule():
+    restore_cwd(_ISOLATION.pop("cwd", os.getcwd()), _ISOLATION.pop("tmp", None))
 
 
 # ---------------------------------------------------------------- 能力探针

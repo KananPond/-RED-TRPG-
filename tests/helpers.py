@@ -42,7 +42,7 @@ RED_MODULE_PATH = MODULES_DIR / RED_MODULE_ID / "module.json"
 #: LLM 相关环境变量（测试必须离线：进入服务器/会话夹具前清空）
 LLM_ENV_VARS: tuple[str, ...] = (
     "TRPG_LLM_API_KEY", "TRPG_LLM_BASE_URL", "TRPG_LLM_MODEL",
-    "TRPG_LLM_PROVIDER", "TRPG_LLM_ALLOW_PRIVATE",
+    "TRPG_LLM_PROVIDER", "TRPG_LLM_ALLOW_PRIVATE", "TRPG_LLM_PROXY",
     "DEEPSEEK_API_KEY", "ZHIPUAI_API_KEY", "ZHIPU_API_KEY",
     "MOONSHOT_API_KEY", "MINIMAX_API_KEY",
 )
@@ -471,8 +471,10 @@ def make_agent_session(handler=None, state=None, ui=None, script=None,
             agents[comp.name] = make_pc_agent(
                 comp, comp.role_rank, list(comp.weapons),
                 _status_hint(comp), model)
+    # log_dir=None：测试不落盘 Agent 日志。GameSession 默认是相对路径
+    # "saves/logs"，在仓库根跑测试就会往玩家的日志目录里灌 jsonl。
     session = GameSession(state, ui, loop=loop, dm_agent=dm,
-                          pc_agents=agents, module=module)
+                          pc_agents=agents, module=module, log_dir=None)
     return session, state, ui, adapter
 
 

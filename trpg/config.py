@@ -164,3 +164,36 @@ class GameConfig:
 
 
 GAME_CONFIG = GameConfig()
+
+
+def load_env_file(path: str | Path = ".env") -> int:
+    """把项目根目录的 ``.env`` 读进进程环境变量，返回读入的条目数。
+
+    * 只做最朴素的解析：忽略空行与 ``#`` 注释，容忍 ``export `` 前缀与成对引号；
+    * **不覆盖**已存在的环境变量（系统/命令行优先）；
+    * 文件不存在或读不了就安静跳过——``.env`` 是可选的便利，不是依赖。
+
+    这样密钥可以「一次写进 ``.env``、以后每次启动自动读取」（``.env`` 已在
+    ``.gitignore`` 里，不会进仓库；本函数只读不写，也不打印任何值）。
+    """
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return 0
+    loaded = 0
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value
+        loaded += 1
+    return loaded

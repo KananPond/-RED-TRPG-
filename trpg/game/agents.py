@@ -289,7 +289,8 @@ def _status_text(obj, hint: str = "") -> str:
 
 
 def make_pc_agent(comp: dict, level: int, weapons: list[str], slots_hint: str,
-                  model: str, *, user: str = "") -> Agent:
+                  model: str, *, user: str = "",
+                  party_ai: bool = False) -> Agent:
     """同伴（非玩家 PC）的**独立 Agent**（docs/companion-npc-agents.md §1）。
 
     SillyTavern 架构与玩家版 make_aipc_agent 同一条组装线：
@@ -302,7 +303,9 @@ def make_pc_agent(comp: dict, level: int, weapons: list[str], slots_hint: str,
     或 Character；``level`` 沿用旧签名，实际承载职业能力级（role_rank），
     ``slots_hint`` 为可选的现状提示串（旧文案里的规则词汇会被丢弃）。
     模组可为同伴提供 ST 卡字段：mes_example / first_mes / depth_prompt /
-    book / talkativeness（card_from_companion）。user=玩家名，供 {{user}} 宏。"""
+    book / talkativeness（card_from_companion）。user=玩家名，供 {{user}} 宏。
+    ``party_ai=True`` 时把探索面扩到 explore_act（全 AI 跑团，PC 自己处理休整/
+    急救/采购），并提示“没有人类玩家可代劳”。"""
     card = card_from_companion(comp if isinstance(comp, dict) else
                                _character_as_pregen(comp))
     role = _role_key(comp)
@@ -319,7 +322,8 @@ def make_pc_agent(comp: dict, level: int, weapons: list[str], slots_hint: str,
         "weapons": _weapon_text(weapons or _field(comp, "weapons", [])),
         "status": _status_text(comp, slots_hint),
         "tactics": TACTICS.get(role, "见机行事。"),
-        "explore_hint": _EXPLORE_HINT_PC,
+        "explore_hint": (_EXPLORE_HINT_AIPC if party_ai
+                         else _EXPLORE_HINT_PC),
     }
     # 人设/语气进模板槽位后，卡上同字段不再重复成独立 section
     st_card = dataclasses.replace(card, description="", personality="")
@@ -330,7 +334,9 @@ def make_pc_agent(comp: dict, level: int, weapons: list[str], slots_hint: str,
         agent_id=f"pc:{_field(comp, 'id', _field(comp, 'name', ''))}",
         name=str(_field(comp, "name", "")),
         system_prompt=system_prompt,
-        tool_names=["say", "combat_action", "explore_intent"],
+        tool_names=(["say", "combat_action", "explore_intent", "explore_act"]
+                    if party_ai else
+                    ["say", "combat_action", "explore_intent"]),
         model=model, temperature=0.5, max_tokens=500)
 
 

@@ -91,6 +91,14 @@ class AIPCController:
         reg = ToolRegistry()
         s.tools.register_aipc_tools(reg, player)
         lead = EXPLORE_LEAD.format(name=player.name)
+        # AI 剧场：观众低语由 CinemaUI 暂存，注入下一拍上下文。它只是叙事提示，
+        # 不改变工具面与任何数值路径；模型可以采纳，也可以坚持自己。
+        take_whisper = getattr(s.ui, "take_whisper", None)
+        hint = take_whisper() if callable(take_whisper) else ""
+        if hint:
+            lead += (f"\n【观众低语】{hint}\n"
+                     "这是旁观者对你说的悄悄话，不是命令；按你的人设决定采不采纳。"
+                     "不要直接对观众说话。")
         wi_res = self._scan_worldinfo()
         context = build_context_block(
             lead=lead, scene=self._scene_text(), party=s.state.party_snapshot(),
@@ -99,14 +107,21 @@ class AIPCController:
             injections=self._persona_injections() + wi_res.at_depth,
             wi="\n".join(x for x in (wi_res.before, wi_res.after) if x.strip()),
             phi=self._rendered_phi())
+        thinking = getattr(s.ui, "agent_thinking", None)
+        idle = getattr(s.ui, "agent_idle", None)
+        if callable(thinking):
+            thinking(player.name, "正在决定下一步")
         try:
             result = self._explore_loop.run(
                 self.agent, s.pc_session(player.name), lead,
                 context_messages=context, registry=reg,
                 guard_dup=DuplicateCallGuard())
-            s._record_usage(self.agent, result)
         except RuntimeError:               # LLM 不可达 → 优雅降级（design §7.1）
             return False
+        finally:
+            if callable(idle):
+                idle(player.name)
+        s._record_usage(self.agent, result)
         self._interpret(result)
         return True
 

@@ -132,9 +132,16 @@ class GameSession:
         self._npc_sessions: dict[str, Session] = {}
         self._log_dir = log_dir
         self.table_log: list[dict] = []       # 桌面插话（DM 消化进上下文后清账）
+        self.table_archive: list[dict] = []   # 已消化的桌面插话（供全 AI PC 共享）
         self._ip_ask_scene: str | None = None  # 已就本场景询问过改进点花费
         self._ip_given: set[str] = set()       # 已发放 IP 的场景（防重复）
         self._fled: list[Character] = []       # 本场战斗已撤退的成员
+        self.last_dm_narration: str = ""       # 最近一次 DM 叙述（全 AI 跑团上下文用）
+        # 全 AI 跑团：由 server 在剧场 + LLM 成功挂载 AIPC 后置 True；
+        # 为 True 时不再等待 human free_input，所有 PC 轮流自主行动。
+        self.party_ai = False
+        self.party = None
+        self._encounters_run: set[str] = set()
         # 桌边社交层（抢话/反应/辩论）：专用小步数循环，工具调用线程池独立，
         # 避免与 DM 战斗工具调用争抢同一 guard 线程池
         self.social: TableSocial | None = None
@@ -182,8 +189,12 @@ class GameSession:
 
     # ================================================================ 主流程
     def run(self) -> None:
-        mode = "AI 模式（DM 与队友由 Agent 扮演）" if self.ai_mode \
-            else "经典模式（离线 · 规则引擎结算）"
+        if self.party_ai:
+            mode = "全 AI 跑团（所有 PC 由 Agent 自主行动）"
+        elif self.ai_mode:
+            mode = "AI 模式（DM 与队友由 Agent 扮演）"
+        else:
+            mode = "经典模式（离线 · 规则引擎结算）"
         self.ui.raw(f"\n《{self.module.title}》 —— {self.module.en_title}")
         self.ui.raw(f"模式：{mode}")
         self.ui.raw(self.module.setting)
@@ -193,7 +204,9 @@ class GameSession:
         try:
             while True:
                 scene = self.module.scene_by_id(self.state.scene_id)
-                if self.ai_mode:
+                if self.party_ai:
+                    progressed = self.party_explore_turns(scene)
+                elif self.ai_mode:
                     progressed = self.ai_explore_turns(scene)
                 else:
                     progressed = self.scripted_explore_turns(scene)
@@ -716,6 +729,19 @@ class GameSession:
     _EXPLORE_COMMANDS = ("/状态", "/背包", "/义体", "/急救", "/稳定", "/休整",
                          "/购买", "/存档", "/保存", "/地图")
 
+    # ================================================================ 探索：全 AI 跑团
+    def party_explore_turns(self, scene: dict) -> str:
+        """所有 PC 轮流自主行动；没有 human free_input 节点。
+
+        与 ``ai_explore_turns`` 的区别：人类输入不是驱动器。玩家角色也由
+        PC Agent（AIPCController 构建的 agent）自主决策；同伴 Agent 同理。
+        NPC 仍然只由 DM 的 npc_dialogue 子智能体扮演。
+        """
+        if self.party is None:
+            from .party import PartyDirector
+            self.party = PartyDirector(self, self.social.loop)
+        return self.party.run_scene(scene)
+
     def _handle_explore_command(self, text: str) -> bool:
         """探索期斜杠指令分发。返回 True = 已消费；False = 非指令。"""
         text = str(text or "").strip()
@@ -805,14 +831,24 @@ class GameSession:
             lines.append("【世界书】\n" + wi_before)
         lines.append(f"【{input_label}】{player_text}")
         context = [{"role": "user", "content": "\n".join(lines)}]
-        result = self.loop.run(self.dm_agent, self._dm_session,
-                               f"{lead}：{player_text}",
-                               context_messages=context, registry=self.registry,
-                               post_build=self._dm_post_build(wi_depth))
+        thinking = getattr(self.ui, "agent_thinking", None)
+        idle = getattr(self.ui, "agent_idle", None)
+        if callable(thinking):
+            thinking("DM", "正在裁定")
+        try:
+            result = self.loop.run(self.dm_agent, self._dm_session,
+                                   f"{lead}：{player_text}",
+                                   context_messages=context, registry=self.registry,
+                                   post_build=self._dm_post_build(wi_depth))
+        finally:
+            if callable(idle):
+                idle("DM")
         self._record_usage(self.dm_agent, result)
         if result.content and result.content.strip():
-            self.ui.dm_narration(result.content.strip())
-            return result.content.strip()
+            text = result.content.strip()
+            self.ui.dm_narration(text)
+            self.last_dm_narration = text
+            return text
         return None
 
     def _dm_wi(self, window: str) -> tuple[str, list]:
@@ -853,6 +889,8 @@ class GameSession:
             mark = "（抢话）" if l.get("interrupt") else ""
             to = f"（对{l['to']}）" if l.get("to") else ""
             lines.append(f"{l['who']}{mark}{to}：「{l['text']}」")
+        self.table_archive.extend(self.table_log)
+        self.table_archive = self.table_archive[-60:]
         self.table_log.clear()
         return "\n".join(lines)
 
@@ -866,6 +904,7 @@ class GameSession:
 
     # ================================================================ 战斗
     def launch_encounter(self, encounter_id: str) -> dict:
+        self._encounters_run.add(str(encounter_id))
         spec = self.module.encounter(encounter_id)
         if spec is None:
             return {"ok": False, "error": "未知遭遇 " + str(encounter_id)}
@@ -994,9 +1033,11 @@ class GameSession:
             if not enc.alive(actor):
                 self._sync_map_from_encounter(enc)   # 击倒者棋子即时撤下
                 continue
-            if actor is self.state.player:
+            if actor is self.state.player and not (
+                    self.party_ai and self.pc_agents.get(actor.name)):
                 self.player_combat_turn(enc)
-            elif actor.kind in ("companion",) or actor in self.state.companions:
+            elif actor.kind in ("companion",) or actor in self.state.companions \
+                    or actor is self.state.player:
                 self.companion_turn(enc, actor)
             else:
                 self.monster_turn(enc, actor)

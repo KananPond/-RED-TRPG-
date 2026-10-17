@@ -8,9 +8,12 @@
 
 | 角色 | 架构地位 | 控制权 | 记忆载体 |
 |------|----------|--------|----------|
-| 玩家 PC（AI 代打开） | 独立 Agent（`AIPCController`） | 自主决策 | `pc:<玩家名>` |
+| 主角 PC（AI 自主） | 独立 Agent（`AIPCController`） | 自主决策 | `pc:<玩家名>` |
 | **同伴（非玩家 PC）** | **独立 Agent**（`make_pc_agent` + 社交层） | 各自独立决策，编排器只管时机 | `pc:<同伴名>`（战斗/桌边共用） |
 | **NPC** | **DM 控制的子智能体**（`NPCDirector`） | DM 用 `npc_dialogue` 工具按需拉起，随时可用 `speak_as_npc` 覆盖 | `npc:<id>`（跨回合持久） |
+
+2.3.0 的全 AI 跑团由 `PartyDirector` 给**所有 PC（含主角）**轮流发回合；
+本表里没有“人类玩家”这一层——主角也是 PC Agent，不是“AI 代打人类”。
 
 ST 源码对照（克隆于 `_local/reference/SillyTavern`，仅作机制参照，不引入代码依赖）：
 角色卡字段 → `src/character-card-parser.js`、`public/char-data.js`；

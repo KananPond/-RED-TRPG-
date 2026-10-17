@@ -2,6 +2,227 @@
 
 本项目的所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2.3.1] — 修复思考模式 reasoning 回传 400
+
+> 症状：NPC/PC 带工具调用时出现
+> `HTTP 400: The reasoning_text in the thinking mode must be passed back to the API`，
+> 对局进入「等待世界回应」后报错。
+
+- **保留 Responses 原始 reasoning item**：不再只保存文本；`ModelResponse`
+  新增 `reasoning_items`，`assistant` 消息随历史保存 `id/summary/content/
+  encrypted_content`，`to_input_items` 原样回传。
+- **chat/completions 适配器剥掉 Responses 字段**：只保留 `reasoning_content`，
+  避免严格网关把 `reasoning_items` 当未知参数 400。
+- **自动降级**：Responses 仍报 reasoning 回传 400 时，自动切到
+  chat/completions 重发同一轮（chat 通道本应用完整支持），不让对局死在
+  一次 400 上。
+- 回归：`tests/test_llm_endpoints.py` 新增 raw reasoning item 往返与
+  400→chat 降级测试；全量 708 passed。
+
+## [2.3.0] — 全 AI 跑团：所有 PC 都是自主 Agent
+
+> 修正 2.2.0 的架构错误。2.2.0 把 Agent 做成了“真人同桌模拟”（OOC/玩家画像/
+> 桌边笔记），但目标不是模拟人类玩家，而是**让每个 PC 直接以角色身份自主行动**：
+> 一桌全 AI 玩家，人类只观看。
+
+### 架构
+
+- **没有 Human Player 节点**。主角和同伴都是独立的 PC Agent；玩家角色不再由
+  “AIPC 代打”特殊处理，而是与队友同一条自主 PC 回合链。
+- **`PartyDirector`（`trpg/game/party.py`）**：每场给每个存活 PC 最多四轮自主
+  行动；工具面只有 `say / explore_intent / explore_act / hold`，不能碰世界状态。
+- **DM 是唯一世界 Agent**：叙述、检定、换场、开战、`npc_dialogue` 只在 DM 工具面。
+- **NPC = DM 子智能体**：仍由 `NPCDirector` 按 `npc_dialogue` 拉起，只带 `say`，
+  有持久 `npc:<id>` 记忆，但不能自主行动。
+- **共享桌面**：PC 台词进 `table_log`；DM 消化后进入 `table_archive`，后续 PC
+  的回合能看见最近对话，不再各说各的。
+- **纯 AI 剧场**：`/api/start {cinema:true}` 没有 LLM 时直接返回 400；
+  `CinemaUI(strict_ai=True)` 漏到 UI 的 `choose/free_input/ask_map_move`
+  会报错，绝不退回本地导演。剧本/经典模式仍在剧场之外保留。
+- **场景预算**：四轮后 DM 仍不推进时，编排器做确定性换场/补跑遭遇，防死循环；
+  终局场景收束到 `_epilogue`。
+
+### 移除
+
+- 删除 `trpg/game/tableplay.py` 与 `tests/test_tableplay.py`；撤销 OOC、玩家画像、
+  桌边笔记、`table_note`、检定后桌边反应、AIPC 桌边规则等全部啮合。
+- `TableSocial` 恢复为纯 IC 抢话/反应/辩论；不再有 `ooc` 字段。
+
+### 保留
+
+- AI 剧场 UI、技能之声、案卷肖像、检定叠层、战术板、暂停/调速/低语全部不变。
+- 普通 AI 模式（人类输入）与经典模式完全不变；`PartyDirector` 只在
+  `CinemaUI + LLM + AIPC 成功挂载`时启用。
+
+### 测试
+
+- 新增 `tests/test_party_ai.py`（4 例）：PC 工具面不含 DM/NPC 工具；所有 PC
+  在无 Human `free_input` 的情况下自主跑完整局并抵达终章。
+- 全量：`705 passed`。
+
+## [2.2.0] — 实验：真人桌边（已在 2.3.0 移除）
+
+2.2.0 曾加入 `TablePlay`：OOC、玩家画像、桌边笔记、骰后桌边反应。该层把
+“AI 玩家”误解成“模拟真人同桌”，与“PC 直接扮演角色、全 AI 自主跑团”的目标
+不符，2.3.0 已整体移除；保留此条仅作历史记录。
+
+## [2.1.0] — AI 剧场：不用会玩，让 Agent 自己演完这一夜
+
+面向「我不会玩」的重构：新增**全自动 AI 剧场**，并把对局界面按《极乐迪斯科》
+的叙事语法重做。规则引擎、数值、手动/经典模式与旧仪表盘均保留；剧场是
+`/api/start {cinema:true}` 才启用的独立 UI，默认路径零变化。
+
+### 新增
+
+**一键开演**
+
+- 首页「进入 AI 剧场」/ 快捷入口；从模组 `pregens` 选一位主角，其余预设角色
+  自动补成 2 名 AI 队友；可选取 0.8× / 1× / 1.5× / 2.2× 演出节奏。
+- **不需要建卡、不需要读规则、不需要在战斗中出手**。探索、检定、战斗、IP、
+  终局全部由系统推进。
+- **双模式自主**：接入 LLM 时由既有 `AIPCController` 真正扮演玩家角色
+  （say / explore_intent / explore_act / combat_action）；未接入时由
+  `CinemaUI` 的本地导演启发式接管，离线照样从第一场演到终局。
+- 刷新页面从 `/api/state` 恢复暂停、速度、场景、地图、队伍与技能之声；
+  SSE 历史只快速重放最后一段，不再把整局战斗日志重画一遍。
+
+**《极乐迪斯科》式界面（`cinema.css` / `cinema.js` / `cinema/` 资产）**
+
+- **技能之声**：`trpg/game/psyche.py` 把 RED 属性/技能折成七个声部
+  （逻辑/共情/意志/反应/技术/街头/体格），在场景、NPC 台词、检定成功/失败、
+  致命伤时插话。纯本地、零 token、不消耗游戏 RNG、不写状态。
+- **案卷式肖像**：五名预设角色的官方 Easy Mode 角色画，经裁切/旋转/半调/
+  纸纹处理；左栏是主角档案，舞台右侧是当前说话者的案卷照片。
+- **场景底片**：安全屋/路上/小巷/血房间/仓库/黎明六张；官方场景插画与
+  Pillow 程序化绘景混用，统一低饱和、冷影暖高光、胶片颗粒、雨幕与暗角。
+- **记忆栈对话**：新句亮、旧句退到 32% 透明度，超过七条自动退出；打字机节奏
+  与后端暂停/速度联动。检定弹 SKILL CHECK 叠层（声部/d10/合计/DV/成败/修正），
+  伴随合成掷骰音。
+- **选项的余温**：展示 AI 考虑过的选项与最终选中的一条（锈红标记），不要求点击。
+- **战术板**：读取真实 `map` 事件，障碍/掩体/PC 与敌人 token 平滑移动；主角
+  token 有额外高亮；战斗时画面转为红色警戒调。
+- **剧场控制**：演员表抽屉、沉浸模式（隐藏侧栏/控件）、暂停/继续、速度循环、
+  离场；空格暂停、H 沉浸、Esc 离场。
+- **低语**：底部输入一句给主角的悄悄话。LLM 模式下进入 AI PC 下一拍上下文
+  （`【观众低语】`，模型可采纳或无视）；离线模式下作为选项关键词提示；
+  只消费一次，不直接改数值。
+- **环境音**：55Hz/82.4Hz 低频 drone + 带通雨噪 + 极慢 LFO；战斗时滤波下潜，
+  终局回到低频。仍全部 WebAudio 合成，无外部音频文件。
+- **终局卡**：场景数、生还者、掷骰次数、暴击次数与旗标；「再演一场」/「回大厅」。
+
+### 修复 / 加固
+
+- **暂停闸门**：`CinemaUI._emit` 在事件进入 SSE 前等待；暂停时游戏线程真的停，
+  速度器按档位缩放每次停顿。分片睡眠让暂停在长停顿中间也能及时响应。
+- **暂停中重置 502**：`CinemaUI.abort()` 先把 `_aborting` 置位并放行暂停闸门，
+  再走 `WebUI.abort()`；修复了游戏结束时 `/api/reset` 在 `_emit` 里
+  自己抛 `AbortGame` 导致坏响应的问题。
+- **模型可见 ⟺ 已记录**：低语经 AIPC 的 `context_messages` 进入循环，随事件日志
+  可重放，不走侧信道。
+- **AIPC 降级诚实化**：配置了 LLM 但 AIPC 挂载失败（组件异常/角色重名）时，
+  `build_session` 把 `ui.llm_active` 置 false，剧场如实显示「本地导演接管」。
+- **静态资源白名单**：`/static/` 允许 `cinema/` 子目录，仍做路径规范化与扩展名
+  白名单（png/jpg/jpeg/webp/svg/css/js），杜绝 `..` 穿越。
+- **地图自动落子**：新增 `ask_map_move` 的本地导演实现，从最近一帧地图里选
+  朝最近敌人的合法空格；无地图/无路时取消，不阻塞。
+
+### 资产与构建
+
+- 新增 `tools/build_cinema_assets.py`：从 `.reference/` 的免费
+  *Cyberpunk RED Easy Mode* 中文手册裁出 5 张角色画与 4 张场景插画；
+  以 Pillow 生成安全屋/血房间/仓库/黎明底片，统一套色、颗粒、暗角；
+  输出 14 张 JPG（9 张场景/底片 + 5 张肖像，约 4.5 MB）到
+  `trpg/web/static/cinema/`。
+- 全部资源本地化，运行时不联网；字体只使用系统衬线/无衬线。
+- 版权与来源说明见 `README.md`「发行与许可」与
+  [`docs/cinema-design.md`](docs/cinema-design.md)。
+
+### 测试
+
+- 新增 `tests/test_cinema.py`（9 例）：离线整局零输入到 `aftermath`、IP 菜单自动
+  「稍后再花」、低语影响选项、暂停闸门阻塞/恢复、暂停中 abort 不抛异常、
+  快照声部/autopilot、AIPC 下一拍上下文含低语且只消费一次、HTTP
+  cinema 开局/暂停/速度/低语/重置与嵌套静态美术。
+- 全量：`700 passed`（含剧场 8 例）。
+
+## [未发行] — 修复：DeepSeek Responses 并行工具调用报 400（No tool output found）
+
+上一版之后网络与探针都正常了，但对局推进到第二次模型调用时报：
+
+```
+LLM 请求失败（HTTP 400）：No tool output found for tool call call_01_….
+```
+
+根因是 **DeepSeek 的 Responses 兼容端点要求「结果紧跟自己的调用」**（严格相邻），
+而并行工具调用按 `[call A, call B, out A, out B]` 平铺时，B 夹在 A 和 A 的结果
+之间，于是它判定第二个调用没有结果。OpenAI 自己只按 `call_id` 配对、不要求相邻，
+所以这个坑只在 DeepSeek 上暴露（社区有同类 issue：
+[awesome-deepseek-integration#740](https://github.com/deepseek-ai/awesome-deepseek-integration/issues/740)、
+[DeepSeek-V3#1588](https://github.com/deepseek-ai/DeepSeek-V3/issues/1588)）。
+
+### 修复
+
+- **转换层改为交错输出**：`[call A, out A, call B, out B]`，每个调用后面紧跟
+  自己的结果；两轮「思考 + 并行调用」的历史也逐个校验通过
+  （`responses.to_input_items`）。
+- **丢弃半截工具链**：找不到结果的调用、找不到调用的结果都不发送
+  （`adapter.sanitize_tool_messages`，chat 与 responses 两条路径共用）。
+- **工具执行异常也回填结果**：`loop` 里工具抛异常时写一条 `ok:false` 的结果，
+  历史不再留下「调了没回」的缺口。
+- **上下文压缩不再切断工具对**：切口遇到 `tool` 消息时向前回退，把对应的
+  `assistant(tool_calls)` 一起保留。
+- **兜底降级**：万一仍收到「工具配对」类 400，Responses 适配器会把同一条对话
+  切到 chat/completions 重发（显式选 Responses 时也生效），不再一 400 打死整局。
+- 400 的提示改成可读解释（不再误报「模型名不存在」）。
+- 回归测试 +11：并行调用交错、逐个相邻校验、孤儿调用/结果丢弃、
+  修形器、工具异常成对、压缩切口、400 兜底降级。
+
+## [未发行] — 修复：思考模式下「测试连接」必然失败（探针预算 16 → 1024/2048）
+
+上一版修好了「Tunnel 403」之后，「拉取模型列表」正常，但「测试连接」在
+**思考模式开着**时报 `模型输出被 max_output_tokens 截断且没有正文`。
+这不是密钥/网络/协议问题：`POST /api/llm/test` 的探针只给 **16** 个输出 token，
+而 DeepSeek V4 起思维链先花预算，正文还没开始写就被截断。
+
+### 修复
+
+- **探针给够预算**：1024 token；仍被吃光则自动翻倍到 2048 重试一次
+  （`budget` / `budget_boosted` 随响应下发，界面注明「已自动加大探针预算」），
+  两次都截断才报错，hint 直接说「把思考模式关掉再点一次」。
+- **对局同样兜底**：思维链也占输出预算，而 NPC 台词只有 300 的 cap——
+  chat 与 responses 两条路径在思考打开时把预算抬到 `THINKING_MIN_TOKENS = 1024`
+  的下限（`max_tokens` 是上限不是账单，抬上去只让正文写得完，不多花钱）。
+- **保存密钥后侧栏即时刷新**：底部「未接入 LLM」不再需要整页重载。
+- **`.env` 免填密钥**：启动时读取项目根目录的 `.env`（已在 `.gitignore`），
+  已存在的环境变量优先，只读不写、不打印任何值。
+- 清理 `.env.example` 里从未实现的 `TRPG_LLM_TEMPERATURE` / `TRPG_LLM_MAX_TOKENS`
+  （各 Agent 的温度与预算本就是自己的参数，现在由思考下限兜底）。
+- 回归测试 +8：探针预算/翻倍重试/两次截断提示、思考下限（chat + responses 请求体）、
+  `.env` 读取与优先级。
+
+## [未发行] — 修复：LLM 请求被进程代理挡在隧道层（Tunnel 403）
+
+设置页「拉取模型列表」「测试连接」一起报
+`URLError: Tunnel connection failed: 403 Forbidden`，但密钥、模型、协议都是对的
+——**这条 403 来自代理，请求根本没到供应商**：服务进程继承了终端/策略代理
+（或已关闭 VPN 残留）的 `HTTP_PROXY` / `HTTPS_PROXY`，urllib 把请求塞进
+`CONNECT` 隧道，代理直接回 403。
+
+### 修复
+
+- **出网默认直连**（`trpg/harness/adapter.py`）：统一构建 opener，默认
+  `ProxyHandler({})` 忽略环境变量与系统代理；要经代理必须显式声明
+  `TRPG_LLM_PROXY`（`direct` / `env` / `http://host:port`）。
+- **继承来的代理失败时自动直连重试一次**：`Tunnel connection failed` / 407
+  这类隧道层失败说明请求没到供应商，重试不会重复计费；显式指定的代理不回落
+  （用户点名了就如实报错）。
+- **提示说清「是代理挡的」**：`/api/models`、`/api/llm/test` 的 hint 与
+  `--check-llm` 的报错都直接点名 `TRPG_LLM_PROXY`；设置页新增「出网方式」一行，
+  直连时列出被忽略的代理地址（`/api/settings/llm` 的 `network` 字段）。
+- 回归测试 `tests/test_network_proxy.py`（16 例，无网络）：代理解析、
+  直连/回落策略、设置视图字段、隧道失败提示。
+- 文档：README「网络与代理」、HARNESS.md、`.env.example` 同步。
+
 ## [未发行] — 界面改版：全暗赛博仪表盘 · 自研 VTT · 随时存档
 
 面向"当代 AI 跑团 / AI 驱动 CRPG"的操作方式重做**界面层**：把原先

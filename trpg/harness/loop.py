@@ -112,7 +112,12 @@ class TruncateCompactor:
             return messages
         if session:
             session.log_guard("compaction", "上下文约 " + str(total) + " tokens 超限，截断旧消息")
-        head, tail = messages[:1], messages[-self.keep_recent:]
+        # 切口不能落在「工具调用」和「工具结果」之间：tail 以 tool 消息开头时
+        # 往前多收几条，把对应的 assistant(tool_calls) 一起带上。
+        cut = max(1, len(messages) - self.keep_recent)
+        while cut > 1 and messages[cut].get("role") in ("tool", "function"):
+            cut -= 1
+        head, tail = messages[:1], messages[cut:]
         dropped = len(messages) - len(head) - len(tail)
         if dropped <= 0:
             return messages
@@ -207,14 +212,25 @@ class DefaultAgentLoop:
             # 「请求带 tools 时，历史轮次的 reasoning_content 均须回传，否则 400」，
             # 而本框架每个 Agent 都靠工具推进，所以这一行是硬性要求。
             session.log_message(assistant(resp.content, resp.tool_calls or None,
-                                          resp.reasoning))
+                                          resp.reasoning,
+                                          getattr(resp, "reasoning_items", None)))
             if not resp.tool_calls:
                 return self._finish(agent, session, resp.content or "", step, trace, usage_total)
             for call in resp.tool_calls:
                 session.log_tool_call(call)
-                blocked = dup.inspect(call, session)
-                result = blocked if blocked else self.guard_timeout.dispatch(
-                    registry, call, session)
+                # 工具抛异常也必须回填一条结果：assistant 的 tool_calls 已经进历史，
+                # 缺结果就是「半截工具链」，严格校验的供应商（DeepSeek Responses）
+                # 会在下一次请求直接 400（No tool output found for tool call …）。
+                try:
+                    blocked = dup.inspect(call, session)
+                    result = blocked if blocked else self.guard_timeout.dispatch(
+                        registry, call, session)
+                except Exception as e:  # noqa: BLE001 —— 工具故障不能掀桌
+                    session.log_guard("tool_error",
+                                      f"{call.name} 执行失败：{type(e).__name__}: {e}")
+                    result = {"ok": False,
+                              "error": f"工具 {call.name} 执行失败："
+                                       f"{type(e).__name__}: {e}"}
                 session.log_tool_result(call.id, call.name, result)
                 session.log_message(tool_result(call.id, call.name, result))
                 trace.append({"name": call.name, "arguments": call.arguments,

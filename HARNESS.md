@@ -71,6 +71,58 @@ run(agent, session, task):
 每个 Agent 调用使用独立注册表（DM 与 PC 工具组不同），
 通过 `DefaultAgentLoop.run(..., registry=...)` 按次注入。
 
+## AI 剧场：CinemaUI 作为第三个实例（v2.1.0 / 全 AI 跑团 v2.3.0）
+
+AI 剧场不是新引擎，而是把同一个 `GameSession` 包成一场**不需要人类输入**的演出：
+
+- **`CinemaUI(WebUI, strict_ai=True)`**（`trpg/web/cinema.py`）是产品路径：
+  所有 PC 行动由 `PartyDirector` 消化；如果还有 `choose / free_input /
+  ask_map_move` 漏到 UI，直接报错，绝不退回本地导演。旧离线启发式只保留给
+  单元测试/兼容，不进入产品。
+- **暂停闸门**：`_emit` 在事件进入 SSE 历史之前等待；暂停时游戏线程真的停，
+  不是前端隐藏字幕。速度器按 0.8×–2.2× 缩放每个事件的演出停顿。
+  `abort()` 会先放行暂停闸门再走既有终止路径（暂停中重置不会 502）。
+- **纯 AI 决策层**：主角与每名同伴都是独立的 PC Agent（`pc_agents`），由
+  `PartyDirector` 轮流驱动。没有 LLM 时 `/api/start {cinema:true}` 直接返回
+  400，绝不用本地导演开演；所有 Agent 输出同一套 SSE
+  （`scene / npc / companion / dice / map / cinema_choice / inner`）。
+- **技能之声**：`trpg/game/psyche.py` 从 RED 十项属性/技能折出七个声部，本地生成
+  `inner` 事件。它不调用 LLM、不消耗游戏 RNG、不写 flag；检定时优先让对应技能
+  的声部评论，NPC 台词也会触发读心短句。
+- **低语**：`POST /api/cinema/whisper` 把一句话放进 `CinemaUI` 的槽位。
+  `PartyDirector` 在下一名 PC 的回合 `take_whisper()`，把 `【观众低语】…` 放进
+  上下文；它不进入结算路径，也不能保证被采纳。
+- **快照恢复**：`snapshot["cinema"]` 带 `paused/speed/autopilot/psyche/scene_id`；
+  刷新页面后前端从快照重建状态，SSE 历史只快速重放最后一段。
+- **Agent 状态**：`dm_turn` 与 `PartyDirector` 的 PC 回合在调用前发
+  `agent_state(thinking)`，调用后发 `idle`；前端把对应演员行点亮，能看见「谁在思考」。
+- **与旧界面的关系**：旧仪表盘（`app.js`）完全保留；CinemaUI 只在
+  `/api/start {cinema:true}` 时创建，默认手动模式逐字节不受影响。
+
+资产与界面设计见 `docs/cinema-design.md`；回归测试见 `tests/test_cinema.py`。
+
+## 全 AI 跑团层（game/party.py，v2.3.0）
+
+`PartyDirector` 把 AI 剧场从“一个主角 + 反应式队友”变成**一桌全 AI 玩家**：
+
+- **所有 PC 都是独立 Agent**：主角与同伴共用 `pc_session` 机制，但各有自己的
+  Agent、人设、目标与记忆；没有 Human Player 节点，也没有“玩家/OOC/桌边”层。
+- **自主探索回合**：每个场景最多四轮，每轮让每个存活 PC 自主行动一次；
+  PC 只拿到自我范围的工具 `say / explore_intent / explore_act / hold`。
+  `explore_intent` 交给 DM 裁定；`say` 直接进入桌面；`explore_act` 只做休整/
+  急救/稳定/采购/修甲/查看状态等自我行动。
+- **DM 仍是唯一世界 Agent**：DM 持有叙述、检定、换场、开战、`npc_dialogue`；
+  NPC 仍是 DM 的 `NPCDirector` 子智能体，只带 `say`，不能自主行动。
+- **共享桌面**：PC 的台词进 `table_log`；DM 消化后进 `table_archive`，后续 PC
+  的回合从 archive + 当前 log 读取最近对话，不会各说各的。
+- **场景预算与兜底**：四轮后 DM 仍不推进，编排器才做确定性换场（或补跑未打的
+  遭遇），避免无限对话；终局场景收束到 `_epilogue`。
+- **失败降级**：任一 PC Agent 调用失败只丢这一拍；DM 仍可用本地/规则引擎兜底。
+- **开关**：只有 `CinemaUI` + LLM + AIPC 成功挂载时 `party_ai=True`；普通 AI 模式
+  仍是人类输入驱动，经典模式零变化。
+
+回归测试见 `tests/test_party_ai.py`（4 例）；全量 708 passed。
+
 ## 桌边社交层（game/social.py，v1.5.0）
 
 探索期的玩家输入由 `TableSocial.beat()` 编排成一整个社交节拍，
@@ -129,6 +181,11 @@ TRPG_LLM_MODEL=deepseek-chat
 两种模式共用同一规则引擎与剧情数据。`python main.py --check-llm`
 可验证端点连通性。连接本机模型（Ollama/LM Studio）需显式设置
 `TRPG_LLM_ALLOW_PRIVATE=1`（SSRF 加固的例外开关，见 `adapter.py`）。
+
+出网**默认直连**：进程里继承的 `HTTP_PROXY` / `HTTPS_PROXY` 一律忽略
+（它们常把请求送进一条不认识的隧道，报 `Tunnel connection failed: 403`）。
+要经代理必须用 `TRPG_LLM_PROXY` 显式声明：`direct`（默认）/ `env`（沿用
+环境与系统代理）/ 代理地址；`env` 下隧道失败会自动直连重试一次。
 
 ## 参考来源
 

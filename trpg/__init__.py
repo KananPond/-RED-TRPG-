@@ -9,4 +9,4 @@
   （Session 事件日志 / ModelAdapter / ToolRegistry / AgentLoop / Guard / Compaction）。
 """
 
-__version__ = "2.0.0"
+__version__ = "2.3.1"

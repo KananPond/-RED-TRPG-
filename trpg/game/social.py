@@ -45,7 +45,7 @@ SOCIAL_TASK = """【桌边】
 - hold：此刻不说话（真实的人大部分时候在听）。
 台词 1~2 句中文，符合你的人设与语气——2045 年夜之城的边缘行者，
 可以带动作或情绪，也可以提欧元、义体、中间人与街头规矩，但不要替玩家或 DM 说话。
-最多调用一次工具，说完即止；没有好台词就 hold，别硬找话说。"""
+像角色本人一样说话；最多调用一次工具，说完即止；没有好台词就 hold，别硬找话说。"""
 
 DEBATE_TASK = """【辩论】焦点：{topic}
 【目前为止桌上的话】
@@ -139,7 +139,8 @@ class TableSocial:
         for line in lines:
             if len(spoken) >= max_speakers:
                 break
-            s.ui.companion_line(line["who"], line["text"],
+            display = line["text"]
+            s.ui.companion_line(line["who"], display,
                                 interrupt=bool(line.get("interrupt")))
             s.table_log.append({**line, "kind": "table"})
             spoken.append(line)
@@ -152,9 +153,10 @@ class TableSocial:
         reg = self._social_registry(pc, bucket)
         task = SOCIAL_TASK.format(recent=recent, trigger=trigger, name=pc.name,
                                   role=pc.role_name)
+        context = self._wi_context(pc)
         try:
             result = self.loop.run(agent, session, task,
-                                   context_messages=self._wi_context(pc),
+                                   context_messages=context,
                                    registry=reg, guard_dup=DuplicateCallGuard())
             self.session._record_usage(agent, result)
         except Exception:      # noqa: BLE001 —— 桌面社交绝不阻塞对局
@@ -198,7 +200,8 @@ class TableSocial:
                     s.ui.companion_line(l["who"], l["text"],
                                         interrupt=bool(l.get("interrupt")))
                     s.table_log.append({**l, "kind": "debate"})
-                    transcript.append(f"{l['who']}：「{l['text']}」")
+                    transcript.append(
+                        f"{l['who']}：「{l['text']}」")
                     spoke = True
                 if not conceded:
                     still.append(name)
@@ -243,15 +246,18 @@ class TableSocial:
     # ================================================================ 部件
     def _social_agent(self, pc: Character) -> Agent:
         base = self.session.pc_agents[pc.name]
-        return dataclasses.replace(base, temperature=SOCIAL_TEMPERATURE,
-                                   max_tokens=SOCIAL_MAX_TOKENS)
+        agent = dataclasses.replace(base, temperature=SOCIAL_TEMPERATURE,
+                                    max_tokens=SOCIAL_MAX_TOKENS)
+        return agent
 
     def _social_registry(self, pc: Character, bucket: list[dict]):
         from ..harness.registry import ToolRegistry
         reg = ToolRegistry()
 
-        def say(text: str, to: str = "", interrupt: bool = False, stance: str = ""):
-            bucket.append({"who": pc.name, "text": str(text), "to": str(to or ""),
+        def say(text: str, to: str = "", interrupt: bool = False,
+                stance: str = ""):
+            body = str(text or "").strip()
+            bucket.append({"who": pc.name, "text": body, "to": str(to or ""),
                            "interrupt": bool(interrupt), "stance": str(stance or "")})
             return {"ok": True, "note": "已说出口，桌边都听见了。"}
 

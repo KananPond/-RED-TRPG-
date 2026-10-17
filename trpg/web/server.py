@@ -33,7 +33,7 @@ from ..game.session import GameSession
 from ..game.story import (StorySession, ending_ids, iter_story_files,
                           load_story_file, load_unlocks, record_unlock)
 from ..harness.balance import fetch_balance
-from ..harness.adapter import normalize_base_url
+from ..harness.adapter import network_info, normalize_base_url
 from ..harness.usage import TokenMeter
 from ..rules import data as D
 from ..rules.combat import METERS_PER_CELL
@@ -41,12 +41,18 @@ from ..ui.charcreate import (build_from_pregen, default_companion_keys,
                              pregens_of)
 from ..ui.webui import AbortGame, WebUI
 from .charbuild import build_aipc_card, build_character, companion_ids
+from .cinema import CinemaUI
 
 STATIC_DIR = Path(__file__).parent / "static"
 SAVE_FILE = "saves/game.json"
 DEFAULT_MODULE_ID = "cpred-easy-mode"
 LLM_SETTINGS_FILE = "saves/llm_config.json"   # 仅存非敏感字段（provider/base_url/model + aipc）
 UNLOCKS_FILE = "saves/story_endings.json"     # 剧本模式结局图鉴（非敏感）
+
+# 「测试连接」只验证密钥/地址/协议通不通，不是验证输出预算够不够：思考模式
+# 会先花输出预算（DeepSeek V4 起默认开），所以探针要给够 token——16 个 token
+# 必然「截断且没有正文」，看起来像配置错、其实是探针太小。第一档不够就翻倍再试。
+TEST_BUDGETS: tuple[int, ...] = (1024, 2048)
 
 _GEN_SYSTEM = """你是资深的《赛博朋克 RED》（Cyberpunk RED）模组设计师，为"夜之城 · 2045 血染之时"创作跑团模组。
 你要输出一个完整的模组 JSON，供跑团引擎直接加载运行。只输出 JSON 本身，不要任何解释或代码围栏。
@@ -293,6 +299,9 @@ class AppState:
             "reasoning_effort": cfg.reasoning_effort if cfg else "",
             "key_source": ("runtime" if self._runtime_key else
                            "env" if cfg else "none"),
+            # 出网方式（直连/沿用环境代理/指定代理）：Tunnel 403 那类故障的
+            # 第一现场信息，设置页直接显示，不必去猜进程继承了哪个代理
+            "network": network_info(),
             # AI PC 开关随视图下发（持久化走 POST /api/settings/aipc 独立端点）
             "aipc": {"enabled": bool(self.aipc_prefs.get("enabled")),
                      "persona": str(self.aipc_prefs.get("persona") or "")},
@@ -338,17 +347,14 @@ class AppState:
             status = getattr(e, "code", None)
             from ..harness.adapter import _status_hint
             detail = str(getattr(e, "reason", e))
-            lowered = detail.lower()
-            network = any(k in lowered for k in ("tunnel", "getaddrinfo", "timed out",
-                                                 "connection refused", "ssl",
-                                                 "urlerror", "proxy"))
+            net_hint = _network_hint(detail)
             return {"ok": False, "models": [], "provider": provider,
                     "error": f"拉取失败（{type(e).__name__}）：{detail}",
                     "status": status,
-                    "hint": ("网络不通：请求没到供应商，检查代理（HTTP_PROXY / "
-                             "HTTPS_PROXY）或换网络后再试。") if network else
-                            (_status_hint(status) if status else
-                             "检查网络与 API 地址；也可以用「测试连接」单独验证密钥。")}
+                    "network": network_info(),
+                    "hint": net_hint or (_status_hint(status) if status else
+                                         "检查网络与 API 地址；也可以用「测试连接」"
+                                         "单独验证密钥。")}
         return {"ok": True, "models": models, "count": len(models),
                 "provider": provider, "base_url": base_url,
                 "hint": "" if models else
@@ -372,6 +378,11 @@ class AppState:
         with self.lock:
             if self.thread is not None and self.thread.is_alive():
                 return False, "已有一局在进行，请先重置", {}
+        spec = dict(spec or {})
+        cinema = bool(spec.get("cinema"))
+        if cinema and self.llm_cfg is None:
+            return False, ("AI 剧场是纯 AI 模式：请先在「设置 → API 配置」接入 LLM。"
+                           "本地导演/剧本模式不会在剧场里接管。"), {}
         self.story = None
         self.story_meta = {}
         module = None
@@ -395,6 +406,25 @@ class AppState:
                 import random
                 rng = (random.Random(spec["seed"]) if spec.get("seed") is not None
                        else random.Random())
+                # 剧场模式允许前端只给 pregen：默认沿用预设角色的名字与默认队友，
+                # 让「一键开演」不必先经过建卡表单。
+                if cinema:
+                    pregens = pregens_of(module)
+                    key = str(spec.get("pregen") or "")
+                    pregen = pregens.get(key) if key in pregens else next(
+                        (p for p in pregens.values() if isinstance(p, dict)), {})
+                    if pregen:
+                        if not key or key not in pregens:
+                            key = next((k for k, p in pregens.items() if p is pregen), "")
+                            spec["pregen"] = key
+                        spec.setdefault("name", str(pregen.get("name") or ""))
+                        if spec.get("companions") is None:
+                            spec["companions"] = [
+                                k for k, p in pregens.items()
+                                if p is not pregen and k in default_companion_keys(module)]
+                        spec.setdefault("description",
+                                        str(pregen.get("persona") or pregen.get("desc") or ""))
+                        spec.setdefault("personality", str(pregen.get("voice") or ""))
                 # RED 建卡：从模组预设角色里挑一个，队友同样取自预设（无掷骰/等级）
                 player = build_character(spec, module, rng=rng)
                 companions = build_companions(module, spec)
@@ -403,8 +433,14 @@ class AppState:
                 # 持久化偏好；续档走 load_game，以存档 aipc.enabled 为准，不在此覆盖。
                 state.aipc_enabled = bool(spec.get(
                     "aipc_enabled", self.aipc_prefs.get("enabled")))
+                if cinema:
+                    # 剧场默认全自动：有 LLM 就让 AIPC 真正接管玩家角色；
+                    # 没有 LLM 则走本地导演 + 规则引擎（离线也能一键看完）。
+                    state.aipc_enabled = self.llm_cfg is not None
                 state.aipc_card = build_aipc_card(spec, name=player.name)
                 persona_text = str(self.aipc_prefs.get("persona") or "").strip()
+                if not persona_text and cinema:
+                    persona_text = str(spec.get("description") or "").strip()
                 if persona_text:
                     # Persona 的 dict 序列形态（字段同 st.card.Persona.to_dict）；
                     # st 就绪后由 build_session 接缝经 Persona.from_dict 重建
@@ -414,9 +450,17 @@ class AppState:
         except (ValueError, KeyError, FileNotFoundError, TypeError) as e:
             return False, str(e), {}
 
-        ui = WebUI()
+        if cinema:
+            ui = CinemaUI(state.player, module, llm_active=self.llm_cfg is not None,
+                          speed=spec.get("speed") or 1.0, strict_ai=True)
+        else:
+            ui = WebUI()
         session = build_session(state, ui, self.llm_cfg, module=module,
                                 meter=self.meter)
+        if cinema and not getattr(session, "party_ai", False):
+            # 纯 AI 剧场：AIPC/PartyDirector 没挂上就不开演，绝不退回本地导演。
+            return False, ("AI 剧场启动失败：PC Agent 未能挂载（请检查 LLM 配置/"
+                           "角色名冲突/组件状态）。本地导演不会接管。"), {}
         with self.lock:
             self.generation += 1
         self.ui, self.session = ui, session
@@ -546,6 +590,38 @@ class AppState:
         if ui is not None:
             ui.abort()
 
+    # ------------------------------------------------------------ AI 剧场控制
+    def cinema_control(self, action: str, value=None) -> tuple[bool, str | None, dict]:
+        """剧场的暂停/继续/速度控制。返回 (ok, error, 最新剧场状态)。"""
+        ui = self.ui
+        if not isinstance(ui, CinemaUI):
+            return False, "当前不是 AI 剧场对局", {}
+        action = str(action or "").strip().lower()
+        if action == "pause":
+            ui.set_paused(True)
+        elif action == "resume":
+            ui.set_paused(False)
+        elif action == "toggle":
+            ui.set_paused(not ui.paused)
+        elif action == "speed":
+            ui.set_speed(value)
+        else:
+            return False, f"未知的剧场操作：{action}", {}
+        return True, None, ui.cinema_payload()
+
+    def cinema_whisper(self, text: str) -> tuple[bool, str | None]:
+        """给 AI 角色一句低语。只影响叙事决策，不直接改数值。"""
+        ui = self.ui
+        if not isinstance(ui, CinemaUI):
+            return False, "当前不是 AI 剧场对局"
+        t = str(text or "").strip()
+        if not t:
+            return False, "低语是空的"
+        result = ui.whisper(t[:240])
+        if not result.get("ok"):
+            return False, str(result.get("error") or "低语失败")
+        return True, None
+
     def snapshot(self) -> dict:
         cfg = self.llm_cfg
         save_exists = (Path(SAVE_FILE).exists() if Path(SAVE_FILE).parent.exists()
@@ -611,6 +687,9 @@ class AppState:
             "requested": bool(getattr(st, "aipc_enabled", False)),
             "player": st.player.name,
         }
+        if isinstance(self.ui, CinemaUI):
+            base["mode"] = "cinema"
+            base["cinema"] = self.ui.cinema_payload()
         # 战术地图快照（docs/battlemap-design.md §4）：SSE map 事件的重放兜底；
         # 战斗中带上掩体实时耐久（VTT 掩体块/耐久条的数据源）
         base["map"] = st.map_brief(self.session.encounter)
@@ -688,6 +767,51 @@ def build_companions(module: Module, spec: dict) -> list:
             for k in companion_ids(module, spec, player_key)]
 
 
+def _network_hint(detail: str) -> str:
+    """把「请求没到供应商」翻成可操作的一步（代理是本地最常见的原因）。"""
+    lowered = str(detail or "").lower()
+    if "407" in lowered:
+        return ("代理要求认证（407）：把 TRPG_LLM_PROXY 设为 direct 直连，"
+                "或换成不需要认证的代理后重启服务。")
+    proxyish = any(k in lowered for k in ("tunnel", "proxy", "无法连接到代理"))
+    if proxyish:
+        return ("代理在隧道层就把请求挡了（Tunnel 403/407）：请求根本没到供应商，"
+                "调密钥/模型/协议都没用。把 TRPG_LLM_PROXY 设为 direct 就直连；"
+                "要经代理就填代理地址（如 http://127.0.0.1:7890）后重启服务。")
+    if any(k in lowered for k in ("getaddrinfo", "timed out", "timeout",
+                                 "connection refused", "network is unreachable",
+                                 "ssl", "urlerror", "connection reset",
+                                 "handshake", "name or service not known")):
+        return ("网络不通：请求没到供应商。检查网络与 DNS；若你在必须经代理上网的"
+                "环境里，设 TRPG_LLM_PROXY=env（或代理地址）后重启服务。")
+    return ""
+
+
+def test_llm_connection(adapter, cfg: LLMConfig):
+    """发一条最小请求验证连通性 → ``(resp, budget, boosted)``。
+
+    思考模式的思维链也计入输出预算，探针太小时会得到「截断且没有正文」——
+    那不是配置错误。第一档（``TEST_BUDGETS[0]``）被吃光就翻倍重试一次，
+    并把「加过预算」如实回报给界面。
+    """
+    last: Exception | None = None
+    for i, budget in enumerate(TEST_BUDGETS):
+        try:
+            resp = adapter.chat(cfg.model, [{"role": "user", "content": "回复：OK"}],
+                                None, 0.0, budget)
+            return resp, budget, bool(i)
+        except RuntimeError as e:
+            last = e
+            if i == len(TEST_BUDGETS) - 1 or not is_budget_truncation(str(e)):
+                raise
+    raise last        # pragma: no cover —— 循环必然 return 或 raise
+
+
+def is_budget_truncation(text: str) -> bool:
+    """输出预算被思考模式吃光的特征错误（不是密钥/网络/地址错误）。"""
+    return "截断且没有正文" in str(text or "")
+
+
 def _adapter_for(cfg: LLMConfig, timeout: float | None = None,
                  max_retries: int | None = None):
     """按 LLMConfig 构建适配器（协议 + 思考模式 + 强度）。
@@ -699,6 +823,10 @@ def _adapter_for(cfg: LLMConfig, timeout: float | None = None,
     协议见 ``LLMConfig.uses_responses``：auto 时供应商支持 Responses API 就走
     ``POST {base}/responses``，否则退回 ``/chat/completions``；auto 下 Responses
     适配器遇 404 会自行降级，显式指定协议时则直接报错（便于排查）。
+
+    chat 适配器**始终**注入为兜底：除了 auto 的 404 降级，工具调用/结果配对的
+    400（DeepSeek Responses 的严格相邻校验）也会切到 chat/completions 重发——
+    否则这一个 400 就会把整局游戏打死，而 chat 通道本身是应用完整支持的。
     """
     from ..harness.adapter import OpenAICompatibleAdapter
     from ..harness.responses import OpenAIResponsesAdapter
@@ -716,7 +844,8 @@ def _adapter_for(cfg: LLMConfig, timeout: float | None = None,
     auto = (cfg.api_style or "auto").strip().lower() not in (
         "responses", "response", "openai-responses")
     return OpenAIResponsesAdapter(
-        fallback_chat=OpenAICompatibleAdapter(**kwargs) if auto else None, **kwargs)
+        fallback_chat=OpenAICompatibleAdapter(**kwargs),
+        fallback_on_404=auto, **kwargs)
 
 
 def build_session(state: G.GameState, ui: WebUI, llm_cfg: LLMConfig | None,
@@ -750,14 +879,22 @@ def build_session(state: G.GameState, ui: WebUI, llm_cfg: LLMConfig | None,
         kit = "、".join([D.WEAPONS[w]["name"] for w in ch.weapons if w in D.WEAPONS]
                         + ([ch.armor_name()] if ch.armor_key else [])) or "徒手"
         try:
-            pc_agents[ch.name] = make_pc_agent(pregen, ch.role_rank, ch.weapons,
-                                               kit, llm_cfg.model,
-                                               user=state.player.name)
+            pc_agents[ch.name] = make_pc_agent(
+                pregen, ch.role_rank, ch.weapons, kit, llm_cfg.model,
+                user=state.player.name,
+                party_ai=isinstance(ui, CinemaUI))
         except TypeError as e:  # 队友 agent 组装线签名变动时不阻塞开局
             _aipc_note(ui, f"（队友 {ch.name} 的 AI 未挂载：{e}）")
     session = GameSession(state, ui, loop=loop, dm_agent=dm_agent, pc_agents=pc_agents,
                           module=module, meter=meter)
     _maybe_attach_aipc(session, state, ui, llm_cfg, loop)
+    if isinstance(ui, CinemaUI) and getattr(session, "aipc", None) is not None:
+        # 全 AI 跑团：主角与同伴都是 PC Agent，轮流自主行动；没有人类输入节点。
+        session.party_ai = True
+    if isinstance(ui, CinemaUI) and getattr(session, "aipc", None) is None:
+        # 配置了 LLM 但 AIPC 未能挂载（组件异常/名字冲突）时，剧场退回本地导演，
+        # 别在界面上谎称「LLM Agent 接管」。
+        ui.llm_active = False
     return session
 
 
@@ -794,7 +931,7 @@ def _maybe_attach_aipc(session: GameSession, state: G.GameState, ui,
         from ..game.aipc import AIPCController
         from ..st.card import CharacterCard, Persona, card_from_player
     except ImportError:
-        _aipc_note(ui, "（AI 代打未启用：AI PC 组件尚未就绪，本局由你亲自操控。）")
+        _aipc_note(ui, "（全 AI 跑团未启用：AI PC 组件尚未就绪，本局退回本地导演。）")
         return
     try:
         card = state.aipc_card
@@ -808,14 +945,14 @@ def _maybe_attach_aipc(session: GameSession, state: G.GameState, ui,
         if persona is None:
             persona = Persona(name=state.player.name)
     except Exception as e:  # noqa: BLE001 —— 卡/persona 数据无效时降级
-        _aipc_note(ui, f"（AI 代打未启用：角色卡或 persona 无效"
-                       f"（{type(e).__name__}），本局由你亲自操控。）")
+        _aipc_note(ui, f"（全 AI 跑团未启用：角色卡或 persona 无效"
+                       f"（{type(e).__name__}），本局退回本地导演。）")
         return
     aipc = AIPCController.attach(session, loop, llm_cfg.model, card, persona)
     if aipc is None:
-        _aipc_note(ui, "（AI 代打未启用：玩家角色名与同伴重名，本局由你亲自操控。）")
+        _aipc_note(ui, "（全 AI 跑团未启用：玩家角色名与同伴重名，本局退回本地导演。）")
         return
-    _aipc_note(ui, f"（AI 代打已启用：{state.player.name} 将由 AI 扮演。）")
+    _aipc_note(ui, f"（全 AI 跑团已启用：{state.player.name} 与同伴都由 Agent 自主行动。）")
 
 
 def _pregen_view(key: str, pregen: dict) -> dict:
@@ -1009,14 +1146,20 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/" or path == "/index.html":
             return self._file("index.html", "text/html; charset=utf-8")
         if path.startswith("/static/"):
-            name = path[len("/static/"):]
+            name = urllib.parse.unquote(path[len("/static/"):])
             types = {".css": "text/css; charset=utf-8",
                      ".js": "text/javascript; charset=utf-8",
-                     ".svg": "image/svg+xml", ".png": "image/png"}
+                     ".svg": "image/svg+xml", ".png": "image/png",
+                     ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                     ".webp": "image/webp"}
             ext = ("." + name.rsplit(".", 1)[-1]) if "." in name else ""
-            if "/" in name or ".." in name or ext not in types:
+            if ".." in name or "\\" in name or ext.lower() not in types:
                 return self._json({"error": "not found"}, 404)
-            return self._file(name, types[ext])
+            target = (STATIC_DIR / name).resolve()
+            root = STATIC_DIR.resolve()
+            if root not in target.parents or not target.is_file():
+                return self._json({"error": "not found"}, 404)
+            return self._file(name, types[ext.lower()])
         if path.startswith("/api/asset/"):
             return self._asset(path[len("/api/asset/"):])
         if path == "/api/stream":
@@ -1203,6 +1346,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/reset":
             self.app.reset()
             return self._json({"ok": True})
+        if path == "/api/cinema/control":
+            action = str(body.get("action") or "")
+            ok, err, cinema = self.app.cinema_control(action, body.get("value"))
+            return self._json({"ok": ok, "error": err, "cinema": cinema},
+                              200 if ok else 409)
+        if path == "/api/cinema/whisper":
+            ok, err = self.app.cinema_whisper(body.get("text"))
+            return self._json({"ok": ok, "error": err}, 200 if ok else 409)
         if path == "/api/settings/llm":
             ok, err, cfg = self.app.apply_llm_settings(body)
             return self._json({"ok": ok, "error": err,
@@ -1218,13 +1369,11 @@ class Handler(BaseHTTPRequestHandler):
             if cfg is None:
                 return self._json({"ok": False, "error": "尚未配置 LLM",
                                    "hint": "先在「API 配置」里选供应商、填密钥并保存。"}, 400)
-            adapter = _adapter_for(cfg, timeout=30.0, max_retries=1)
+            adapter = _adapter_for(cfg, timeout=45.0, max_retries=1)
             from ..harness.responses import OpenAIResponsesAdapter
             style = "responses" if isinstance(adapter, OpenAIResponsesAdapter) else "chat"
             try:
-                resp = adapter.chat(cfg.model,
-                                    [{"role": "user", "content": "回复：OK"}],
-                                    None, 0.0, 16)
+                resp, budget, boosted = test_llm_connection(adapter, cfg)
                 if self.app.meter is not None and resp.usage:
                     self.app.meter.record("test", cfg.model, resp.usage)
                 # auto 模式下 Responses 404 会自动降级，如实回报实际通道
@@ -1234,31 +1383,35 @@ class Handler(BaseHTTPRequestHandler):
                                    "model": cfg.model,
                                    "api_style": "chat" if fell_back else style,
                                    "fallback": fell_back,
+                                   "network": network_info(),
+                                   "budget": budget,
+                                   "budget_boosted": boosted,
                                    "reasoning": bool(resp.reasoning)})
             except Exception as e:  # noqa: BLE001 —— 失败原因要原样交给界面
                 text = str(e)
-                hint = ""
-                lowered = text.lower()
-                if any(k in lowered for k in ("tunnel", "urlerror", "getaddrinfo",
-                                             "timed out", "connection refused",
-                                             "ssl", "proxy")):
-                    hint = ("网络不通：该请求根本没到供应商。检查本机代理设置"
-                            "（HTTP_PROXY / HTTPS_PROXY）、公司网关，或换一个网络再试。")
-                elif "401" in text or "认证" in text:
-                    hint = "密钥不对：到供应商控制台重新生成，粘贴时别带空格。"
-                elif "402" in text or "余额" in text:
-                    hint = "账户余额不足：充值后重试，或换一个供应商。"
-                elif "404" in text:
-                    hint = ("API 地址写错了：DeepSeek 用 https://api.deepseek.com，"
-                            "智谱用 .../api/paas/v4，Kimi 用 .../v1。"
-                            "可点「拉取模型列表」验证地址与密钥。")
-                elif "400" in text or "模型名" in text:
-                    hint = ("多为模型名不存在或参数不被支持：点「拉取模型列表」"
-                            "挑一个账号可用的模型；若开了思考模式，先关掉再试。")
-                    if style == "responses":
-                        hint += (" 若协议选的是 Responses，可切回「自动」或 "
-                                 "Chat Completions 再试一次。")
+                hint = _network_hint(text)
+                if not hint:
+                    if is_budget_truncation(text):
+                        hint = ("思考模式会先消耗输出预算（探针已自动加倍仍被吃光）："
+                                "把「思考模式」关掉再点一次，或换成非思考型号。")
+                    elif "工具调用和结果没配对" in text:
+                        hint = ""
+                    elif "401" in text or "认证" in text:
+                        hint = "密钥不对：到供应商控制台重新生成，粘贴时别带空格。"
+                    elif "402" in text or "余额" in text:
+                        hint = "账户余额不足：充值后重试，或换一个供应商。"
+                    elif "404" in text:
+                        hint = ("API 地址写错了：DeepSeek 用 https://api.deepseek.com，"
+                                "智谱用 .../api/paas/v4，Kimi 用 .../v1。"
+                                "可点「拉取模型列表」验证地址与密钥。")
+                    elif "400" in text or "模型名" in text:
+                        hint = ("多为模型名不存在或参数不被支持：点「拉取模型列表」"
+                                "挑一个账号可用的模型；若开了思考模式，先关掉再试。")
+                        if style == "responses":
+                            hint += (" 若协议选的是 Responses，可切回「自动」或 "
+                                     "Chat Completions 再试一次。")
                 return self._json({"ok": False, "error": text, "hint": hint,
+                                   "network": network_info(),
                                    "api_style": style}, 400)
         if path == "/api/models":
             return self._json(self.app.list_models(body))

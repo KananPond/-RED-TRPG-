@@ -21,7 +21,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from helpers import ScriptRng, make_npc, make_pc, make_state   # noqa: E402
+from helpers import (ScriptRng, isolate_saves, make_npc, make_pc,  # noqa: E402
+                     make_state, restore_cwd)
 from test_combat import (MELEE, PISTOL, corridor, duel,        # noqa: E402
                          make_foe)
 
@@ -33,6 +34,19 @@ from trpg.rules.character import (COND_CONTROLLED, COND_DEAD,  # noqa: E402
                                    Character, LOCATIONS)
 from trpg.rules.combat import METERS_PER_CELL, Encounter       # noqa: E402
 from trpg.ui.cli import AutoUI                                # noqa: E402
+
+
+# GameSession 的默认 log_dir="saves/logs" 是相对路径：切到临时目录，
+# 否则在仓库根跑测试会往 saves/logs 里灌日志（玩家自己的日志目录被污染）
+_ISOLATION: dict = {}
+
+
+def setUpModule():
+    _ISOLATION["cwd"], _ISOLATION["tmp"] = isolate_saves()
+
+
+def tearDownModule():
+    restore_cwd(_ISOLATION.pop("cwd", os.getcwd()), _ISOLATION.pop("tmp", None))
 
 
 # ================================================================ 1 动作经济

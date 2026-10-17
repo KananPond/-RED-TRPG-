@@ -112,6 +112,14 @@ function renderHomeStatus(meta) {
     : "未接入 LLM —— 经典模式离线可玩；剧本模式（互动剧）无需 LLM";
 }
 
+/* 保存密钥后刷新侧栏状态：S.meta 有缓存，必须重新拉一次（否则一直显示「未接入」） */
+async function refreshHomeStatus() {
+  const r = await jfetch("/api/meta");
+  if (!r.ok) return;
+  S.meta = r.body;
+  renderHomeStatus(r.body);
+}
+
 /* 主页"最近一次旅程"：直接续档（不用先翻存档页） */
 async function renderHomeContinue(meta) {
   const box = $("#home-continue");
@@ -359,12 +367,31 @@ async function renderSettings() {
   $("#set-env-hint").innerHTML = "密钥也可以用环境变量提供：" +
     cur.key_envs.map(e => `<code>${e}</code>`).join(" / ") +
     "。设置仅对新开对局生效；密钥永不写入磁盘。";
+  renderNetworkHint(s.network);
   // 协议：auto = 供应商支持就用 Responses API，否则 chat/completions
   const style = s.api_style || "auto";
   $("#set-api-style").value = ["auto", "responses", "chat"].includes(style)
     ? style : "auto";
   renderProviderExtras(cur, s.thinking || cur.thinking_default);
   await renderAipcSettings();
+}
+
+/* 出网方式：默认直连（忽略进程里的 HTTP(S)_PROXY——它们常把请求挡在隧道层，
+   症状就是 Tunnel connection failed: 403）。要经代理用 TRPG_LLM_PROXY 明示。 */
+function renderNetworkHint(net) {
+  const box = $("#set-net-hint");
+  if (!box) return;
+  net = net || {};
+  const label = net.label || "直连（不走代理）";
+  let html = `出网方式：<b>${escapeHtml(label)}</b>`;
+  if (net.ignored_env_proxy) {
+    html += `——已忽略进程里的代理 <code>${escapeHtml(net.ignored_env_proxy)}</code>`
+      + "（带上它就会出现「Tunnel connection failed: 403」，请求到不了供应商）";
+  }
+  html += "。要经代理：<code>TRPG_LLM_PROXY=env</code>（沿用系统代理）或 "
+    + "<code>TRPG_LLM_PROXY=http://127.0.0.1:7890</code>；要直连：<code>direct</code>（默认）。"
+    + "改完重启服务。";
+  box.innerHTML = html;
 }
 
 /* 供应商附注：官方文档链接、思考开关（只对支持该参数的供应商显示） */
@@ -413,7 +440,7 @@ $("#set-save").addEventListener("click", async () => {
   msg.innerHTML = r.ok
     ? `<span class="okok">已保存。${r.body.settings.llm_active ? "AI 模式就绪。" : ""}</span>`
     : `<span class="err">${escapeHtml(r.body.error)}</span>`;
-  if (r.ok) { renderSettings(); renderStats(true); }
+  if (r.ok) { renderSettings(); renderStats(true); refreshHomeStatus(); }
 });
 $("#set-test").addEventListener("click", async () => {
   const msg = $("#set-msg");
@@ -422,8 +449,10 @@ $("#set-test").addEventListener("click", async () => {
     headers: { "Content-Type": "application/json" } });
   if (r.ok) {
     const via = r.body.api_style === "responses" ? "Responses API" : "Chat Completions";
-    msg.innerHTML = `<span class="okok">连接正常（${via}）：${escapeHtml(r.body.reply || "OK")}</span>`
+    const netLabel = (r.body.network && r.body.network.label) || "直连";
+    msg.innerHTML = `<span class="okok">连接正常（${via} · ${escapeHtml(netLabel)}）：${escapeHtml(r.body.reply || "OK")}</span>`
       + (r.body.fallback ? ' <span class="hint">（该供应商没有 /responses，已自动降级）</span>' : "")
+      + (r.body.budget_boosted ? ' <span class="hint">（思考模式吃掉了首轮输出预算，已自动加大探针预算）</span>' : "")
       + (r.body.reasoning ? ' <span class="hint">（模型返回了思维链：思考模式已生效）</span>' : "");
     return;
   }

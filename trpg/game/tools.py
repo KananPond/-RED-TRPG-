@@ -489,7 +489,7 @@ class GameTools:
             {"type": "object",
              "properties": {"text": {"type": "string"}},
              "required": ["text"]},
-            lambda text: self.ui.companion_line(pc.name, text))
+            lambda text: self.ui.companion_line(pc.name, str(text)))
         registry.register(
             "combat_action",
             "战斗中执行一个动作（RED：每回合 1 个移动动作 + 1 个其他动作，"
@@ -640,6 +640,60 @@ class GameTools:
         return {"ok": True, "note": f"{who.name} 结束回合。"}
 
     # ================================================================ AI 队友
+    def register_party_tools(self, registry: ToolRegistry, who: Character) -> None:
+        """全 AI 跑团：所有 PC 共用的「自主玩家」工具面。
+
+        与 ``register_aipc_tools`` 的差异：没有 OOC / 桌边笔记；PC 直接以角色
+        身份说话、声明行动、执行休整/急救/采购等探索动作。工具只作用于
+        ``who`` 自己（或明确指定的队友），不能改世界——世界仍由 DM 裁定。
+        """
+        def say(text: str, to: str = "") -> dict:
+            body = str(text or "").strip()
+            if not body:
+                return {"ok": False, "error": "台词为空"}
+            self.ui.companion_line(who.name, body)
+            if self.harness_session is not None:
+                self.harness_session.table_log.append(
+                    {"who": who.name, "text": body, "to": str(to or ""),
+                     "interrupt": False, "kind": "table"})
+            return {"ok": True, "note": "已说出口，桌上都听见了。"}
+
+        def hold(reason: str = "") -> dict:
+            return {"ok": True, "note": "这一拍你不说话。"}
+
+        registry.register(
+            "say", f"以 {who.name} 的角色身份说一句话。to=对谁说（可空）。",
+            {"type": "object",
+             "properties": {"text": {"type": "string"},
+                            "to": {"type": "string"}},
+             "required": ["text"]},
+            say)
+        registry.register(
+            "explore_intent",
+            "声明一个探索行动（搜查、潜行、问路、拆锁、谈判等），由 DM 裁定"
+            "结果与后果。这是自主玩家最常用的行动工具。",
+            {"type": "object",
+             "properties": {"text": {"type": "string"}},
+             "required": ["text"]},
+            lambda text: {"ok": True, "intent": str(text or "")})
+        registry.register(
+            "explore_act",
+            "执行一次非战斗行动。kind 取值：rest_day / first_aid(target,index) / "
+            "stabilize(target) / buy(item) / repair_armor / state / inventory / save。",
+            {"type": "object",
+             "properties": {"kind": {"type": "string"},
+                            "item": {"type": "string"},
+                            "target": {"type": "string"},
+                            "index": {"type": "number"}},
+             "required": ["kind"]},
+            lambda kind, item="", target="", index=0: self._tool_explore_act(
+                kind, item=item, target=target, index=index, helper=who))
+        registry.register(
+            "hold", "这一拍不行动（少用；大部分时候应当做点什么）。",
+            {"type": "object", "properties": {"reason": {"type": "string"}},
+             "required": []},
+            hold)
+
     def register_aipc_tools(self, registry: ToolRegistry, who: Character) -> None:
         """AI 队友的探索期工具面。
 
@@ -651,7 +705,8 @@ class GameTools:
         registry.register(
             "say", f"以 {who.name} 的口吻说一句话（中文，符合人设）。to=对谁说（可空）。",
             {"type": "object",
-             "properties": {"text": {"type": "string"}, "to": {"type": "string"}},
+             "properties": {"text": {"type": "string"},
+                            "to": {"type": "string"}},
              "required": ["text"]},
             lambda text, to="": self._aipc_say(who, text, to))
         registry.register(
@@ -680,10 +735,11 @@ class GameTools:
 
     def _aipc_say(self, who: Character, text: str, to: str = "") -> dict:
         """AI 队友的桌面发言：渲染 + 记入 table_log（行结构与 social.py 对齐）。"""
-        self.ui.companion_line(who.name, str(text))
+        body = str(text)
+        self.ui.companion_line(who.name, body)
         if self.harness_session is not None:
             self.harness_session.table_log.append(
-                {"who": who.name, "text": str(text), "to": str(to or ""),
+                {"who": who.name, "text": body, "to": str(to or ""),
                  "interrupt": False, "kind": "table"})
         return {"ok": True, "note": "已说出口，桌边都听见了。"}
 

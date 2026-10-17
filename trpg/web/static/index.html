@@ -6,6 +6,7 @@
 <title>CPRED · 赛博朋克 RED · TRPG 跑团手记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23ff4d6d' d='M12 1 3 6.2v11.6L12 23l9-5.2V6.2L12 1z'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/cinema.css">
 </head>
 <body>
 
@@ -78,9 +79,13 @@
         <h1 class="hero-title">CYBERPUNK <span class="hero-x">RED</span></h1>
         <p class="hero-sub">1d10 + 属性 + 技能 vs 难度值 DV · 无等级 · 改进点成长</p>
         <div class="hero-actions">
-          <button class="btn primary lg" data-view="new">开始新的冒险</button>
-          <button class="btn ghost lg" data-view="stats">查看用量与余额</button>
+          <button class="btn primary lg cine-cta" id="btn-cinema">
+            <span class="cta-play">▶</span> 进入 AI 剧场
+          </button>
+          <button class="btn ghost lg" data-view="new">我亲自开团</button>
         </div>
+        <p class="cine-cta-note">纯 AI 剧场 · 每个 PC 由独立 Agent 自主行动 · 需接入 LLM</p>
+        <div class="hero-cast" id="hero-cast" aria-hidden="true"></div>
         <div class="hero-city" aria-hidden="true"></div>
       </header>
 
@@ -94,6 +99,11 @@
 
           <p class="section-label mt">快捷入口</p>
           <div class="launch-grid">
+            <button class="launch-card cine-launch" id="launch-cinema">
+              <span class="lc-icon">▶</span>
+              <b>AI 剧场</b>
+              <small>不用建卡、不用出手：挑一位主角，让 Agent 把这一夜演完</small>
+            </button>
             <button class="launch-card" data-view="story">
               <span class="lc-icon">❖</span>
               <b>剧本模式</b>
@@ -292,7 +302,12 @@
         <section class="card">
           <div class="help-body">
             <h3>模式</h3>
-            <p>· <b>剧本模式（互动剧）</b>：自写分支剧本（随模组分发）。选择主角后由你的选择决定走向，
+            <p>· <b>AI 剧场（纯 AI 跑团）</b>：选一位主角和演出速度，主角与队友都由各自的
+            Agent 自主决定走位、说话、战斗；DM 负责世界与 NPC。你不用建卡、不用读规则、
+            不用在战斗中出手。界面是技能之声/案卷肖像/检定判决的全屏剧场。这是纯 AI
+            模式：必须先接入 LLM，没有本地导演兜底；可暂停、调速、隐藏界面，或对主角
+            低语一句（不保证被采纳）。<br>
+            · <b>剧本模式（互动剧）</b>：自写分支剧本（随模组分发）。选择主角后由你的选择决定走向，
             检定由规则引擎掷骰，PW 归零即死亡结局；结局图鉴记录进度。<br>
             · <b>AI 模式</b>：DM 与队友由 AI Agent 扮演。直接输入行动或对白，DM 裁决后由规则引擎执行。<br>
             · <b>经典模式（离线）</b>：未接入 LLM 时按模组数据推进，规则引擎代管剧情与队友。</p>
@@ -375,6 +390,7 @@
           <p class="hint" id="set-models-msg"></p>
           <p class="hint" id="set-msg"></p>
           <p class="hint" id="set-env-hint"></p>
+          <p class="hint" id="set-net-hint"></p>
         </section>
 
         <section class="card">
@@ -422,8 +438,37 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     对局界面：顶栏 / 左栏（场景 + 队伍）/ 中栏（编年史 + 行动条）
-     / 右栏（战术地图）
+     AI 剧场 · 选角（从模组 pregens 里挑一位主角，其余由 AI 扮演）
+     ═══════════════════════════════════════════════════════════════ -->
+<div id="cast-modal" class="hidden" role="dialog" aria-modal="true" aria-label="AI 剧场 · 选角">
+  <div class="cast-shell">
+    <button class="cast-close" id="cast-close" aria-label="关闭">✕</button>
+    <header class="cast-head">
+      <p class="cast-kicker">NIGHT CITY · 2045 · WYSKAKUJ Z FORSY</p>
+      <h2 class="cast-title">今晚，谁活过这一夜？</h2>
+      <p class="cast-sub">你只负责看。主角和队友都会自己说话、自己走位、自己决定要不要开枪。<br>
+        这是纯 AI 剧场：每个 PC 由独立 LLM Agent 扮演，必须先接入 LLM；没有本地导演接管。</p>
+    </header>
+    <div id="cast-list" class="cast-list"></div>
+    <footer class="cast-foot">
+      <label class="cast-speed">演出节奏
+        <select id="cast-speed">
+          <option value="0.8">慢 · 读每一句</option>
+          <option value="1" selected>正常</option>
+          <option value="1.5">快</option>
+          <option value="2.2">极快 · 直接看结局</option>
+        </select>
+      </label>
+      <div class="cast-actions">
+        <span id="cast-llm-note" class="cast-llm-note"></span>
+        <button class="btn solid lg" id="cast-start">开 演</button>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     对局界面（手动/经典模式）：顶栏 / 左栏 / 中栏 / 战术地图
      ═══════════════════════════════════════════════════════════════ -->
 <div id="app" class="hidden">
   <header id="topbar">
@@ -522,6 +567,178 @@
   </main>
 </div>
 
+<!-- ═══════════════ AI 剧场（全屏） ═══════════════ -->
+<div id="cinema" class="hidden" data-scene="loft">
+  <div class="cine-bg" id="cine-bg"></div>
+  <div class="cine-grade"></div>
+  <div class="cine-rain"></div>
+  <div class="cine-grain"></div>
+  <div class="cine-vignette"></div>
+
+  <header class="cine-top">
+    <div class="cine-brand">
+      <span class="cb-mark">NC</span>
+      <div class="cb-text">
+        <b>NIGHT CITY <i>2045</i></b>
+        <span id="cine-case">WYSKAKUJ Z FORSY</span>
+      </div>
+    </div>
+    <div class="cine-scene-label">
+      <span id="cine-act">第一幕 · 来电</span>
+      <b id="cine-location-top">南夜之城 · 码头区的一间安全屋</b>
+    </div>
+    <nav class="cine-tools" aria-label="剧场控制">
+      <button id="cine-btn-cast" title="查看演员">演员</button>
+      <button id="cine-btn-quiet" title="隐藏界面，只看画面">沉浸</button>
+      <button id="cine-btn-pause" title="暂停/继续">暂停</button>
+      <button id="cine-btn-speed" class="with-val" title="演出速度">1×</button>
+      <button id="cine-btn-exit" title="退出剧场">离场</button>
+    </nav>
+  </header>
+
+  <aside class="cine-left">
+    <section class="cine-identity">
+      <div class="ci-photo" id="cine-photo"></div>
+      <div class="ci-meta">
+        <p class="ci-kicker">SUBJECT / 主角</p>
+        <h2 class="ci-name" id="cine-name">Forty</h2>
+        <p class="ci-role" id="cine-role">摇滚客 · 4 级</p>
+        <div class="ci-bars" id="cine-bars"></div>
+        <p class="ci-persona" id="cine-persona"></p>
+      </div>
+    </section>
+
+    <section class="cine-psyche">
+      <header class="cp-head">
+        <span>PSYCHE</span>
+        <small id="cine-psyche-note">技能之声</small>
+      </header>
+      <div id="cine-voices" class="cp-voices"></div>
+    </section>
+
+    <section class="cine-thoughts">
+      <header class="ct-head"><span>THOUGHT CABINET</span><small>此刻盘旋的念头</small></header>
+      <div id="cine-thought-list"></div>
+    </section>
+
+    <section class="cine-voice-log" id="cine-voice-log" aria-live="polite"></section>
+  </aside>
+
+  <main class="cine-stage" id="cine-stage">
+    <div class="cs-spine" aria-hidden="true"></div>
+    <div class="cine-speaker" id="cine-speaker" aria-hidden="true">
+      <div class="sp-card">
+        <img id="cine-speaker-img" alt="">
+        <div class="sp-fallback" id="cine-speaker-fallback"></div>
+        <div class="sp-tape"></div>
+        <div class="sp-caption"><b id="cine-speaker-name"></b><span id="cine-speaker-role"></span></div>
+      </div>
+    </div>
+
+    <div class="cine-scene-title" id="cine-scene-title" aria-hidden="true">
+      <p id="cine-title-act">ACT I</p>
+      <h1 id="cine-title-loc">南夜之城 · 码头区的一间安全屋</h1>
+      <span id="cine-title-sub">WYSKAKUJ Z FORSY</span>
+    </div>
+
+    <div class="cine-inner hidden" id="cine-inner" aria-live="polite">
+      <header><span class="ci-glyph" id="cine-inner-glyph">◈</span>
+        <b id="cine-inner-name">逻辑</b>
+        <small id="cine-inner-tone">告诉你一件事</small></header>
+      <p id="cine-inner-text"></p>
+    </div>
+
+    <section class="cine-dialogue" id="cine-dialogue" aria-live="polite"></section>
+
+    <section class="cine-options hidden" id="cine-options" aria-live="polite">
+      <p class="co-head" id="cine-options-head">AI 考虑过的选项</p>
+      <div id="cine-option-list"></div>
+    </section>
+
+    <div class="cine-check hidden" id="cine-check" aria-live="polite">
+      <div class="ck-flash"></div>
+      <div class="ck-box">
+        <p class="ck-kicker">SKILL CHECK</p>
+        <h2 id="ck-skill">逻辑</h2>
+        <div class="ck-die-wrap">
+          <svg class="ck-die" viewBox="0 0 100 116" aria-hidden="true">
+            <path class="ck-die-body" d="M50 3 8 27v62l42 24 42-24V27z"/>
+            <path class="ck-die-inner" d="M50 18 22 34v48l28 16 28-16V34z"/>
+            <text x="50" y="68" text-anchor="middle" id="ck-face">7</text>
+          </svg>
+          <span id="ck-total">17</span>
+        </div>
+        <p class="ck-dv" id="ck-dv">vs DV 17</p>
+        <p class="ck-verdict" id="ck-verdict">SUCCESS</p>
+        <div class="ck-mods" id="ck-mods"></div>
+      </div>
+    </div>
+
+    <div class="cine-ticker" id="cine-ticker" aria-hidden="true"></div>
+  </main>
+
+  <aside class="cine-right">
+    <section class="cr-case">
+      <header><span>CASE FILE</span><small id="cr-case-id">WYSKAKUJ</small></header>
+      <p class="cr-objective" id="cr-objective">接起 Lazlo 的电话。</p>
+      <p class="cr-location" id="cr-location">南夜之城 · 码头区</p>
+    </section>
+    <section class="cr-agents">
+      <header><span>THE TABLE</span><small>Agent 状态</small></header>
+      <div id="cine-agents"></div>
+    </section>
+    <section class="cr-map hidden" id="cine-map">
+      <header><span>TACTICAL</span><small id="cine-map-label">遭遇</small></header>
+      <div class="cm-board" id="cine-map-board"></div>
+      <p class="cm-foot" id="cine-map-foot">1 格 = 2 米</p>
+    </section>
+    <section class="cr-log">
+      <header><span>DIRECTOR'S NOTES</span><small>不打断演出</small></header>
+      <div id="cine-director-log"></div>
+    </section>
+  </aside>
+
+  <footer class="cine-bottom">
+    <div class="cbt-status">
+      <span class="cbt-pulse" id="cine-pulse"></span>
+      <div>
+        <b id="cine-status-main">AI 正在演出</b>
+        <small id="cine-status-sub">Agent 接管 · 全自动</small>
+      </div>
+    </div>
+    <div class="cbt-center" id="cine-cast-strip"></div>
+    <form class="cbt-whisper" id="cine-whisper-form" autocomplete="off">
+      <input id="cine-whisper-input" maxlength="240"
+        placeholder="对 TA 低语一句（可不理，不影响规则结算）">
+      <button type="submit" title="送进角色的下一拍">低语</button>
+    </form>
+    <div class="cbt-keys">
+      <span><kbd>空格</kbd>暂停</span>
+      <span><kbd>H</kbd>藏起界面</span>
+      <span><kbd>Esc</kbd>离场</span>
+    </div>
+  </footer>
+
+  <div class="cine-end hidden" id="cine-end">
+    <div class="ce-card">
+      <p class="ce-kicker">END OF THE NIGHT</p>
+      <h2 id="ce-title">天快亮了。</h2>
+      <div class="ce-body" id="ce-body"></div>
+      <p class="ce-stats" id="ce-stats"></p>
+      <div class="ce-actions">
+        <button class="btn solid" id="ce-again">再演一场</button>
+        <button class="btn ghost" id="ce-home">回到大厅</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="cine-cast-drawer hidden" id="cine-cast-drawer">
+    <header><span>CAST / 演员表</span><button id="cine-cast-close">✕</button></header>
+    <div id="cine-cast-drawer-list"></div>
+    <p class="ccd-note">每个人的行动都由 Agent / 本地导演决定。你看到的不是预设动画。</p>
+  </div>
+</div>
+
 <!-- ═══════════════ 数据看板叠加层（对局中随时打开） ═══════════════ -->
 <div id="metrics" class="hidden">
   <div class="metrics-card">
@@ -546,6 +763,7 @@
 <div id="tour" class="hidden"></div>
 
 <script src="/static/fx.js"></script>
+<script src="/static/cinema.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

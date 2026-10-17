@@ -22,7 +22,7 @@ import sys
 from trpg import __version__
 from trpg.campaign.cordis import Cordis, default_fallback_module
 from trpg.campaign.loader import Module
-from trpg.config import LLMConfig
+from trpg.config import LLMConfig, load_env_file
 from trpg.game import state as G
 from trpg.game.session import GameSession
 from trpg.ui.cli import AutoUI, ConsoleUI
@@ -188,6 +188,9 @@ def run_web(args, cfg: LLMConfig | None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 可选的 .env：把密钥写进去一次，以后每次启动自动读取（.env 已在 .gitignore）
+    # 已存在的环境变量优先，本文件只读不写。
+    load_env_file()
     parser = argparse.ArgumentParser(description="TRPG 单人 AI 跑团")
     parser.add_argument("--offline", action="store_true", help="强制经典模式（离线）")
     parser.add_argument("--story", action="store_true",

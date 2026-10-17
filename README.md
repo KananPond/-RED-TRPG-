@@ -311,17 +311,68 @@ python main.py --story --story-id wyskakuj      # 直接指定
 `reload`、`stand`、`stabilize`、`first_aid`、`use_item`、`delay`、`confrontation`、
 `flee`、`end_turn`。玩家也可以直接在 Web 地图上点格走位。
 
-## 接入 DeepSeek（DM 与 AI 队友）
+## 接入大模型（DM 与 AI 队友）
 
-最快路径：启动后到「设置 → API 配置」选 DeepSeek 并填入密钥，"测试连接"通过即可开团；
-或用环境变量：
+最快路径：启动后到「设置 → API 配置」选供应商、填密钥 →「拉取模型列表」挑一个
+账号真实可用的型号 →「测试连接」通过即可开团。也可以用环境变量：
 
 ```bash
-set TRPG_LLM_BASE_URL=https://api.deepseek.com/v1
+set TRPG_LLM_BASE_URL=https://api.deepseek.com     # 可省略，用预设
 set TRPG_LLM_API_KEY=sk-...
-set TRPG_LLM_MODEL=deepseek-chat
+set TRPG_LLM_MODEL=deepseek-flash                  # 可省略，用预设
+set TRPG_LLM_THINKING=off                          # on/off；不设则用预设默认值
 python main.py --web
 ```
+
+### 各家真实接口与模型（2026-10 核对官方文档）
+
+| 供应商 | API 地址（可再拼 `/chat/completions`） | 预设模型 | 思考模式 |
+| --- | --- | --- | --- |
+| DeepSeek | `https://api.deepseek.com`（**不带 `/v1`**，带了也能用） | `deepseek-flash`、`deepseek-v4-pro` | V4 起**默认开启**，本应用默认关闭；可开关 |
+| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.3`、`glm-5.3-flash`、`glm-5.3-flashx`、`glm-5.2` | GLM-5.3 强制思考，只接受 `enabled` |
+| Kimi | `https://api.moonshot.cn/v1`（国内）/ `api.moonshot.ai/v1`（国际） | `kimi-k3`、`kimi-k2.7-code`、`kimi-k2.6` | — |
+| MiniMax | `https://api.minimaxi.com/v1`（国内）/ `api.minimax.io/v1`（国际） | `MiniMax-M2.1`、`MiniMax-M2` | — |
+
+**模型名不写死**：点设置页的「**拉取模型列表**」会用你的密钥请求
+`GET {base}/models`，把账号真正可用的型号列进输入框候选；预设只是默认值与兜底
+（供应商迭代很快，2026 年 kimi-k2 / moonshot-v1 系列已下线、GLM 已到 5.x）。
+API 地址支持整段粘贴（`.../v1/chat/completions`），保存时自动整形为 base。
+
+### 接口协议：默认走 OpenAI Responses API
+
+设置页的「接口协议」可三选一，默认 **自动**：
+
+| 取值 | 行为 |
+| --- | --- |
+| 自动（默认） | 供应商声明支持 Responses API 时走 `POST {base}/responses`，否则走 `POST {base}/chat/completions`；Responses 遇 404 自动降级到 chat，并在「测试连接」里注明 |
+| OpenAI Responses API | 强制 `/responses`（该供应商没有就报 404，便于排查） |
+| Chat Completions | 强制 `/chat/completions` |
+
+DeepSeek / Kimi / 智谱 GLM 都提供 Responses 端点（DeepSeek 的 base 就是
+`https://api.deepseek.com`，Kimi 是 `.../v1`，智谱是 `.../api/paas/v4`）；
+MiniMax 与自定义网关默认走 chat。协议层在 [responses.py](trpg/harness/responses.py)，
+只做转换不做业务判断：
+
+- **出站**：第一条 system 消息 → `instructions`；其余消息折叠成 `input` items
+  （`message` / `function_call` / `function_call_output` / `reasoning`）；
+  工具表从 `{"type":"function","function":{…}}` 拍平成
+  `{"type":"function","name","description","parameters"}`；
+  `max_tokens` → `max_output_tokens`；`tool_choice: "auto"`。
+- **入站**：`output` items 还原成正文 / `tool_calls`（用 `call_id` 配对）/
+  思维链 / usage（`input_tokens` → `prompt_tokens`，`output_tokens` →
+  `completion_tokens`，数据看板的统计口径不变）。
+- 无状态：不使用 `previous_response_id` / `store`（DeepSeek 明确不支持会话延续），
+  历史由 harness 的 Session 重放提供。
+
+### 思考模式与思维链（曾经的「AI 模式加载失败」）
+
+DeepSeek V4 起思考模式**默认开启**，规则是：**带 `tools` 的请求，历史轮次的
+`reasoning_content` 必须逐轮回传，否则 API 返回 400**。本项目每个 Agent 都靠
+工具推进，所以适配器把思维链存进 `ModelResponse.reasoning` 并由 agent 循环
+随 assistant 消息回写历史；同时默认给 DeepSeek 下发
+`{"thinking": {"type": "disabled"}}`（可在设置里打开）。开思考时若
+`max_tokens` 太小，输出会被推理吃掉——适配器会把这种「空正文 + `length`」
+报成可读错误，而不是静默失败。
 
 服务端会为 DM 与模组队友分别构建 Agent（系统提示词 + 工具组），经 harness 循环接入
 所选供应商。未配置时自动以离线模式运行（模组数据驱动 DM + 启发式队友 AI）。
@@ -329,6 +380,9 @@ DM 的工具面是 `narrate / speak_as_npc / npc_dialogue / skill_check / oppose
 get_state / set_flag / advance_scene / start_encounter / map_update / give_loot /
 award_ip / confrontation / request_roll`——**没有**属性对抗型的独立检定工具，
 也没有直接发放成长点数的工具：RED 的检定走技能与对抗检定，成长走 IP。
+
+相关端点：`GET/POST /api/settings/llm`、`GET/POST /api/models`（现拉模型列表）、
+`POST /api/llm/test`（失败时带 `hint` 说明该改哪一项）。
 
 ## 用量热力图与账户余额
 

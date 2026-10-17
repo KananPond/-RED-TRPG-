@@ -34,6 +34,9 @@ class ModelResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: str = "stop"
     usage: dict = field(default_factory=dict)
+    # 思考模式（DeepSeek V4 / GLM-5.x 等）返回的思维链。带 tools 的请求必须
+    # 逐轮原样回传，否则 API 返回 400（见 adapter.chat / loop.run）。
+    reasoning: str | None = None
 
 
 def system(content: str) -> dict:
@@ -44,8 +47,17 @@ def user(content: str) -> dict:
     return {"role": "user", "content": content}
 
 
-def assistant(content: str | None = None, tool_calls: list[ToolCall] | None = None) -> dict:
+def assistant(content: str | None = None, tool_calls: list[ToolCall] | None = None,
+              reasoning: str | None = None) -> dict:
+    """assistant 消息。
+
+    ``reasoning``（思维链）在思考模式下必须随历史轮次回传：DeepSeek 的规则是
+    「请求带 tools 时，历史轮次的 reasoning_content 均须回传，否则返回 400」。
+    仅在非空时写入，避免给不支持该字段的供应商塞空键。
+    """
     msg: dict = {"role": "assistant", "content": content}
+    if reasoning:
+        msg["reasoning_content"] = reasoning
     if tool_calls:
         msg["tool_calls"] = [
             {"id": tc.id, "type": "function",

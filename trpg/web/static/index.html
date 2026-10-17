@@ -345,20 +345,34 @@
         <section class="card">
           <div class="card-head">
             <h3>API 配置</h3>
-            <span class="card-sub">OpenAI 兼容协议 · /chat/completions</span>
+            <span class="card-sub">OpenAI 兼容 · Responses / Chat Completions</span>
           </div>
           <div id="provider-cards" class="card-row"></div>
+          <p class="hint provider-note" id="set-note"></p>
           <div class="settings-grid">
-            <div><label class="mini">API 地址</label><input type="text" id="set-base"></div>
-            <div><label class="mini">模型</label><input type="text" id="set-model" list="model-list">
+            <div><label class="mini">API 地址</label><input type="text" id="set-base"
+              placeholder="填到 /v1 或 /api/paas/v4 为止（整段端点也能自动整形）"></div>
+            <div><label class="mini">模型</label><input type="text" id="set-model" list="model-list"
+              placeholder="点右侧「拉取模型列表」用你的密钥取真实型号">
               <datalist id="model-list"></datalist></div>
             <div><label class="mini">API 密钥</label><input type="password" id="set-key"
               placeholder="仅保存在本服务内存中，不会落盘"></div>
+            <div><label class="mini">接口协议</label>
+              <select id="set-api-style">
+                <option value="auto">自动（优先 Responses API）</option>
+                <option value="responses">OpenAI Responses API（/responses）</option>
+                <option value="chat">Chat Completions（/chat/completions）</option>
+              </select></div>
           </div>
           <div class="row-btns">
             <button class="btn solid" id="set-save">保存配置</button>
             <button class="btn ghost" id="set-test">测试连接</button>
+            <button class="btn ghost" id="set-fetch-models">⇩ 拉取模型列表</button>
+            <label class="toggle hidden" id="set-thinking-wrap">
+              <input type="checkbox" id="set-thinking">
+              <span>思考模式（更强但更慢、更费 token）</span></label>
           </div>
+          <p class="hint" id="set-models-msg"></p>
           <p class="hint" id="set-msg"></p>
           <p class="hint" id="set-env-hint"></p>
         </section>

@@ -198,6 +198,66 @@
   检定→掷骰→推进场景多回合无回归；对局中刷新页面选项能正确重建；
   新增 `tests/test_story.py::test_state_exposes_pending_in_story_mode`。
 
+**修复（AI 模式开局即失败：思维链未回传 + 接口/模型过期）**
+
+- **现象**：配好密钥后开 AI 模式，第一个 DM 回合就失败，界面退回经典模式或
+  只报一句「LLM 请求失败」。
+- **根因（其一，致命）**：DeepSeek V4 起思考模式**默认开启**，官方规则是
+  「带 `tools` 的请求，历史轮次的 `reasoning_content` 必须逐轮回传，否则返回
+  **400**」。本项目每个 Agent（DM / 队友 / NPC / AI 代打）都靠工具推进，
+  而 `adapter` 没解析 `reasoning_content`、`loop` 回写 assistant 消息时也没带上它
+  ——第一次工具调用之后必然 400。
+- **修法**：`ModelResponse` 新增 `reasoning`；适配器解析
+  `reasoning_content`（兼容 `reasoning`）；`assistant()` 仅在非空时写入
+  `reasoning_content`；agent 循环随历史回写，事件日志同步（模型可见 ⟺ 已记录）。
+  同时**默认给 DeepSeek 下发 `{"thinking": {"type": "disabled"}}`**（设置页可开
+  ——思考更快更省，也更适合叙事；打开后思维链回传已就绪）。
+- **根因（其二）**：供应商预设停留在旧世代——`deepseek-chat`、`glm-4.6`、
+  `kimi-k2-turbo-preview`、`moonshot-v1-8k`、`MiniMax-Text-01` 均已非官方推荐，
+  Kimi 的 kimi-k2 / moonshot-v1 系列 2026 年已下线。按 2026-10 官方文档重写预设：
+  DeepSeek `https://api.deepseek.com` + `deepseek-flash` / `deepseek-v4-pro`；
+  智谱 `.../api/paas/v4` + `glm-5.3` / `glm-5.3-flash` / `glm-5.3-flashx` / `glm-5.2`；
+  Kimi `.../v1` + `kimi-k3` / `kimi-k2.7-code` / `kimi-k2.6`；
+  MiniMax `.../v1` + `MiniMax-M2.1` / `MiniMax-M2`。
+- **模型名不再写死**:新增 `GET/POST /api/models`：用当前密钥请求 `GET {base}/models`，
+  把账号真实可用的型号列进设置页候选；设置页新增「⇩ 拉取模型列表」按钮，
+  并提示「当前填写的模型不在可用列表里」。预设只是默认值与兜底。
+- **地址整形**：`normalize_base_url()` 处理整段粘贴（`.../v1/chat/completions`）、
+  结尾斜杠与空格；`/v1`、`/api/paas/v4` 这类路径前缀保留。
+- **错误可读**：HTTP 4xx 直接抛（不再无意义重试），错误文本带上供应商返回的
+  `error.message` 与按状态码的可操作提示（401 密钥 / 402 余额 / 404 地址 /
+  400 模型名或参数）；「空正文 + `finish_reason=length`」单独报成
+  「输出被 max_tokens 截断：思考模式会先消耗输出预算」，不再静默失败。
+  `/api/llm/test` 与设置页同步展示 `hint`。
+- **思考开关持久化**：`saves/llm_config.json` 增加非敏感字段 `thinking`
+  （仍无任何密钥字段），环境变量 `TRPG_LLM_THINKING` / `TRPG_LLM_REASONING_EFFORT`。
+- 新增 `tests/test_llm_endpoints.py`（22 项）：端点整形、思考参数下发、**思维链
+  回传（含事件日志同口径断言）**、错误文本与提示、模型列表解析（OpenAI 风格与
+  网关风格）、预设地址/模型钉住、`/api/models` 与保存整形的 HTTP 行为。
+  全套 637 passed。
+
+**新增（接口协议）：默认改走 OpenAI Responses API**
+
+- 新增 [trpg/harness/responses.py](trpg/harness/responses.py)：`POST {base}/responses`
+  适配器，只做协议转换不做业务判断——
+  出站把 chat 风格消息折叠成 `instructions` + `input` items
+  （`message` / `function_call` / `function_call_output` / `reasoning`），
+  工具表拍平成 `{"type":"function","name","description","parameters"}`，
+  `max_tokens` → `max_output_tokens`；入站把 `output` items 还原成
+  正文 / `tool_calls`（`call_id` 配对）/ 思维链 / usage
+  （`input_tokens`→`prompt_tokens`、`output_tokens`→`completion_tokens`，
+  数据看板口径不变）。无状态，不用 `previous_response_id` / `store`。
+- 协议三选一（设置页「接口协议」+ `TRPG_LLM_API_STYLE`）：
+  **自动** = 供应商声明支持就走 Responses（DeepSeek / Kimi / 智谱）；
+  MiniMax 与自定义网关默认 chat；`auto` 下 Responses 遇 404 自动降级并在
+  「测试连接」注明；显式指定协议时不降级（便于排查）。
+- 预设新增 `responses` 能力标记；DeepSeek 文档链接改指 Responses 指南。
+- 「测试连接」回报实际走的通道（`api_style` / `fallback` / `reasoning`），
+  400 时若协议为 Responses 会额外提示可切回自动/chat。
+- 新增 16 项测试（消息与工具表转换、items 配对、思维链 item、响应解析、
+  usage 映射、截断报错、端点与请求体、404 降级、协议解析、设置往返），
+  全套 **653 passed**。
+
 **测试卫生（顺带修掉的真实事故）**
 
 - 跑测试会**覆盖玩家的真实存档**：引擎的 `autosave()` 与 `/api/start` 都用相对路径

@@ -13,6 +13,7 @@ AI PC：GET/POST /api/settings/aipc（AI 代打开关 + 玩家 persona，非敏�
 from __future__ import annotations
 
 import json
+import os
 import queue
 import random
 import re
@@ -32,6 +33,7 @@ from ..game.session import GameSession
 from ..game.story import (StorySession, ending_ids, iter_story_files,
                           load_story_file, load_unlocks, record_unlock)
 from ..harness.balance import fetch_balance
+from ..harness.adapter import normalize_base_url
 from ..harness.usage import TokenMeter
 from ..rules import data as D
 from ..rules.combat import METERS_PER_CELL
@@ -147,12 +149,15 @@ class AppState:
             return {}
 
     def _save_llm_settings(self, cfg: LLMConfig | None = None) -> None:
-        """持久化非敏感配置：provider/base_url/model + aipc 偏好（无任何密钥字段）。"""
-        payload = {k: self._persisted[k] for k in ("provider", "base_url", "model")
+        """持久化非敏感配置：provider/base_url/model/thinking + aipc 偏好
+        （无任何密钥字段）。"""
+        payload = {k: self._persisted[k]
+                   for k in ("provider", "base_url", "model", "thinking", "api_style")
                    if k in self._persisted}
         if cfg is not None:
             payload.update({"provider": cfg.provider, "base_url": cfg.base_url,
-                            "model": cfg.model})
+                            "model": cfg.model, "thinking": cfg.thinking,
+                            "api_style": cfg.api_style})
         payload["aipc"] = dict(self.aipc_prefs)
         try:
             Path(LLM_SETTINGS_FILE).parent.mkdir(parents=True, exist_ok=True)
@@ -170,46 +175,79 @@ class AppState:
         if cfg is None:
             cfg = LLMConfig.from_env("deepseek")
         if cfg is not None:
-            # 应用已保存的 base_url/model 覆盖（非敏感字段）
+            # 应用已保存的非敏感覆盖（base_url/model/思考开关）
             if self._persisted.get("base_url"):
-                cfg.base_url = str(self._persisted["base_url"]).rstrip("/")
+                cfg.base_url = normalize_base_url(str(self._persisted["base_url"]))
             if self._persisted.get("model"):
                 cfg.model = str(self._persisted["model"])
+            if self._persisted.get("thinking") in ("on", "off"):
+                cfg.thinking = str(self._persisted["thinking"])
+            if self._persisted.get("api_style") in ("auto", "responses", "chat"):
+                cfg.api_style = str(self._persisted["api_style"])
             if self._runtime_key:
                 cfg.api_key = self._runtime_key
         return cfg
+
+    def _resolve_key(self, preset: dict, spec_key: str = "") -> str:
+        """密钥优先级：本次提交 > 运行时内存 > 供应商环境变量。"""
+        key = str(spec_key or "").strip() or (self._runtime_key or "")
+        if key:
+            return key
+        for env in preset["key_envs"]:
+            value = os.environ.get(env, "").strip()
+            if value:
+                return value
+        return ""
+
+    def _build_adapter(self, base_url: str, api_key: str, provider: str,
+                       thinking: str = "", effort: str = "",
+                       timeout: float = 90.0, max_retries: int = 3):
+        """校验用适配器（不发起请求）：端点合法性由构造期完成。"""
+        from ..harness.adapter import OpenAICompatibleAdapter
+        preset = LLM_PROVIDERS.get(provider) or {}
+        supports = bool(preset.get("supports_thinking"))
+        return OpenAICompatibleAdapter(
+            base_url=base_url, api_key=api_key, timeout=timeout,
+            max_retries=max_retries,
+            # 只有声明支持思考开关的供应商才下发，避免老接口被未知参数顶回 400
+            thinking=(thinking or "") if supports else "",
+            reasoning_effort=(effort or "") if supports else "")
 
     def apply_llm_settings(self, spec: dict) -> tuple[bool, str | None, LLMConfig | None]:
         provider = str(spec.get("provider", "deepseek"))
         if provider not in LLM_PROVIDERS:
             return False, "未知供应商", None
         preset = LLM_PROVIDERS[provider]
-        base_url = str(spec.get("base_url") or preset["base_url"]).strip().rstrip("/")
+        raw_base = str(spec.get("base_url") or preset["base_url"])
+        base_url = normalize_base_url(raw_base)
         model = str(spec.get("model") or (preset["models"][0] if preset["models"] else "")).strip()
-        key = str(spec.get("api_key") or "").strip()
-        if not key:
-            key = self._runtime_key or ""
-        if not key:
-            for env in preset["key_envs"]:
-                import os
-                key = os.environ.get(env, "").strip()
-                if key:
-                    break
-        if provider == "custom" and not str(spec.get("base_url") or "").strip():
+        if provider == "custom" and not base_url:
             return False, "自定义供应商必须填写 API 地址", None
+        key = self._resolve_key(preset, spec.get("api_key") or "")
         if not key:
             return False, "缺少 API 密钥：请在上方填写，或设置对应环境变量", None
-        from ..harness.adapter import OpenAICompatibleAdapter
+        thinking = str(spec.get("thinking") or "").strip().lower()
+        if thinking not in ("on", "off"):
+            thinking = str(preset.get("thinking_default") or "")
+        effort = str(spec.get("reasoning_effort") or "").strip().lower()
+        style = str(spec.get("api_style") or "").strip().lower()
+        if style not in ("auto", "responses", "chat"):
+            style = str(self._persisted.get("api_style") or "auto")
         try:
-            OpenAICompatibleAdapter(base_url=base_url, api_key=key, max_retries=1)
+            self._build_adapter(base_url, key, provider, thinking, effort, max_retries=1)
         except ValueError as e:
             return False, f"端点校验失败：{e}", None
-        cfg = LLMConfig(base_url=base_url, api_key=key, model=model, provider=provider)
+        cfg = LLMConfig(base_url=base_url, api_key=key, model=model,
+                        provider=provider, thinking=thinking,
+                        reasoning_effort=effort, api_style=style)
         if spec.get("api_key"):
             self._runtime_key = key          # 仅内存
-        self._persisted = {"provider": provider, "base_url": base_url, "model": model}
+        self._persisted = {"provider": provider, "base_url": base_url,
+                           "model": model, "thinking": thinking,
+                           "api_style": style}
         self._save_llm_settings(cfg)
         self.llm_cfg = cfg
+        self.balance_cache = {"ts": 0.0, "data": None}   # 换供应商后余额缓存失效
         return True, None, cfg
 
     def apply_aipc_settings(self, spec: dict) -> tuple[bool, str | None]:
@@ -232,17 +270,89 @@ class AppState:
 
     def llm_settings_view(self) -> dict:
         cfg = self.llm_cfg
+        # 没有密钥时 cfg 为 None，但已保存的 base/model/thinking 仍要回显，
+        # 否则重启服务后界面会把用户填过的地址与模型清空（密钥本就不落盘）
+        provider = cfg.provider if cfg else self._persisted.get("provider", "deepseek")
+        preset = LLM_PROVIDERS.get(provider) or {}
         return {
             "llm_active": cfg is not None,
-            "provider": cfg.provider if cfg else self._persisted.get("provider", "deepseek"),
-            "base_url": cfg.base_url if cfg else "",
-            "model": cfg.model if cfg else "",
+            "provider": provider,
+            "base_url": (cfg.base_url if cfg
+                         else normalize_base_url(str(self._persisted.get("base_url")
+                                                     or preset.get("base_url") or ""))),
+            "model": (cfg.model if cfg
+                      else str(self._persisted.get("model")
+                               or (preset.get("models") or [""])[0])),
+            "thinking": (cfg.thinking if cfg
+                         else str(self._persisted.get("thinking")
+                                  or preset.get("thinking_default") or "")),
+            "api_style": (cfg.api_style if cfg
+                          else str(self._persisted.get("api_style") or "auto")),
+            "use_responses": (cfg.uses_responses if cfg
+                              else bool(preset.get("responses"))),
+            "reasoning_effort": cfg.reasoning_effort if cfg else "",
             "key_source": ("runtime" if self._runtime_key else
                            "env" if cfg else "none"),
             # AI PC 开关随视图下发（持久化走 POST /api/settings/aipc 独立端点）
             "aipc": {"enabled": bool(self.aipc_prefs.get("enabled")),
                      "persona": str(self.aipc_prefs.get("persona") or "")},
         }
+
+    # ------------------------------------------------------------ 模型列表
+    def list_models(self, spec: dict | None = None) -> dict:
+        """用**当前密钥**向供应商现拉模型列表（GET {base}/models）。
+
+        这是「模型名不再写死」的落点：预设只是默认值，真实可用型号由账号决定。
+        """
+        spec = spec or {}
+        provider = str(spec.get("provider") or (self.llm_cfg.provider if self.llm_cfg
+                                                else self._persisted.get("provider", "deepseek")))
+        preset = LLM_PROVIDERS.get(provider)
+        if preset is None:
+            return {"ok": False, "models": [], "error": "未知供应商",
+                    "hint": "请先在「设置 → API 配置」里选一个供应商。"}
+        current = self.llm_cfg
+        base_url = normalize_base_url(str(
+            spec.get("base_url")
+            or (current.base_url if current and current.provider == provider else "")
+            or preset["base_url"]))
+        key = self._resolve_key(preset, spec.get("api_key") or "")
+        if not base_url:
+            return {"ok": False, "models": [], "provider": provider,
+                    "error": "供应商没有可用的 API 地址",
+                    "hint": "自定义供应商需要自己填写地址（填到 /v1 为止）。"}
+        if not key:
+            return {"ok": False, "models": [], "provider": provider,
+                    "error": "缺少 API 密钥",
+                    "hint": "先填入密钥再拉取；密钥只存在本服务内存里。"}
+        try:
+            adapter = self._build_adapter(base_url, key, provider,
+                                          timeout=20.0, max_retries=1)
+            models = adapter.list_models()
+        except ValueError as e:
+            return {"ok": False, "models": [], "provider": provider,
+                    "error": f"端点校验失败：{e}"}
+        except RuntimeError as e:
+            return {"ok": False, "models": [], "provider": provider, "error": str(e)}
+        except Exception as e:  # noqa: BLE001 —— HTTP/解析等各类失败统一回报
+            status = getattr(e, "code", None)
+            from ..harness.adapter import _status_hint
+            detail = str(getattr(e, "reason", e))
+            lowered = detail.lower()
+            network = any(k in lowered for k in ("tunnel", "getaddrinfo", "timed out",
+                                                 "connection refused", "ssl",
+                                                 "urlerror", "proxy"))
+            return {"ok": False, "models": [], "provider": provider,
+                    "error": f"拉取失败（{type(e).__name__}）：{detail}",
+                    "status": status,
+                    "hint": ("网络不通：请求没到供应商，检查代理（HTTP_PROXY / "
+                             "HTTPS_PROXY）或换网络后再试。") if network else
+                            (_status_hint(status) if status else
+                             "检查网络与 API 地址；也可以用「测试连接」单独验证密钥。")}
+        return {"ok": True, "models": models, "count": len(models),
+                "provider": provider, "base_url": base_url,
+                "hint": "" if models else
+                        "供应商返回了空列表：确认该账号已开通模型权限。"}
 
     # ------------------------------------------------------------ 账户余额
     def balance_view(self, refresh: bool = False) -> dict:
@@ -578,6 +688,37 @@ def build_companions(module: Module, spec: dict) -> list:
             for k in companion_ids(module, spec, player_key)]
 
 
+def _adapter_for(cfg: LLMConfig, timeout: float | None = None,
+                 max_retries: int | None = None):
+    """按 LLMConfig 构建适配器（协议 + 思考模式 + 强度）。
+
+    统一入口：对局 / 测试连接 / 模组生成都走这里，避免各处漏传——漏传时
+    DeepSeek V4 会按默认（思考开启）响应，而带 tools 的第二轮请求少了思维链
+    就会 400。
+
+    协议见 ``LLMConfig.uses_responses``：auto 时供应商支持 Responses API 就走
+    ``POST {base}/responses``，否则退回 ``/chat/completions``；auto 下 Responses
+    适配器遇 404 会自行降级，显式指定协议时则直接报错（便于排查）。
+    """
+    from ..harness.adapter import OpenAICompatibleAdapter
+    from ..harness.responses import OpenAIResponsesAdapter
+    preset = LLM_PROVIDERS.get(cfg.provider) or {}
+    supports = bool(preset.get("supports_thinking"))
+    kwargs = dict(
+        base_url=cfg.base_url, api_key=cfg.api_key,
+        timeout=timeout if timeout is not None else cfg.request_timeout,
+        max_retries=max_retries if max_retries is not None else cfg.max_retries,
+        thinking=(cfg.thinking or "") if supports else "",
+        reasoning_effort=(cfg.reasoning_effort or "") if supports else "")
+    if not cfg.uses_responses:
+        from ..harness.adapter import OpenAICompatibleAdapter as _Chat
+        return _Chat(**kwargs)
+    auto = (cfg.api_style or "auto").strip().lower() not in (
+        "responses", "response", "openai-responses")
+    return OpenAIResponsesAdapter(
+        fallback_chat=OpenAICompatibleAdapter(**kwargs) if auto else None, **kwargs)
+
+
 def build_session(state: G.GameState, ui: WebUI, llm_cfg: LLMConfig | None,
                   module: Module | None = None,
                   meter: TokenMeter | None = None) -> GameSession:
@@ -595,12 +736,9 @@ def build_session(state: G.GameState, ui: WebUI, llm_cfg: LLMConfig | None,
                            "开关已保存，接入 LLM 后新开对局生效。）")
         return GameSession(state, ui, loop=None, module=module, meter=meter)
     from ..game.agents import make_dm_agent, make_pc_agent
-    from ..harness.adapter import OpenAICompatibleAdapter
     from ..harness.loop import DefaultAgentLoop, TruncateCompactor
 
-    adapter = OpenAICompatibleAdapter(
-        base_url=llm_cfg.base_url, api_key=llm_cfg.api_key,
-        timeout=llm_cfg.request_timeout, max_retries=llm_cfg.max_retries)
+    adapter = _adapter_for(llm_cfg)
     loop = DefaultAgentLoop(registry=None, adapter=adapter,
                             compactor=TruncateCompactor(token_limit=12000))
     dm_agent = make_dm_agent(llm_cfg.model, module)
@@ -716,6 +854,24 @@ def _pregen_view(key: str, pregen: dict) -> dict:
     }
 
 
+def _provider_view(key: str, preset: dict) -> dict:
+    """供应商预设 → 界面载荷（含文档链接、思考支持与模型列表接口）。"""
+    return {
+        "key": key,
+        "name": preset["name"],
+        "base_url": preset["base_url"],
+        "models": list(preset.get("models") or []),
+        "key_envs": list(preset.get("key_envs") or []),
+        "default": bool(preset.get("default")),
+        "supports_thinking": bool(preset.get("supports_thinking")),
+        "thinking_default": str(preset.get("thinking_default") or ""),
+        "responses": bool(preset.get("responses")),
+        "models_path": str(preset.get("models_path") or "/models"),
+        "docs": str(preset.get("docs") or ""),
+        "note": str(preset.get("note") or ""),
+    }
+
+
 def meta_payload(app: AppState) -> dict:
     modules = []
     for entry in app.cordis.scan():
@@ -738,11 +894,7 @@ def meta_payload(app: AppState) -> dict:
         "title": M.MODULE["title"], "en_title": M.MODULE["en_title"],
         "setting": M.MODULE["setting"], "synopsis": M.MODULE["synopsis"],
         "llm": app.llm_settings_view(),
-        "providers": [{"key": k, "name": v["name"], "base_url": v["base_url"],
-                       "models": v["models"],
-                       "key_envs": v["key_envs"],
-                       "default": bool(v.get("default"))}
-                      for k, v in LLM_PROVIDERS.items()],
+        "providers": [_provider_view(k, v) for k, v in LLM_PROVIDERS.items()],
         "modules": modules,
         # RED 数据面（PORT_SPEC §10）
         "stats": [{"key": k, "name": D.STATS[k]["name"], "abbr": D.STATS[k]["abbr"],
@@ -798,7 +950,7 @@ def generate_module(app: AppState, spec: dict) -> tuple[Module | None, list[str]
     cfg = app.llm_cfg
     if cfg is None:
         return None, ["尚未配置 LLM：请先在「设置 → API 配置」中接入供应商"], []
-    from ..harness.adapter import OpenAICompatibleAdapter
+    from ..harness.adapter import OpenAICompatibleAdapter  # noqa: F401 —— 保持后端兼容
     theme = str(spec.get("theme") or "").strip()
     hints = str(spec.get("hints") or "").strip()
     if not theme:
@@ -806,8 +958,7 @@ def generate_module(app: AppState, spec: dict) -> tuple[Module | None, list[str]
     user_prompt = (f"请创作一个全新的原创模组。主题：{theme}\n"
                    + (f"附加要求：{hints}\n" if hints else "")
                    + "记住：只输出模组 JSON 本身，符合上述规范的全部硬性约束。")
-    adapter = OpenAICompatibleAdapter(base_url=cfg.base_url, api_key=cfg.api_key,
-                                      timeout=180.0, max_retries=2)
+    adapter = _adapter_for(cfg, timeout=180.0, max_retries=2)
     resp = adapter.chat(model=cfg.model,
                         messages=[{"role": "system", "content": _GEN_SYSTEM},
                                   {"role": "user", "content": user_prompt}],
@@ -909,12 +1060,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"saves": saves})
         if path == "/api/settings/llm":
             view = self.app.llm_settings_view()
-            view["providers"] = [
-                {"key": k, "name": v["name"], "base_url": v["base_url"],
-                 "models": v["models"], "key_envs": v["key_envs"],
-                 "default": bool(v.get("default"))}
-                for k, v in LLM_PROVIDERS.items()]
+            view["providers"] = [_provider_view(k, v)
+                                 for k, v in LLM_PROVIDERS.items()]
             return self._json(view)
+        if path == "/api/models":
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[-1])
+            spec = {key: (vals[0] if vals else "")
+                    for key, vals in query.items()
+                    if key in ("provider", "base_url")}
+            return self._json(self.app.list_models(spec))
         if path == "/api/settings/aipc":
             return self._json(self.app.aipc_settings_view())
         return self._json({"error": "not found"}, 404)
@@ -1062,19 +1216,52 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/llm/test":
             cfg = self.app.llm_cfg
             if cfg is None:
-                return self._json({"ok": False, "error": "尚未配置 LLM"}, 400)
-            from ..harness.adapter import OpenAICompatibleAdapter
-            adapter = OpenAICompatibleAdapter(cfg.base_url, cfg.api_key,
-                                              timeout=30.0, max_retries=1)
+                return self._json({"ok": False, "error": "尚未配置 LLM",
+                                   "hint": "先在「API 配置」里选供应商、填密钥并保存。"}, 400)
+            adapter = _adapter_for(cfg, timeout=30.0, max_retries=1)
+            from ..harness.responses import OpenAIResponsesAdapter
+            style = "responses" if isinstance(adapter, OpenAIResponsesAdapter) else "chat"
             try:
                 resp = adapter.chat(cfg.model,
                                     [{"role": "user", "content": "回复：OK"}],
                                     None, 0.0, 16)
                 if self.app.meter is not None and resp.usage:
                     self.app.meter.record("test", cfg.model, resp.usage)
-                return self._json({"ok": True, "reply": (resp.content or "").strip()[:60]})
-            except Exception as e:  # noqa: BLE001
-                return self._json({"ok": False, "error": str(e)}, 400)
+                # auto 模式下 Responses 404 会自动降级，如实回报实际通道
+                fell_back = bool(getattr(adapter, "fell_back", False))
+                return self._json({"ok": True,
+                                   "reply": (resp.content or "").strip()[:60],
+                                   "model": cfg.model,
+                                   "api_style": "chat" if fell_back else style,
+                                   "fallback": fell_back,
+                                   "reasoning": bool(resp.reasoning)})
+            except Exception as e:  # noqa: BLE001 —— 失败原因要原样交给界面
+                text = str(e)
+                hint = ""
+                lowered = text.lower()
+                if any(k in lowered for k in ("tunnel", "urlerror", "getaddrinfo",
+                                             "timed out", "connection refused",
+                                             "ssl", "proxy")):
+                    hint = ("网络不通：该请求根本没到供应商。检查本机代理设置"
+                            "（HTTP_PROXY / HTTPS_PROXY）、公司网关，或换一个网络再试。")
+                elif "401" in text or "认证" in text:
+                    hint = "密钥不对：到供应商控制台重新生成，粘贴时别带空格。"
+                elif "402" in text or "余额" in text:
+                    hint = "账户余额不足：充值后重试，或换一个供应商。"
+                elif "404" in text:
+                    hint = ("API 地址写错了：DeepSeek 用 https://api.deepseek.com，"
+                            "智谱用 .../api/paas/v4，Kimi 用 .../v1。"
+                            "可点「拉取模型列表」验证地址与密钥。")
+                elif "400" in text or "模型名" in text:
+                    hint = ("多为模型名不存在或参数不被支持：点「拉取模型列表」"
+                            "挑一个账号可用的模型；若开了思考模式，先关掉再试。")
+                    if style == "responses":
+                        hint += (" 若协议选的是 Responses，可切回「自动」或 "
+                                 "Chat Completions 再试一次。")
+                return self._json({"ok": False, "error": text, "hint": hint,
+                                   "api_style": style}, 400)
+        if path == "/api/models":
+            return self._json(self.app.list_models(body))
         if path == "/api/usage/clear":
             self.app.meter.clear()
             return self._json({"ok": True})

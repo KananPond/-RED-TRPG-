@@ -138,7 +138,7 @@ class Agent:
     name: str
     system_prompt: str
     tool_names: list[str] = field(default_factory=list)   # 空=全部注册工具
-    model: str = "deepseek-chat"
+    model: str = "deepseek-flash"
     temperature: float = 0.8
     max_tokens: int = 1600
 
@@ -203,7 +203,11 @@ class DefaultAgentLoop:
             for k, v in (resp.usage or {}).items():
                 if isinstance(v, (int, float)):
                     usage_total[k] = usage_total.get(k, 0) + v
-            session.log_message(assistant(resp.content, resp.tool_calls or None))
+            # 思考模式：assistant 消息要连思维链一起入历史。DeepSeek 的规则是
+            # 「请求带 tools 时，历史轮次的 reasoning_content 均须回传，否则 400」，
+            # 而本框架每个 Agent 都靠工具推进，所以这一行是硬性要求。
+            session.log_message(assistant(resp.content, resp.tool_calls or None,
+                                          resp.reasoning))
             if not resp.tool_calls:
                 return self._finish(agent, session, resp.content or "", step, trace, usage_total)
             for call in resp.tool_calls:

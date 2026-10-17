@@ -500,8 +500,11 @@ class TestWebServer(WebServerCase):
 
         original = adapter_mod.OpenAICompatibleAdapter
         adapter_mod.OpenAICompatibleAdapter = FakeAdapter
+        # 这里测的是 chat/completions 这条通道（Responses 通道由
+        # tests/test_llm_endpoints.py 单独覆盖），显式选定协议避免走网络
         self.app.llm_cfg = LLMConfig(base_url="https://api.deepseek.com/v1",
-                                     api_key="test-key", model="deepseek-chat")
+                                     api_key="test-key", model="deepseek-chat",
+                                     api_style="chat")
         try:
             mod, errors, _w = generate_module(self.app, {"theme": "测试主题"})
             self.assertIsNone(errors or None)
@@ -536,7 +539,8 @@ class TestWebServer(WebServerCase):
         adapter_mod.OpenAICompatibleAdapter = FakeAdapter
         try:
             self.app.llm_cfg = LLMConfig(base_url="https://api.deepseek.com/v1",
-                                         api_key="test-key", model="deepseek-chat")
+                                         api_key="test-key", model="deepseek-chat",
+                                         api_style="chat")
             status, body = self.start_game(seed=3)
             self.assertEqual(status, 200, body)
             self.assertTrue(body["state"]["llm_active"])

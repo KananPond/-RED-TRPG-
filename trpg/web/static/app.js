@@ -320,12 +320,15 @@ async function renderSaves() {
   });
 }
 
-/* ═══════════ 设置页：API 配置 ═══════════ */
+/* ═══════════ 设置页：API 配置 ═══════════
+   模型名不再写死在预设里：每家供应商都可用自己的密钥现拉一次真实列表
+   （GET /api/models → 供应商的 {base}/models），预设只是默认值与兜底。 */
 async function renderSettings() {
   const r = await jfetch("/api/settings/llm");
   if (!r.ok) return;
   const s = r.body;
   S.provider = s.provider || "deepseek";
+  S.providers = s.providers || [];
   const box = $("#provider-cards");
   box.innerHTML = "";
   s.providers.forEach(p => {
@@ -340,6 +343,8 @@ async function renderSettings() {
       $("#set-base").value = p.base_url;
       $("#set-model").value = p.models[0] || "";
       $("#model-list").innerHTML = p.models.map(m => `<option>${m}</option>`).join("");
+      $("#set-models-msg").textContent = "";
+      renderProviderExtras(p, p.thinking_default);
     });
     box.appendChild(card);
   });
@@ -354,7 +359,32 @@ async function renderSettings() {
   $("#set-env-hint").innerHTML = "密钥也可以用环境变量提供：" +
     cur.key_envs.map(e => `<code>${e}</code>`).join(" / ") +
     "。设置仅对新开对局生效；密钥永不写入磁盘。";
+  // 协议：auto = 供应商支持就用 Responses API，否则 chat/completions
+  const style = s.api_style || "auto";
+  $("#set-api-style").value = ["auto", "responses", "chat"].includes(style)
+    ? style : "auto";
+  renderProviderExtras(cur, s.thinking || cur.thinking_default);
   await renderAipcSettings();
+}
+
+/* 供应商附注：官方文档链接、思考开关（只对支持该参数的供应商显示） */
+function renderProviderExtras(preset, thinking) {
+  if (!preset) return;
+  const wrap = $("#set-thinking-wrap");
+  const supported = !!preset.supports_thinking;
+  wrap.classList.toggle("hidden", !supported);
+  const on = thinking ? thinking === "on"
+    : String(preset.thinking_default || "") === "on";
+  $("#set-thinking").checked = on;
+  const parts = [];
+  if (preset.note) parts.push(escapeHtml(preset.note));
+  parts.push(preset.responses
+    ? "接口协议可选：Responses（默认优先）或 Chat Completions"
+    : "该供应商未声明 Responses 支持：协议请用「自动」或 Chat Completions");
+  if (preset.docs) {
+    parts.push(`<a href="${escapeHtml(preset.docs)}" target="_blank" rel="noreferrer">官方文档 ↗</a>`);
+  }
+  $("#set-note").innerHTML = parts.join(" · ");
 }
 
 /* AI PC 模式（AI 代打）：开关独立持久化（POST /api/settings/aipc），
@@ -376,11 +406,13 @@ $("#set-save").addEventListener("click", async () => {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider: S.provider, base_url: $("#set-base").value.trim(),
                            model: $("#set-model").value.trim(),
-                           api_key: $("#set-key").value.trim() }),
+                           api_key: $("#set-key").value.trim(),
+                           thinking: $("#set-thinking").checked ? "on" : "off",
+                           api_style: $("#set-api-style").value }),
   });
   msg.innerHTML = r.ok
     ? `<span class="okok">已保存。${r.body.settings.llm_active ? "AI 模式就绪。" : ""}</span>`
-    : `<span class="err">${r.body.error}</span>`;
+    : `<span class="err">${escapeHtml(r.body.error)}</span>`;
   if (r.ok) { renderSettings(); renderStats(true); }
 });
 $("#set-test").addEventListener("click", async () => {
@@ -388,8 +420,45 @@ $("#set-test").addEventListener("click", async () => {
   msg.textContent = "连接测试中……";
   const r = await jfetch("/api/llm/test", { method: "POST", body: "{}",
     headers: { "Content-Type": "application/json" } });
-  msg.innerHTML = r.ok ? `<span class="okok">连接正常：${r.body.reply}</span>`
-    : `<span class="err">${r.body.error}</span>`;
+  if (r.ok) {
+    const via = r.body.api_style === "responses" ? "Responses API" : "Chat Completions";
+    msg.innerHTML = `<span class="okok">连接正常（${via}）：${escapeHtml(r.body.reply || "OK")}</span>`
+      + (r.body.fallback ? ' <span class="hint">（该供应商没有 /responses，已自动降级）</span>' : "")
+      + (r.body.reasoning ? ' <span class="hint">（模型返回了思维链：思考模式已生效）</span>' : "");
+    return;
+  }
+  msg.innerHTML = `<span class="err">${escapeHtml(r.body.error || "连接失败")}</span>`
+    + (r.body.hint ? `<br><span class="hint">${escapeHtml(r.body.hint)}</span>` : "");
+});
+/* 用当前密钥向供应商现拉真实模型列表（模型名不写死的关键一步） */
+$("#set-fetch-models").addEventListener("click", async () => {
+  const msg = $("#set-models-msg");
+  msg.textContent = "正在向供应商查询模型列表……";
+  const r = await jfetch("/api/models", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider: S.provider,
+                           base_url: $("#set-base").value.trim(),
+                           api_key: $("#set-key").value.trim() }),
+  });
+  const body = r.body || {};
+  if (!r.ok || !body.ok) {
+    msg.innerHTML = `<span class="err">${escapeHtml(body.error || "拉取失败")}</span>`
+      + (body.hint ? `<br><span class="hint">${escapeHtml(body.hint)}</span>` : "");
+    return;
+  }
+  const models = body.models || [];
+  $("#model-list").innerHTML = models.map(m => `<option>${escapeHtml(m)}</option>`).join("");
+  const cur = $("#set-model").value.trim();
+  if (!models.length) {
+    msg.textContent = body.hint || "供应商返回空列表。";
+    return;
+  }
+  msg.innerHTML = `<span class="okok">拉到 ${models.length} 个模型</span>`
+    + `<span class="hint">：点模型输入框可直接选（${models.slice(0, 4).join("、")}`
+    + `${models.length > 4 ? "…" : ""}）</span>`
+    + (cur && !models.includes(cur)
+      ? `<br><span class="err">当前填写的「${escapeHtml(cur)}」不在此账号的可用列表里</span>`
+      : "");
 });
 
 $("#aipc-save").addEventListener("click", async () => {

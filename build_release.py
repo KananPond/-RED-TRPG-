@@ -15,7 +15,7 @@ DIST = ROOT / "dist"
 
 # 随包附带的内容（其余为开发/测试用文件）
 INCLUDE_DIRS = ["trpg", "modules"]
-INCLUDE_FILES = ["main.py", "README.md", "LICENSE", "MODULE_SPEC.md",
+INCLUDE_FILES = ["main.py", "README.md", "LICENSE", "NOTICE.md", "MODULE_SPEC.md",
                  "HARNESS.md", "CHANGELOG.md", "启动游戏.bat", "启动游戏.sh",
                  ".env.example"]
 EXCLUDE_PARTS = {"__pycache__", ".pytest_cache", ".mimosa"}

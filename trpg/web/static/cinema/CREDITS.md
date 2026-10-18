@@ -36,5 +36,5 @@
 ## 授权
 
 官方美术版权归 R. Talsorian Games 所有；Cyberpunk® 是 CD Projekt Red S.A.
-的注册商标。本项目为非官方同人作品，仅供个人学习与桌边自用，**不得用于商业发行**。
-详见仓库根 `README.md`「发行与许可」与 `docs/cinema-design.md`。
+的注册商标。本项目为非官方同人作品，官方美术仅用于非商业同人展示，不随代码的
+MIT 许可授权。详见仓库根 `README.md`「发行与许可」与 `NOTICE.md`。

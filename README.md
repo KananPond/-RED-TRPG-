@@ -350,14 +350,16 @@ python -m pytest tests -q
 ## 发行与许可
 
 - 打包：`python build_release.py`（源码 + 启动器 + 内置模组，解压即玩）。
-- **源代码**：[MIT](LICENSE)。
-- **规则文本**：改编自 R. Talsorian Games 免费发布的
-  *Cyberpunk RED Easy Mode* 与 *Cyberpunk RED* 核心规则书；版权归
-  R. Talsorian Games 所有。Cyberpunk® 是 CD Projekt Red S.A. 的注册商标。
-  本项目为非官方同人作品，仅供个人学习与桌边自用，**不得用于商业发行**。
+- **源代码**：[MIT](LICENSE)，版权人 **EudoraArcher**。
+- **第三方内容**（MIT 不覆盖）：规则文本改编自 R. Talsorian Games 免费发布的
+  *Cyberpunk RED Easy Mode* 与 *Cyberpunk RED* 核心规则书，版权归
+  R. Talsorian Games 所有；Cyberpunk® 是 CD Projekt Red S.A. 的注册商标。
 - **AI 剧场美术**：角色画与部分场景插画裁自免费 Easy Mode 手册，经裁切/调色/
   半调处理；其余场景底片、纸纹、颗粒、雨幕与音效为程序化/CSS/SVG 生成。
-  本项目不主张官方美术所有权；剧场仅用于非商业同人展示。详见
+  本项目不主张官方美术所有权。
+- 本项目为非官方同人作品，与 R. Talsorian Games / CD Projekt Red 无隶属关系；
+  规则文本与官方美术仅用于非商业的同人展示。
+- 完整的第三方声明与出处见 [NOTICE.md](NOTICE.md)；剧场美术细节见
   [trpg/web/static/cinema/CREDITS.md](trpg/web/static/cinema/CREDITS.md)。
 
 ---

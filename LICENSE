@@ -1,34 +1,21 @@
-CTRCG —— 单人 AI 跑团
-Copyright (c) 2026 KananPond
+MIT License
 
-一、源代码许可（MIT License）
+Copyright (c) 2026 EudoraArcher
 
-本项目的全部源代码（Python / JavaScript / CSS / HTML）以 MIT 许可证发布，
-以下任何人可免费获得本软件及相关文档文件的副本并无限制地处理本软件，
-包括不受限制地使用、复制、修改、合并、发布、分发、再许可和/或销售本软件的副本，
-并允许获得本软件的人这样做，但须满足以下条件：
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-上述版权声明和本许可声明应包含在本软件的所有副本或主要部分中。
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-本软件按"原样"提供，不附带任何明示或暗示的担保，包括但不限于对适销性、
-特定用途适用性和不侵权的担保。在任何情况下，作者或版权持有人均不对任何
-索赔、损害或其他责任负责，无论是在合同诉讼、侵权诉讼或其他诉讼中，还是
-因本软件或本软件的使用或其他交易而产生、出于本软件或与本软件相关的诉讼中。
-
-二、规则内容声明（SRD 5.1 · CC BY 4.0）
-
-本游戏使用的 D&D 5e 规则机制、种族 / 职业 / 法术 / 怪物等游戏数值与术语，
-部分改编自 Wizards of the Coast 的《System Reference Document 5.1》
-（"SRD 5.1"），该文档依 Creative Commons Attribution 4.0 International
-（CC BY 4.0）许可提供：https://creativecommons.org/licenses/by/4.0/
-
-本作品并非 Wizards of the Coast / Hasbro 的官方产品，亦未获得其认可或
-担保。Dungeons & Dragons、D&D 及相关标识为 Wizards of the Coast LLC
-的商标，本项目的使用构成对商标的描述性指涉，不主张任何商标权利。
-
-三、第三方内容
-
-- 《被遗忘的大陆（Forgotten Realms）》地名用于叙事背景指涉（CC BY 4.0
-  SRD 允许范围）；所有剧本文本、NPC、模组剧情为本项目原创。
-- 音频与图像均为运行时程序化合成（Web Audio / SVG），不包含任何第三方
-  资产文件。
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

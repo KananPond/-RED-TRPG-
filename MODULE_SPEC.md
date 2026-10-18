@@ -20,7 +20,7 @@
 > **版权提示**：本仓库的规则文本改编自 R. Talsorian Games 免费发布的
 > 《Cyberpunk RED Easy Mode》与《Cyberpunk RED》核心规则书，版权归
 > R. Talsorian Games 所有；Cyberpunk® 是 CD Projekt Red S.A. 的注册商标；
-> 本项目为非官方同人作品，仅供个人学习与桌边自用，不得用于商业发行。
+> 本项目为非官方同人作品，官方规则文本仅用于非商业展示，不随代码的 MIT 许可授权。
 > 自己写模组时请勿逐字复制官方手册的正文。
 
 ## 1. 快速开始

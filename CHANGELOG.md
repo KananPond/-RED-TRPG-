@@ -2,6 +2,18 @@
 
 本项目的所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [未发布]
+
+### 变更
+
+- **许可证**：`LICENSE` 换成标准 MIT 正文，版权人 **EudoraArcher**；
+  `pyproject.toml` 的作者与 Homepage 同步更新。
+- **第三方声明**：原 `LICENSE` 中混排的规则文本/美术声明拆到 `NOTICE.md`，
+  并移除与当前《赛博朋克 RED》无关的 D&D SRD 5.1 残留条款。
+- **收窄表述**：`README.md`、`MODULE_SPEC.md` 与 `CREDITS.md` 里的「不得用于商业发行」
+  改为只约束官方规则文本与美术，不再与 MIT 对代码的商业使用许可冲突。
+- 发行包清单加入 `NOTICE.md`。
+
 ## [2.3.1] — 修复思考模式 reasoning 回传 400
 
 > 症状：NPC/PC 带工具调用时出现

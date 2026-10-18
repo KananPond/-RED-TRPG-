@@ -8,7 +8,7 @@ version = "2.3.1"
 description = "TRPG —— 单人 AI 跑团：完整《赛博朋克 RED》规则引擎 + AI 主持人/队友（夜之城 2045）"
 readme = "README.md"
 license = { file = "LICENSE" }
-authors = [{ name = "KananPond" }]
+authors = [{ name = "EudoraArcher" }]
 requires-python = ">=3.10"
 dependencies = []
 keywords = ["cyberpunk-red", "ttrpg", "ai", "singleplayer", "chinese"]
@@ -24,4 +24,4 @@ packages = ["trpg", "trpg.rules", "trpg.campaign", "trpg.harness",
             "trpg.game", "trpg.st", "trpg.ui", "trpg.web"]
 
 [project.urls]
-Homepage = "https://github.com/KananPond/TRPG"
+Homepage = "https://github.com/EudoraArcher/TRPG"

@@ -24,4 +24,4 @@ packages = ["trpg", "trpg.rules", "trpg.campaign", "trpg.harness",
             "trpg.game", "trpg.st", "trpg.ui", "trpg.web"]
 
 [project.urls]
-Homepage = "https://github.com/EudoraArcher/TRPG"
+Homepage = "https://github.com/KananPond/-RED-TRPG-"
